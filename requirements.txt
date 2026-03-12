@@ -1,0 +1,6 @@
+aiogram>=3.4
+anthropic>=0.40
+openai>=1.50
+aiohttp>=3.9
+aiomysql>=0.2
+apscheduler>=3.10

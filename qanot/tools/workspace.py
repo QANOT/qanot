@@ -1,0 +1,79 @@
+"""Workspace file management — initialization and structured updates."""
+
+from __future__ import annotations
+
+import logging
+import shutil
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+
+
+def init_workspace(workspace_dir: str) -> None:
+    """Initialize workspace on first run by copying template files.
+
+    Only copies files that don't already exist (preserves user modifications).
+    """
+    ws = Path(workspace_dir)
+    ws.mkdir(parents=True, exist_ok=True)
+
+    # Create subdirectories
+    (ws / "memory").mkdir(exist_ok=True)
+    (ws / "notes" / "areas").mkdir(parents=True, exist_ok=True)
+
+    # Copy workspace template files
+    template_ws = TEMPLATE_DIR / "workspace"
+    if template_ws.exists():
+        for src in template_ws.rglob("*"):
+            if src.is_file():
+                rel = src.relative_to(template_ws)
+                dst = ws / rel
+                if not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    logger.info("Copied template: %s", rel)
+
+    # Copy SOUL.md from souls template if not present
+    soul_dst = ws / "SOUL.md"
+    soul_src = TEMPLATE_DIR / "souls" / "universal.md"
+    if not soul_dst.exists() and soul_src.exists():
+        shutil.copy2(soul_src, soul_dst)
+        logger.info("Copied SOUL.md template")
+
+    # Copy SKILL.md from skill template if not present
+    skill_src = TEMPLATE_DIR / "skills" / "proactive-agent" / "SKILL.md"
+    skill_dst = ws / "SKILL.md"
+    if not skill_dst.exists() and skill_src.exists():
+        shutil.copy2(skill_src, skill_dst)
+        logger.info("Copied SKILL.md template")
+
+    logger.info("Workspace initialized at %s", workspace_dir)
+
+
+def update_session_state(key: str, value: str, workspace_dir: str = "/data/workspace") -> None:
+    """Write a structured key-value entry to SESSION-STATE.md."""
+    state_path = Path(workspace_dir) / "SESSION-STATE.md"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not state_path.exists():
+        state_path.write_text("# SESSION-STATE.md — Active Working Memory\n\n", encoding="utf-8")
+
+    # Read existing content
+    content = state_path.read_text(encoding="utf-8")
+
+    # Check if key already exists and update
+    lines = content.splitlines()
+    updated = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"- **{key}:**"):
+            lines[i] = f"- **{key}:** {value}"
+            updated = True
+            break
+
+    if updated:
+        state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        with open(state_path, "a", encoding="utf-8") as f:
+            f.write(f"- **{key}:** {value}\n")

@@ -1,0 +1,42 @@
+{
+  "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5-20250514",
+  "api_key": "YOUR_API_KEY",
+  "owner_name": "",
+  "bot_name": "",
+  "timezone": "Asia/Tashkent",
+  "max_concurrent": 4,
+  "compaction_mode": "safeguard",
+  "max_context_tokens": 200000,
+  "allowed_users": [],
+  "workspace_dir": "/data/workspace",
+  "sessions_dir": "/data/sessions",
+  "cron_dir": "/data/cron",
+  "plugins_dir": "/data/plugins",
+  "plugins": [
+    {
+      "name": "absmarket",
+      "enabled": false,
+      "config": {
+        "api_url": "https://your-absmarket-server.com",
+        "email": "admin@example.com",
+        "password": "password",
+        "db_host": "",
+        "db_port": 3306,
+        "db_user": "",
+        "db_password": "",
+        "db_name": "absmarket"
+      }
+    },
+    {
+      "name": "absvision",
+      "enabled": false,
+      "config": {
+        "api_url": "https://your-absvision-server.com",
+        "phone": "+998901234567",
+        "password": "password"
+      }
+    }
+  ]
+}

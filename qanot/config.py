@@ -1,0 +1,77 @@
+"""JSON config loader for Qanot AI."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class PluginConfig:
+    name: str
+    enabled: bool = True
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class Config:
+    bot_token: str = ""
+    provider: str = "anthropic"  # "anthropic" or "openai"
+    model: str = "claude-sonnet-4-5-20250514"
+    api_key: str = ""
+    soul_path: str = "/data/workspace/SOUL.md"
+    tools_path: str = "/data/workspace/TOOLS.md"
+    plugins: list[PluginConfig] = field(default_factory=list)
+    owner_name: str = ""
+    bot_name: str = ""
+    timezone: str = "Asia/Tashkent"
+    max_concurrent: int = 4
+    compaction_mode: str = "safeguard"
+    workspace_dir: str = "/data/workspace"
+    sessions_dir: str = "/data/sessions"
+    cron_dir: str = "/data/cron"
+    plugins_dir: str = "/data/plugins"
+    max_context_tokens: int = 200000
+    allowed_users: list[int] = field(default_factory=list)
+
+
+def load_config(path: str = "/data/config.json") -> Config:
+    """Load configuration from JSON file."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    raw = json.loads(p.read_text(encoding="utf-8"))
+
+    plugins = []
+    for pl in raw.get("plugins", []):
+        if isinstance(pl, str):
+            plugins.append(PluginConfig(name=pl))
+        elif isinstance(pl, dict):
+            plugins.append(PluginConfig(
+                name=pl["name"],
+                enabled=pl.get("enabled", True),
+                config=pl.get("config", {}),
+            ))
+
+    return Config(
+        bot_token=raw.get("bot_token", ""),
+        provider=raw.get("provider", "anthropic"),
+        model=raw.get("model", "claude-sonnet-4-5-20250514"),
+        api_key=raw.get("api_key", ""),
+        soul_path=raw.get("soul_path", "/data/workspace/SOUL.md"),
+        tools_path=raw.get("tools_path", "/data/workspace/TOOLS.md"),
+        plugins=plugins,
+        owner_name=raw.get("owner_name", ""),
+        bot_name=raw.get("bot_name", ""),
+        timezone=raw.get("timezone", "Asia/Tashkent"),
+        max_concurrent=raw.get("max_concurrent", 4),
+        compaction_mode=raw.get("compaction_mode", "safeguard"),
+        workspace_dir=raw.get("workspace_dir", "/data/workspace"),
+        sessions_dir=raw.get("sessions_dir", "/data/sessions"),
+        cron_dir=raw.get("cron_dir", "/data/cron"),
+        plugins_dir=raw.get("plugins_dir", "/data/plugins"),
+        max_context_tokens=raw.get("max_context_tokens", 200000),
+        allowed_users=raw.get("allowed_users", []),
+    )
