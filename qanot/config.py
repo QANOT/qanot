@@ -36,6 +36,9 @@ class Config:
     allowed_users: list[int] = field(default_factory=list)
     response_mode: str = "stream"  # "stream" | "partial" | "blocked"
     stream_flush_interval: float = 0.8  # seconds between draft updates
+    telegram_mode: str = "polling"  # "polling" | "webhook"
+    webhook_url: str = ""  # e.g. "https://bot.example.com/webhook"
+    webhook_port: int = 8443  # local port for webhook server
 
 
 def load_config(path: str | None = None) -> Config:
@@ -81,4 +84,7 @@ def load_config(path: str | None = None) -> Config:
         allowed_users=raw.get("allowed_users", []),
         response_mode=raw.get("response_mode", "stream"),
         stream_flush_interval=raw.get("stream_flush_interval", 0.8),
+        telegram_mode=raw.get("telegram_mode", "polling"),
+        webhook_url=raw.get("webhook_url", ""),
+        webhook_port=raw.get("webhook_port", 8443),
     )

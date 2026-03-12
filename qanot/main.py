@@ -27,14 +27,21 @@ logger = logging.getLogger("qanot")
 
 def _create_provider(config):
     """Create LLM provider based on config."""
-    if config.provider == "anthropic":
+    provider = config.provider
+    if provider == "anthropic":
         from qanot.providers.anthropic import AnthropicProvider
         return AnthropicProvider(api_key=config.api_key, model=config.model)
-    elif config.provider == "openai":
+    elif provider == "openai":
         from qanot.providers.openai import OpenAIProvider
         return OpenAIProvider(api_key=config.api_key, model=config.model)
+    elif provider == "groq":
+        from qanot.providers.groq import GroqProvider
+        return GroqProvider(api_key=config.api_key, model=config.model)
+    elif provider == "gemini":
+        from qanot.providers.gemini import GeminiProvider
+        return GeminiProvider(api_key=config.api_key, model=config.model)
     else:
-        raise ValueError(f"Unknown provider: {config.provider}")
+        raise ValueError(f"Unknown provider: {provider}")
 
 
 async def main() -> None:

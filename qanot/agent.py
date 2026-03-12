@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -18,6 +19,34 @@ from qanot.session import SessionWriter
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 25
+MAX_SAME_ACTION = 3  # Break after N identical consecutive tool calls
+
+# Errors that should NOT be retried (deterministic failures)
+DETERMINISTIC_ERRORS = (
+    "unknown tool",
+    "missing required",
+    "invalid parameter",
+    "not found",
+    "permission denied",
+    "validation error",
+    "invalid input",
+)
+
+
+def _tool_call_fingerprint(name: str, input_data: dict) -> str:
+    """Hash a tool call for duplicate detection."""
+    raw = f"{name}:{json.dumps(input_data, sort_keys=True)}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _is_deterministic_error(result: str) -> bool:
+    """Check if a tool error is deterministic (should not be retried)."""
+    try:
+        data = json.loads(result)
+        error = data.get("error", "").lower()
+        return any(marker in error for marker in DETERMINISTIC_ERRORS)
+    except (json.JSONDecodeError, AttributeError):
+        return False
 
 
 class ToolRegistry:
@@ -137,8 +166,10 @@ class Agent:
         # Log to session
         self._last_user_msg_id = self.session.log_user_message(user_message)
 
-        # Agent loop
+        # Agent loop with circuit breaker
         final_text = ""
+        recent_fingerprints: list[str] = []
+
         for iteration in range(MAX_ITERATIONS):
             system = self._build_system_prompt()
             tool_defs = self.tools.get_definitions()
@@ -162,6 +193,29 @@ class Agent:
                              self.context.get_context_percent())
 
             if response.stop_reason == "tool_use" and response.tool_calls:
+                # ── Loop detection ──
+                batch_fps = [
+                    _tool_call_fingerprint(tc.name, tc.input)
+                    for tc in response.tool_calls
+                ]
+                batch_key = ":".join(sorted(batch_fps))
+
+                if recent_fingerprints and all(fp == batch_key for fp in recent_fingerprints[-(MAX_SAME_ACTION - 1):]):
+                    recent_fingerprints.append(batch_key)
+                    if len([fp for fp in recent_fingerprints if fp == batch_key]) >= MAX_SAME_ACTION:
+                        logger.warning(
+                            "Loop detected: same tool call %dx, breaking",
+                            MAX_SAME_ACTION,
+                        )
+                        final_text = (
+                            f"Kechirasiz, {response.tool_calls[0].name} "
+                            f"amali takrorlanmoqda. Iltimos, boshqacha so'rov bering."
+                        )
+                        messages.append({"role": "assistant", "content": final_text})
+                        break
+                else:
+                    recent_fingerprints.append(batch_key)
+
                 # Build assistant message with text + tool_use blocks
                 assistant_content: list[dict] = []
                 if response.content:
@@ -191,9 +245,19 @@ class Agent:
 
                 # Execute tools and collect results
                 tool_results: list[dict] = []
+                has_deterministic_error = False
                 for tc in response.tool_calls:
                     logger.info("Executing tool: %s", tc.name)
                     result = await self.tools.execute(tc.name, tc.input)
+
+                    # ── Error classification ──
+                    if _is_deterministic_error(result):
+                        has_deterministic_error = True
+                        # Inject hint so LLM doesn't retry the same call
+                        result_data = json.loads(result)
+                        result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
+                        result = json.dumps(result_data)
+
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tc.id,
@@ -276,6 +340,8 @@ class Agent:
         self._last_user_msg_id = self.session.log_user_message(user_message)
 
         final_text = ""
+        recent_fingerprints: list[str] = []
+
         for iteration in range(MAX_ITERATIONS):
             system = self._build_system_prompt()
             tool_defs = self.tools.get_definitions()
@@ -312,6 +378,23 @@ class Agent:
                 )
 
             if response.stop_reason == "tool_use" and tool_calls:
+                # ── Loop detection ──
+                batch_fps = [
+                    _tool_call_fingerprint(tc.name, tc.input)
+                    for tc in tool_calls
+                ]
+                batch_key = ":".join(sorted(batch_fps))
+                recent_fingerprints.append(batch_key)
+                if len([fp for fp in recent_fingerprints if fp == batch_key]) >= MAX_SAME_ACTION:
+                    logger.warning("Loop detected in stream: same tool call %dx", MAX_SAME_ACTION)
+                    yield StreamEvent(
+                        type="done",
+                        response=ProviderResponse(
+                            content=f"Kechirasiz, {tool_calls[0].name} amali takrorlanmoqda.",
+                        ),
+                    )
+                    return
+
                 # Build assistant message
                 assistant_content: list[dict] = []
                 if response.content:
@@ -333,11 +416,15 @@ class Agent:
                     model=self.provider.model,
                 )
 
-                # Execute tools
+                # Execute tools with error classification
                 tool_results: list[dict] = []
                 for tc in tool_calls:
                     logger.info("Executing tool: %s", tc.name)
                     result = await self.tools.execute(tc.name, tc.input)
+                    if _is_deterministic_error(result):
+                        result_data = json.loads(result)
+                        result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
+                        result = json.dumps(result_data)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tc.id,

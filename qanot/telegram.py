@@ -9,10 +9,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.methods import SendMessageDraft
 from aiogram.types import Message
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 if TYPE_CHECKING:
     from qanot.agent import Agent
@@ -332,14 +334,53 @@ class TelegramAdapter:
                 await asyncio.sleep(5)
 
     async def start(self) -> None:
-        """Start the Telegram bot with long polling."""
+        """Start the Telegram bot (polling or webhook based on config)."""
         logger.info(
-            "[telegram] starting — mode=%s, flush=%.1fs",
+            "[telegram] starting — transport=%s, response=%s, flush=%.1fs",
+            self.config.telegram_mode,
             self.config.response_mode,
             self.config.stream_flush_interval,
         )
         asyncio.create_task(self._proactive_loop())
+
+        if self.config.telegram_mode == "webhook" and self.config.webhook_url:
+            await self._start_webhook()
+        else:
+            await self._start_polling()
+
+    async def _start_polling(self) -> None:
+        """Start with long polling."""
         try:
             await self.dp.start_polling(self.bot, drop_pending_updates=True)
         finally:
+            await self.bot.session.close()
+
+    async def _start_webhook(self) -> None:
+        """Start with webhook via aiohttp server."""
+        webhook_url = self.config.webhook_url.rstrip("/")
+        webhook_path = "/webhook"
+        full_url = f"{webhook_url}{webhook_path}"
+
+        # Set webhook on Telegram side
+        await self.bot.set_webhook(full_url, drop_pending_updates=True)
+        logger.info("[telegram] webhook set: %s", full_url)
+
+        # Create aiohttp app
+        app = web.Application()
+        handler = SimpleRequestHandler(dispatcher=self.dp, bot=self.bot)
+        handler.register(app, path=webhook_path)
+        setup_application(app, self.dp, bot=self.bot)
+
+        # Run server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
+        try:
+            await site.start()
+            logger.info("[telegram] webhook server listening on :%d", self.config.webhook_port)
+            # Keep running until cancelled
+            await asyncio.Event().wait()
+        finally:
+            await self.bot.delete_webhook()
+            await runner.cleanup()
             await self.bot.session.close()
