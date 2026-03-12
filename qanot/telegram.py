@@ -839,7 +839,7 @@ class TelegramAdapter:
         drafting_paused = False
 
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
                 if event.type == "text_delta" and not drafting_paused:
                     accumulated += event.text
                     now = asyncio.get_event_loop().time()
@@ -880,7 +880,7 @@ class TelegramAdapter:
         interval = self.config.stream_flush_interval
         sent_msg_id: int | None = None
 
-        async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images):
+        async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
             if event.type == "text_delta":
                 accumulated += event.text
                 now = asyncio.get_event_loop().time()
@@ -932,7 +932,7 @@ class TelegramAdapter:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
-            response = await self.agent.run_turn(text, user_id=user_id, images=images)
+            response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id)
         finally:
             typing_task.cancel()
         await self._send_final(chat_id, response or "(No response)", reply_to=reply_to)
@@ -974,6 +974,10 @@ class TelegramAdapter:
                 await self.bot.send_message(**kwargs)
             except Exception as e:
                 logger.error("Failed to send message: %s", e)
+
+    async def send_message(self, chat_id: int, text: str) -> None:
+        """Public method to send a message to a chat (used by sub-agents)."""
+        await self._send_final(chat_id, text)
 
     async def _action_loop(self, chat_id: int, action: ChatAction = ChatAction.TYPING) -> None:
         """Send a chat action indicator every 4 seconds until cancelled."""

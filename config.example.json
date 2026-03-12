@@ -45,6 +45,28 @@
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",
   "plugins_dir": "/data/plugins",
+  "agents": [
+    {
+      "id": "deep-researcher",
+      "name": "Chuqur Tadqiqotchi",
+      "prompt": "You are a deep research agent. Use web_search and web_fetch extensively. Investigate topics thoroughly with multiple sources. Always cite your sources.",
+      "model": "claude-opus-4-6",
+      "bot_token": "",
+      "tools_allow": ["web_search", "web_fetch", "memory_search", "read_file"],
+      "delegate_allow": [],
+      "timeout": 180
+    },
+    {
+      "id": "fast-coder",
+      "name": "Tezkor Dasturchi",
+      "prompt": "You are a fast coding agent. Write clean, working code quickly. Follow existing project conventions. Use read_file to understand context before writing.",
+      "model": "claude-haiku-4-5",
+      "bot_token": "",
+      "tools_deny": ["web_search", "web_fetch"],
+      "delegate_allow": ["deep-researcher"],
+      "timeout": 60
+    }
+  ],
   "plugins": [
     {
       "name": "absmarket",

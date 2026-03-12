@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 from qanot.rag.chunker import BM25Index, chunk_text
@@ -10,6 +11,28 @@ from qanot.rag.embedder import Embedder
 from qanot.rag.store import SearchResult, SqliteVecStore, VectorStore, _hash_text
 
 logger = logging.getLogger(__name__)
+
+# MMR similarity threshold — texts with >70% word overlap are considered redundant
+MMR_SIMILARITY_THRESHOLD = 0.70
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """Compute Jaccard word-overlap similarity between two texts."""
+    words_a = set(a.lower().split())
+    words_b = set(b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def _is_redundant(text: str, seen_texts: list[str]) -> bool:
+    """Check if text is too similar to any already-selected result."""
+    for seen in seen_texts:
+        if _text_similarity(text, seen) > MMR_SIMILARITY_THRESHOLD:
+            return True
+    return False
 
 
 @dataclass
@@ -242,15 +265,38 @@ class RAGEngine:
                         result_map[doc_id] = vr
                         break
 
-        # Sort by fused score
+        # Apply temporal decay: boost recent memories over old ones
+        now = time.time()
+        for chunk_id, base_score in fused_scores.items():
+            result = result_map.get(chunk_id)
+            if result is None:
+                continue
+            created_at = result.metadata.get("created_at")
+            if created_at:
+                age_days = max((now - created_at) / 86400, 0)
+                # Gentle decay: score * (1 / (1 + age_days/30))
+                # 1 day old → 0.97x, 7 days → 0.81x, 30 days → 0.50x, 90 days → 0.25x
+                decay = 1.0 / (1.0 + age_days / 30.0)
+                fused_scores[chunk_id] = base_score * decay
+
+        # Sort by fused score (with temporal decay applied)
         ranked_ids = sorted(fused_scores, key=lambda x: fused_scores[x], reverse=True)
 
+        # MMR deduplication: remove near-duplicate text results
         results: list[SearchResult] = []
-        for chunk_id in ranked_ids[:top_k]:
-            if chunk_id in result_map:
-                result = result_map[chunk_id]
-                result.score = fused_scores[chunk_id]
-                results.append(result)
+        seen_texts: list[str] = []
+        for chunk_id in ranked_ids:
+            if len(results) >= top_k:
+                break
+            if chunk_id not in result_map:
+                continue
+            result = result_map[chunk_id]
+            result.score = fused_scores[chunk_id]
+            # Check text similarity against already-selected results
+            if _is_redundant(result.text, seen_texts):
+                continue
+            results.append(result)
+            seen_texts.append(result.text)
 
         sources = list({r.metadata.get("source", "") for r in results if r.metadata.get("source")})
 

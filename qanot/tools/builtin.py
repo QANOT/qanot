@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,68 @@ logger = logging.getLogger(__name__)
 
 MAX_OUTPUT = 50_000
 COMMAND_TIMEOUT = 120
+
+
+_DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # --- Destructive filesystem operations ---
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/(\s|$|\*|\"|')"), "recursive delete of root (/)"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+/(\s|$|\*|\"|')"), "recursive delete of root (/)"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~(/|\s|$)"), "recursive delete of home directory"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+~(/|\s|$)"), "recursive delete of home directory"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\*\s*$"), "recursive delete of all files (rm -rf *)"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+\*\s*$"), "recursive delete of all files (rm -rf *)"),
+    (re.compile(r"\bmkfs\b"), "filesystem format (mkfs)"),
+    (re.compile(r"\bdd\s+if="), "raw disk write (dd)"),
+    (re.compile(r"\bshred\b"), "secure file destruction (shred)"),
+
+    # --- System control ---
+    (re.compile(r"\bshutdown\b"), "system shutdown"),
+    (re.compile(r"\breboot\b"), "system reboot"),
+    (re.compile(r"\bpoweroff\b"), "system poweroff"),
+    (re.compile(r"\bhalt\b"), "system halt"),
+    (re.compile(r"\binit\s+[06]\b"), "system init runlevel change"),
+
+    # --- Permission escalation ---
+    (re.compile(r"\bchmod\s+777\s+/\s*$"), "chmod 777 on root"),
+    (re.compile(r"\bchown\s+root\b"), "ownership change to root"),
+    (re.compile(r"\bpasswd\b"), "password modification"),
+
+    # --- Network attack tools ---
+    (re.compile(r"\bnmap\b"), "network scanner (nmap)"),
+    (re.compile(r"\bnikto\b"), "web vulnerability scanner (nikto)"),
+    (re.compile(r"\bsqlmap\b"), "SQL injection tool (sqlmap)"),
+    (re.compile(r"\bhydra\b"), "brute-force tool (hydra)"),
+    (re.compile(r"\bmetasploit\b|\bmsfconsole\b|\bmsfvenom\b"), "exploitation framework (metasploit)"),
+
+    # --- Data exfiltration: curl/wget pipe to shell ---
+    (re.compile(r"\bcurl\b.*\|\s*(ba)?sh\b"), "curl piped to shell execution"),
+    (re.compile(r"\bwget\b.*\|\s*(ba)?sh\b"), "wget piped to shell execution"),
+    (re.compile(r"\beval\s+\$\(\s*curl\b"), "eval with curl (remote code execution)"),
+    (re.compile(r"\beval\s+\$\(\s*wget\b"), "eval with wget (remote code execution)"),
+
+    # --- Fork bombs ---
+    (re.compile(r":\(\)\s*\{.*\|.*&\s*\}\s*;?\s*:"), "fork bomb"),
+
+    # --- Disk fill ---
+    (re.compile(r"\byes\s*>"), "disk fill via yes"),
+    (re.compile(r"\bcat\s+/dev/(u?random|zero)\s*>"), "disk fill via /dev/random or /dev/zero"),
+    (re.compile(r"\bfallocate\b.*-l\s*\d{3,}[GT]"), "massive file allocation"),
+
+    # --- History/log tampering ---
+    (re.compile(r"\bhistory\s+-c\b"), "shell history clearing"),
+    (re.compile(r">\s*/var/log\b"), "log file truncation"),
+]
+
+
+def _is_dangerous_command(command: str) -> str | None:
+    """Check if a shell command matches known dangerous patterns.
+
+    Returns an error message string if dangerous, None if safe.
+    """
+    for pattern, description in _DANGEROUS_PATTERNS:
+        if pattern.search(command):
+            return description
+    return None
 
 
 def register_builtin_tools(
@@ -122,6 +185,13 @@ def register_builtin_tools(
         if not command:
             return json.dumps({"error": "command is required"})
 
+        danger = _is_dangerous_command(command)
+        if danger:
+            return json.dumps({
+                "error": f"Command blocked for safety: {danger}",
+                "hint": "If this command is needed, the user must run it manually.",
+            })
+
         timeout = params.get("timeout", COMMAND_TIMEOUT)
         cwd = params.get("cwd", workspace_dir)
 
@@ -150,7 +220,7 @@ def register_builtin_tools(
 
     registry.register(
         name="run_command",
-        description="Shell buyruq bajarish. Barcha buyruqlar, pipe, redirect ruxsat.",
+        description="Shell buyruq bajarish. Pipe, redirect ruxsat. Xavfli buyruqlar (rm -rf /, shutdown, fork bomb, h.k.) bloklangan.",
         parameters={
             "type": "object",
             "required": ["command"],

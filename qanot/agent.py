@@ -315,6 +315,7 @@ class Agent:
         session: SessionWriter | None = None,
         context: ContextTracker | None = None,
         prompt_mode: str = "full",
+        system_prompt_override: str = "",
     ):
         self.config = config
         self.provider = provider
@@ -325,7 +326,9 @@ class Agent:
             workspace_dir=config.workspace_dir,
         )
         self.prompt_mode = prompt_mode
+        self._system_prompt_override = system_prompt_override
         self._current_user_id: str = ""
+        self._current_chat_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
@@ -358,6 +361,11 @@ class Agent:
     def current_user_id(self) -> str:
         """Current user ID being processed (for RAG user-scoped queries)."""
         return self._current_user_id
+
+    @property
+    def current_chat_id(self) -> int | None:
+        """Current Telegram chat ID being processed (for sub-agent delivery)."""
+        return self._current_chat_id
 
     def get_conversation(self, user_id: str | None) -> list[dict]:
         """Get conversation history for a user (read-only view)."""
@@ -407,6 +415,8 @@ class Agent:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt from workspace files."""
+        if self._system_prompt_override:
+            return self._system_prompt_override
         return build_system_prompt(
             workspace_dir=self.config.workspace_dir,
             owner_name=self.config.owner_name,
@@ -453,6 +463,17 @@ class Agent:
                     logger.debug("RAG: injected %d memory hints", len(hints))
             except Exception as e:
                 logger.warning("RAG context injection failed: %s", e)
+
+        # Link understanding: auto-fetch URLs in user messages
+        if len(user_message.strip()) > 10:
+            try:
+                from qanot.links import fetch_link_previews
+
+                link_context = await fetch_link_previews(user_message)
+                if link_context:
+                    user_message = f"{user_message}\n\n---\n{link_context}"
+            except Exception as e:
+                logger.debug("Link preview injection failed: %s", e)
 
         # Check for compaction recovery
         if self.context.detect_compaction(messages):
@@ -794,17 +815,25 @@ class Agent:
 
         raise last_error  # Should not reach here
 
-    async def run_turn(self, user_message: str, user_id: str | None = None, images: list[dict] | None = None) -> str:
+    async def run_turn(
+        self,
+        user_message: str,
+        user_id: str | None = None,
+        images: list[dict] | None = None,
+        chat_id: int | None = None,
+    ) -> str:
         """Process a user message through the agent loop.
 
         Args:
             user_message: The user's text input.
             user_id: Unique user identifier for conversation isolation.
             images: Optional list of Anthropic-style image blocks.
+            chat_id: Telegram chat ID (for sub-agent result delivery).
 
         Returns the final text response.
         """
         async with self._get_lock(user_id):
+            self._current_chat_id = chat_id
             return await self._run_turn_impl(user_message, user_id, images=images)
 
     async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None) -> str:
@@ -889,7 +918,11 @@ class Agent:
         return final_text
 
     async def run_turn_stream(
-        self, user_message: str, user_id: str | None = None, images: list[dict] | None = None
+        self,
+        user_message: str,
+        user_id: str | None = None,
+        images: list[dict] | None = None,
+        chat_id: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Process a user message with streaming.
 
@@ -899,6 +932,7 @@ class Agent:
         iteration are yielded as they arrive.
         """
         async with self._get_lock(user_id):
+            self._current_chat_id = chat_id
             async for event in self._run_turn_stream_impl(user_message, user_id, images=images):
                 yield event
 

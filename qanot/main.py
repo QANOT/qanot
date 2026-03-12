@@ -239,9 +239,36 @@ async def main() -> None:
         scheduler=scheduler,
     )
 
+    # Register sub-agent tools (needs agent + telegram for delivery)
+    from qanot.tools.subagent import register_sub_agent_tools
+    register_sub_agent_tools(
+        tool_registry, config, provider, tool_registry,
+        get_user_id=lambda: agent.current_user_id,
+        get_chat_id=lambda: agent.current_chat_id,
+        send_callback=telegram.send_message,
+    )
+
+    # Register agent-to-agent delegation tools
+    from qanot.tools.delegate import register_delegate_tools
+    register_delegate_tools(
+        tool_registry, config, provider, tool_registry,
+        get_user_id=lambda: agent.current_user_id,
+    )
+    logger.info("Agent delegation tools registered (sub-agent + delegate)")
+
+    # Start per-agent Telegram bots (each with their own bot_token)
+    from qanot.agent_bot import start_agent_bots
+    agent_bots = await start_agent_bots(config, provider, tool_registry)
+
     try:
         await telegram.start()
     finally:
+        # Stop agent bots
+        for ab in agent_bots:
+            try:
+                await ab.stop()
+            except Exception as e:
+                logger.warning("Error stopping agent bot '%s': %s", ab.agent_def.id, e)
         await shutdown_plugins()
         scheduler.stop()
         logger.info("Qanot AI shut down")

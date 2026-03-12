@@ -399,15 +399,15 @@ class SqliteVecStore(VectorStore):
 
         placeholders = ",".join("?" for _ in rowid_list)
         chunk_rows = conn.execute(
-            f"SELECT rowid, id, text, source, user_id, metadata FROM chunks "
+            f"SELECT rowid, id, text, source, user_id, metadata, created_at FROM chunks "
             f"WHERE rowid IN ({placeholders})",
             rowid_list,
         ).fetchall()
 
         results: list[SearchResult] = []
         for crow in chunk_rows:
-            c_rowid, c_id, c_text, c_source, c_user_id, c_metadata = (
-                crow[0], crow[1], crow[2], crow[3], crow[4], json.loads(crow[5]),
+            c_rowid, c_id, c_text, c_source, c_user_id, c_metadata, c_created_at = (
+                crow[0], crow[1], crow[2], crow[3], crow[4], json.loads(crow[5]), crow[6],
             )
 
             if user_id and c_user_id != user_id:
@@ -422,7 +422,12 @@ class SqliteVecStore(VectorStore):
                 SearchResult(
                     chunk_id=c_id,
                     text=c_text,
-                    metadata={**c_metadata, "source": c_source, "user_id": c_user_id},
+                    metadata={
+                        **c_metadata,
+                        "source": c_source,
+                        "user_id": c_user_id,
+                        "created_at": c_created_at,
+                    },
                     score=score,
                 )
             )
@@ -449,8 +454,9 @@ class SqliteVecStore(VectorStore):
 
         try:
             rows = conn.execute(
-                "SELECT id, text, source, bm25(chunks_fts) as rank "
-                "FROM chunks_fts WHERE chunks_fts MATCH ? "
+                "SELECT f.id, f.text, f.source, bm25(chunks_fts) as rank, c.created_at "
+                "FROM chunks_fts f LEFT JOIN chunks c ON f.id = c.id "
+                "WHERE chunks_fts MATCH ? "
                 "ORDER BY rank LIMIT ?",
                 (fts_query, top_k),
             ).fetchall()
@@ -464,7 +470,7 @@ class SqliteVecStore(VectorStore):
                 SearchResult(
                     chunk_id=row[0],
                     text=row[1],
-                    metadata={"source": row[2]},
+                    metadata={"source": row[2], "created_at": row[4]},
                     score=_bm25_rank_to_score(row[3]),
                 )
             )

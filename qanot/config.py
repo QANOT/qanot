@@ -25,6 +25,23 @@ class ProviderConfig:
 
 
 @dataclass
+class AgentDefinition:
+    """Configuration for a named agent that can be delegated to."""
+    id: str  # Unique identifier (e.g., "researcher", "coder", "my-analyst")
+    name: str = ""  # Human-readable name (e.g., "Tadqiqotchi")
+    prompt: str = ""  # System prompt / personality
+    model: str = ""  # Model override (empty = use main model)
+    provider: str = ""  # Provider override (empty = use main provider)
+    api_key: str = ""  # API key override (empty = use main)
+    bot_token: str = ""  # Separate Telegram bot token (empty = internal agent only)
+    tools_allow: list[str] = field(default_factory=list)  # Whitelist (empty = all)
+    tools_deny: list[str] = field(default_factory=list)  # Blacklist
+    delegate_allow: list[str] = field(default_factory=list)  # Which agents this one can delegate to (empty = all)
+    max_iterations: int = 15  # Max tool-use loops for this agent
+    timeout: int = 120  # Seconds before timeout
+
+
+@dataclass
 class Config:
     bot_token: str = ""
     # Legacy single-provider fields (still supported)
@@ -92,6 +109,8 @@ class Config:
     # Image generation (Nano Banana / Gemini)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
     image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro (highest quality)
+    # Multi-agent definitions
+    agents: list[AgentDefinition] = field(default_factory=list)
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
@@ -132,10 +151,28 @@ def load_config(path: str | None = None) -> Config:
             base_url=pc.get("base_url", ""),
         ))
 
+    # Parse agent definitions
+    agent_defs = []
+    for ad in raw.get("agents", []):
+        agent_defs.append(AgentDefinition(
+            id=ad["id"],
+            name=ad.get("name", ""),
+            prompt=ad.get("prompt", ""),
+            model=ad.get("model", ""),
+            provider=ad.get("provider", ""),
+            api_key=ad.get("api_key", ""),
+            bot_token=ad.get("bot_token", ""),
+            tools_allow=ad.get("tools_allow", []),
+            tools_deny=ad.get("tools_deny", []),
+            delegate_allow=ad.get("delegate_allow", []),
+            max_iterations=ad.get("max_iterations", 15),
+            timeout=ad.get("timeout", 120),
+        ))
+
     # Auto-map simple fields (str, int, float, bool, list, dict) from JSON to dataclass.
-    # Only nested types (plugins, providers) need manual parsing.
+    # Only nested types (plugins, providers, agents) need manual parsing.
     import dataclasses
-    _NESTED_FIELDS = {"plugins", "providers"}
+    _NESTED_FIELDS = {"plugins", "providers", "agents"}
     simple = {}
     for f in dataclasses.fields(Config):
         if f.name in _NESTED_FIELDS:
@@ -147,4 +184,5 @@ def load_config(path: str | None = None) -> Config:
         **simple,
         plugins=plugins,
         providers=provider_configs,
+        agents=agent_defs,
     )
