@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction, ParseMode
-from aiogram.methods import SendMessageDraft
-from aiogram.types import Message
+from aiogram.methods import SendMessageDraft, SetMessageReaction
+from aiogram.types import Message, ReactionTypeEmoji
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 if TYPE_CHECKING:
@@ -188,6 +188,9 @@ class TelegramAdapter:
         if not text:
             return
 
+        # React with 👀 to acknowledge the message
+        await self._react(message.chat.id, message.message_id, "👀")
+
         async with self._concurrent:
             mode = self.config.response_mode
             try:
@@ -206,8 +209,13 @@ class TelegramAdapter:
                 if should_tts and self.config.get_voice_api_key():
                     await self._send_voice_reply(message.chat.id, str(user_id))
 
+                # React with ✅ when done
+                await self._react(message.chat.id, message.message_id, "✅")
+
             except Exception as e:
                 logger.error("Agent error: %s", e, exc_info=True)
+                # React with ❌ on error
+                await self._react(message.chat.id, message.message_id, "❌")
                 # User-friendly error messages
                 err_msg = str(e).lower()
                 if "rate_limit" in err_msg or "429" in err_msg:
@@ -624,6 +632,28 @@ class TelegramAdapter:
                 await asyncio.sleep(4)
         except asyncio.CancelledError:
             pass
+        except Exception:
+            pass
+
+    async def _react(self, chat_id: int, message_id: int, emoji: str) -> None:
+        """Set a reaction emoji on a message. Silently fails if unsupported."""
+        try:
+            await self.bot(SetMessageReaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            ))
+        except Exception:
+            pass  # Reactions may not be available in all chats
+
+    async def _clear_reaction(self, chat_id: int, message_id: int) -> None:
+        """Remove all reactions from a message."""
+        try:
+            await self.bot(SetMessageReaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[],
+            ))
         except Exception:
             pass
 
