@@ -53,6 +53,9 @@ class Config:
     telegram_mode: str = "polling"  # "polling" | "webhook"
     webhook_url: str = ""  # e.g. "https://bot.example.com/webhook"
     webhook_port: int = 8443  # local port for webhook server
+    # RAG
+    rag_enabled: bool = True
+    rag_mode: str = "auto"  # "auto" | "agentic" | "always"
 
 
 def load_config(path: str | None = None) -> Config:
@@ -113,4 +116,6 @@ def load_config(path: str | None = None) -> Config:
         telegram_mode=raw.get("telegram_mode", "polling"),
         webhook_url=raw.get("webhook_url", ""),
         webhook_port=raw.get("webhook_port", 8443),
+        rag_enabled=raw.get("rag_enabled", True),
+        rag_mode=raw.get("rag_mode", "auto"),
     )

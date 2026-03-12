@@ -195,6 +195,8 @@ class Agent:
             workspace_dir=config.workspace_dir,
         )
         self.prompt_mode = prompt_mode
+        self._current_user_id: str = ""
+        self._rag_indexer = None  # Set by main.py when RAG is enabled
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
         self._conversations: dict[str | None, list[dict]] = {}
@@ -241,8 +243,8 @@ class Agent:
             mode=self.prompt_mode,
         )
 
-    def _prepare_turn(self, user_message: str, messages: list[dict]) -> str:
-        """Shared turn setup: WAL scan, compaction recovery, add user message.
+    async def _prepare_turn(self, user_message: str, messages: list[dict]) -> str:
+        """Shared turn setup: WAL scan, RAG context, compaction recovery, add user message.
 
         Returns the (possibly modified) user_message.
         """
@@ -251,6 +253,29 @@ class Agent:
         if wal_entries:
             wal_write(wal_entries, self.config.workspace_dir)
             logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
+
+        # RAG context injection: auto-inject relevant memory for dumb models
+        # "auto"/"always" = inject, "agentic" = skip (model uses rag_search tool)
+        if (
+            self._rag_indexer is not None
+            and self.config.rag_mode in ("auto", "always")
+            and len(user_message.strip()) > 10  # skip trivial messages like "hi"
+        ):
+            try:
+                hints = await self._rag_indexer.search(
+                    user_message, top_k=3, user_id=self._current_user_id or None,
+                )
+                if hints:
+                    hint_text = "\n".join(
+                        f"- [{h['file']}] {h['content'][:200]}" for h in hints[:3]
+                    )
+                    user_message = (
+                        f"{user_message}\n\n---\n"
+                        f"[MEMORY CONTEXT — relevant past information]\n{hint_text}"
+                    )
+                    logger.debug("RAG: injected %d memory hints", len(hints))
+            except Exception as e:
+                logger.warning("RAG context injection failed: %s", e)
 
         # Check for compaction recovery
         if self.context.detect_compaction(messages):
@@ -441,8 +466,9 @@ class Agent:
 
     async def _run_turn_impl(self, user_message: str, user_id: str | None) -> str:
         """Internal implementation of run_turn (called under lock)."""
+        self._current_user_id = user_id or ""
         messages = self._get_messages(user_id)
-        user_message = self._prepare_turn(user_message, messages)
+        user_message = await self._prepare_turn(user_message, messages)
 
         final_text = ""
         recent_fingerprints: list[str] = []
@@ -516,8 +542,9 @@ class Agent:
         self, user_message: str, user_id: str | None
     ) -> AsyncIterator[StreamEvent]:
         """Internal streaming implementation (called under lock)."""
+        self._current_user_id = user_id or ""
         messages = self._get_messages(user_id)
-        user_message = self._prepare_turn(user_message, messages)
+        user_message = await self._prepare_turn(user_message, messages)
 
         recent_fingerprints: list[str] = []
 

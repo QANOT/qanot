@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# ── Write hooks for memory change notifications ──
+_write_hooks: list[Callable] = []
+
+
+def add_write_hook(hook: Callable[[str, str], None]) -> None:
+    """Register a callback for memory writes. Called with (content, source)."""
+    _write_hooks.append(hook)
+
+
+def _notify_hooks(content: str, source: str) -> None:
+    """Notify all registered write hooks, catching exceptions."""
+    for hook in _write_hooks:
+        try:
+            hook(content, source)
+        except Exception as e:
+            logger.warning("Memory write hook failed: %s", e)
 
 # WAL trigger patterns
 WAL_PATTERNS = [
@@ -78,6 +96,10 @@ def wal_write(entries: list[WALEntry], workspace_dir: str = "/data/workspace") -
 
     logger.debug("WAL wrote %d entries to SESSION-STATE.md", len(entries))
 
+    # Notify hooks with combined content
+    combined = "".join(lines)
+    _notify_hooks(combined, "SESSION-STATE.md")
+
 
 def write_daily_note(content: str, workspace_dir: str = "/data/workspace") -> None:
     """Append content to today's daily note."""
@@ -93,6 +115,8 @@ def write_daily_note(content: str, workspace_dir: str = "/data/workspace") -> No
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     with open(daily_path, "a", encoding="utf-8") as f:
         f.write(f"\n## [{ts}]\n{content}\n")
+
+    _notify_hooks(content, f"memory/{today}.md")
 
 
 def memory_search(query: str, workspace_dir: str = "/data/workspace") -> list[dict]:

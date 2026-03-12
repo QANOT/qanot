@@ -17,6 +17,9 @@ dependencies = [
     "apscheduler>=3.10",
 ]
 
+[project.optional-dependencies]
+rag = ["sqlite-vec>=0.1.6"]
+
 [project.scripts]
 qanot = "qanot.cli:main"
 

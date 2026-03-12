@@ -1,0 +1,141 @@
+"""Memory indexer that bridges Qanot's memory system with RAG."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from qanot.rag.engine import RAGEngine
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryIndexer:
+    """Indexes workspace memory files into the RAG engine.
+
+    Watches MEMORY.md, SESSION-STATE.md, and daily notes,
+    re-indexing them when content changes.
+    """
+
+    def __init__(self, engine: RAGEngine, workspace_dir: str = "/data/workspace"):
+        self.engine = engine
+        self.workspace_dir = Path(workspace_dir)
+        self._indexed_hashes: dict[str, int] = {}
+
+    async def index_workspace(self, user_id: str = "") -> int:
+        """Index all memory files in the workspace.
+
+        Skips files whose content hash hasn't changed since last indexing.
+
+        Args:
+            user_id: Owner of this workspace.
+
+        Returns:
+            Number of new chunks indexed.
+        """
+        total_chunks = 0
+
+        # Index MEMORY.md
+        memory_path = self.workspace_dir / "MEMORY.md"
+        if memory_path.exists():
+            total_chunks += await self._index_file(memory_path, user_id)
+
+        # Index SESSION-STATE.md
+        state_path = self.workspace_dir / "SESSION-STATE.md"
+        if state_path.exists():
+            total_chunks += await self._index_file(state_path, user_id)
+
+        # Index daily notes
+        memory_dir = self.workspace_dir / "memory"
+        if memory_dir.exists():
+            for note_path in sorted(memory_dir.glob("*.md"), reverse=True)[:30]:
+                total_chunks += await self._index_file(note_path, user_id)
+
+        if total_chunks > 0:
+            logger.info("Indexed %d chunks from workspace for user=%r", total_chunks, user_id)
+
+        return total_chunks
+
+    async def index_text(
+        self,
+        text: str,
+        *,
+        source: str,
+        user_id: str = "",
+        metadata: dict | None = None,
+    ) -> list[str]:
+        """Index arbitrary text into RAG.
+
+        Args:
+            text: Content to index.
+            source: Source identifier.
+            user_id: Owner.
+            metadata: Extra metadata.
+
+        Returns:
+            List of chunk IDs.
+        """
+        return await self.engine.ingest(
+            text,
+            source=source,
+            user_id=user_id,
+            metadata=metadata,
+        )
+
+    async def _index_file(self, path: Path, user_id: str) -> int:
+        """Index a single file if its content has changed."""
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Failed to read %s: %s", path, exc)
+            return 0
+
+        content_hash = hash(content)
+        source = str(path.relative_to(self.workspace_dir))
+
+        if self._indexed_hashes.get(source) == content_hash:
+            return 0
+
+        # Re-index: delete old chunks, ingest new ones
+        self.engine.store.delete_source(source)
+        chunk_ids = await self.engine.ingest(
+            content,
+            source=source,
+            user_id=user_id,
+            metadata={"file": path.name},
+        )
+        self._indexed_hashes[source] = content_hash
+        return len(chunk_ids)
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        user_id: str | None = None,
+    ) -> list[dict]:
+        """Search indexed memory. Returns dicts matching memory.py format.
+
+        Args:
+            query: Search query.
+            top_k: Max results.
+            user_id: Filter by user.
+
+        Returns:
+            List of result dicts with file, content, and score keys.
+        """
+        rag_result = await self.engine.query(
+            query,
+            top_k=top_k,
+            user_id=user_id,
+        )
+
+        return [
+            {
+                "file": r.metadata.get("source", ""),
+                "content": r.text,
+                "score": r.score,
+                "chunk_id": r.chunk_id,
+            }
+            for r in rag_result.results
+        ]

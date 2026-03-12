@@ -85,8 +85,29 @@ async def main() -> None:
     # Create tool registry
     tool_registry = ToolRegistry()
 
+    # Initialize RAG engine
+    rag_engine = None
+    rag_indexer = None
+    if config.rag_enabled:
+        from qanot.rag import create_embedder, SqliteVecStore, RAGEngine, MemoryIndexer
+        from qanot.tools.rag import register_rag_tools
+
+        embedder = create_embedder(config)
+        if embedder:
+            store = SqliteVecStore(
+                db_path=f"{config.workspace_dir}/rag.db",
+                dimensions=embedder.dimensions,
+            )
+            rag_engine = RAGEngine(embedder=embedder, store=store)
+            rag_indexer = MemoryIndexer(rag_engine, config.workspace_dir)
+
+            # Index existing memory files
+            await rag_indexer.index_workspace()
+
+            logger.info("RAG engine initialized with %s", type(embedder).__name__)
+
     # Register built-in tools
-    register_builtin_tools(tool_registry, config.workspace_dir, context)
+    register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)
 
     # Create session writer
     session = SessionWriter(config.sessions_dir)
@@ -115,6 +136,25 @@ async def main() -> None:
         session=session,
         context=context,
     )
+
+    # Register RAG tools and hooks (needs agent reference for get_user_id)
+    if rag_engine is not None and rag_indexer is not None:
+        from qanot.tools.rag import register_rag_tools
+        from qanot.memory import add_write_hook
+        import asyncio as _asyncio
+
+        # Give agent the RAG indexer for auto-context injection
+        agent._rag_indexer = rag_indexer
+
+        register_rag_tools(
+            tool_registry, rag_engine, config.workspace_dir,
+            get_user_id=lambda: agent._current_user_id,
+        )
+
+        def _on_memory_write(content: str, source: str) -> None:
+            _asyncio.create_task(rag_indexer.index_text(content, source=source))
+
+        add_write_hook(_on_memory_write)
 
     # Update scheduler with main agent
     scheduler.main_agent = agent

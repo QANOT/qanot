@@ -15,6 +15,7 @@
   "telegram_mode": "polling",
   "webhook_url": "",
   "webhook_port": 8443,
+  "rag_enabled": true,
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",

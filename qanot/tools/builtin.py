@@ -8,10 +8,14 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from qanot.agent import ToolRegistry
 from qanot.context import ContextTracker
 from qanot.memory import memory_search as _memory_search
+
+if TYPE_CHECKING:
+    from qanot.rag.indexer import MemoryIndexer
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,7 @@ def register_builtin_tools(
     registry: ToolRegistry,
     workspace_dir: str,
     context: ContextTracker,
+    rag_indexer: "MemoryIndexer | None" = None,
 ) -> None:
     """Register all built-in tools."""
 
@@ -205,6 +210,16 @@ def register_builtin_tools(
         query = params.get("query", "")
         if not query:
             return json.dumps({"error": "query is required"})
+
+        # Use RAG-powered search when available, fall back to substring search
+        if rag_indexer is not None:
+            try:
+                results = await rag_indexer.search(query)
+                if results:
+                    return json.dumps(results, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning("RAG search failed, falling back to substring: %s", e)
+
         results = _memory_search(query, workspace_dir)
         if not results:
             return json.dumps({"message": "Hech narsa topilmadi", "query": query})

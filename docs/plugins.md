@@ -1,0 +1,229 @@
+# Plugin System
+
+Qanot AI supports plugins for adding custom tools, extending the agent's personality, and integrating with external services.
+
+## Plugin Architecture
+
+A plugin is a directory containing at minimum a `plugin.py` file with a class that extends `Plugin`:
+
+```
+plugins/
+└── myplugin/
+    ├── plugin.py      # Required: Plugin subclass
+    ├── TOOLS.md       # Optional: tool docs appended to workspace TOOLS.md
+    └── helpers.py     # Optional: additional modules
+```
+
+Plugins are loaded from two locations (checked in order):
+
+1. **Built-in:** `plugins/` directory at the package root
+2. **External:** The `plugins_dir` path from config (default: `/data/plugins`)
+
+## Creating a Plugin
+
+### Step 1: Create the plugin directory
+
+```bash
+mkdir -p plugins/weather
+```
+
+### Step 2: Write plugin.py
+
+```python
+from qanot.plugins.base import Plugin, ToolDef, tool
+
+class QanotPlugin(Plugin):
+    """Weather lookup plugin."""
+
+    name = "weather"
+    description = "Weather information for Uzbekistan cities"
+
+    # Optional: content appended to workspace TOOLS.md
+    tools_md = """
+## Weather Tools
+
+### weather_get
+Get current weather for a city in Uzbekistan.
+- **city**: City name (e.g., "Tashkent", "Samarkand")
+"""
+
+    # Optional: content appended to workspace SOUL.md
+    soul_append = """
+## Weather Behavior
+When asked about weather, always use the weather_get tool.
+Include temperature in both Celsius and Fahrenheit.
+"""
+
+    async def setup(self, config: dict) -> None:
+        """Called when the plugin loads. Initialize resources here."""
+        self.api_key = config.get("api_key", "")
+        self.base_url = config.get("base_url", "https://api.weather.example.com")
+
+    async def teardown(self) -> None:
+        """Called on shutdown. Clean up resources here."""
+        pass
+
+    def get_tools(self) -> list[ToolDef]:
+        """Return tool definitions. Use _collect_tools() for decorated methods."""
+        return self._collect_tools()
+
+    @tool(
+        name="weather_get",
+        description="Hozirgi ob-havo ma'lumotlari.",
+        parameters={
+            "type": "object",
+            "required": ["city"],
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "Shahar nomi (masalan: Tashkent)",
+                },
+            },
+        },
+    )
+    async def weather_get(self, params: dict) -> str:
+        import aiohttp
+        import json
+
+        city = params.get("city", "Tashkent")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.base_url}/current",
+                params={"city": city, "key": self.api_key},
+            ) as resp:
+                data = await resp.json()
+                return json.dumps(data, ensure_ascii=False)
+```
+
+### Step 3: Configure the plugin
+
+Add the plugin to `config.json`:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "weather",
+      "enabled": true,
+      "config": {
+        "api_key": "your-weather-api-key",
+        "base_url": "https://api.weather.example.com"
+      }
+    }
+  ]
+}
+```
+
+## The @tool Decorator
+
+The `@tool` decorator marks a method as an agent-callable tool:
+
+```python
+@tool(
+    name="tool_name",           # Unique tool name
+    description="What it does", # Shown to the LLM
+    parameters={                # JSON Schema for input
+        "type": "object",
+        "required": ["param1"],
+        "properties": {
+            "param1": {"type": "string", "description": "..."},
+            "param2": {"type": "integer", "description": "...", "default": 10},
+        },
+    },
+)
+async def my_tool(self, params: dict) -> str:
+    # params is a dict matching the JSON Schema
+    # Return a string (typically JSON)
+    return json.dumps({"result": "value"})
+```
+
+The `_collect_tools()` method on `Plugin` scans for all methods with `@tool` and returns `ToolDef` objects.
+
+## Plugin Lifecycle
+
+### Loading
+
+1. Plugin name is looked up in built-in and external directories
+2. `plugin.py` is dynamically imported
+3. A class named `QanotPlugin` is searched for; if not found, any `Plugin` subclass is used
+4. The class is instantiated and `setup(config)` is called
+5. `get_tools()` is called and each tool is registered in the `ToolRegistry`
+6. `tools_md` content is appended to `workspace/TOOLS.md`
+7. `soul_append` content is appended to `workspace/SOUL.md`
+
+### Runtime
+
+- Tools are available immediately after loading
+- The plugin instance persists for the lifetime of the process
+- Tool handlers are called with the params dict when the agent invokes them
+
+### Shutdown
+
+`teardown()` is called when the process exits. Use it to close connections, flush buffers, etc.
+
+## TOOLS.md Integration
+
+If your plugin sets `tools_md`, that content is appended to the workspace `TOOLS.md` file. This is how the agent learns about your tools -- the content appears in the system prompt.
+
+The content is only appended once (checked by plugin name). Write it as Markdown that explains to the agent when and how to use your tools.
+
+## SOUL_APPEND Integration
+
+If your plugin sets `soul_append`, that content is appended to the workspace `SOUL.md` file. Use this to add personality traits or behavioral rules related to your plugin.
+
+The first line of `soul_append` is used as a deduplication marker -- it won't be appended twice.
+
+## Plugin Configuration
+
+The `config` dict passed to `setup()` comes directly from the plugin entry in `config.json`. You can put any key-value pairs there:
+
+```json
+{
+  "name": "myplugin",
+  "enabled": true,
+  "config": {
+    "api_url": "https://api.example.com",
+    "db_host": "localhost",
+    "db_port": 3306,
+    "db_user": "admin",
+    "db_password": "secret",
+    "timeout": 30
+  }
+}
+```
+
+Access in `setup()`:
+
+```python
+async def setup(self, config: dict) -> None:
+    self.api_url = config["api_url"]
+    self.timeout = config.get("timeout", 10)
+```
+
+## Manual Tool Registration
+
+For cases where a full plugin is not needed, register tools directly on the `ToolRegistry`:
+
+```python
+async def my_handler(params: dict) -> str:
+    return json.dumps({"ok": True})
+
+registry.register(
+    name="my_tool",
+    description="Does something useful.",
+    parameters={"type": "object", "properties": {}},
+    handler=my_handler,
+)
+```
+
+This is done in `qanot/main.py` for built-in tools and can be used in custom entry points.
+
+## Plugin Discovery
+
+Plugins are found by directory name. The loader checks:
+
+1. `{package_root}/plugins/{name}/plugin.py` -- built-in plugins shipped with Qanot
+2. `{plugins_dir}/{name}/plugin.py` -- external plugins from the config path
+
+The plugin directory is temporarily added to `sys.path` during loading, then removed. This means your plugin can import from sibling modules in its directory.
