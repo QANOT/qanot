@@ -118,13 +118,21 @@ class OpenAIProvider(LLMProvider):
         prices = PRICING.get(self.model, DEFAULT_PRICING)
         return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
 
+    def _prepare_messages(self, messages: list[dict], system: str | None) -> list[dict]:
+        """Convert messages to OpenAI format. Override in subclasses for custom preprocessing."""
+        return _convert_messages(messages, system)
+
+    def _prepare_tools(self, tools: list[dict]) -> list[dict]:
+        """Convert tools to OpenAI format. Override in subclasses for custom preprocessing."""
+        return _anthropic_tools_to_openai(tools)
+
     async def chat(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
         system: str | None = None,
     ) -> ProviderResponse:
-        converted = _convert_messages(messages, system)
+        converted = self._prepare_messages(messages, system)
 
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -132,7 +140,7 @@ class OpenAIProvider(LLMProvider):
         }
 
         if tools:
-            kwargs["tools"] = _anthropic_tools_to_openai(tools)
+            kwargs["tools"] = self._prepare_tools(tools)
 
         try:
             response = await self.client.chat.completions.create(**kwargs)
@@ -181,7 +189,7 @@ class OpenAIProvider(LLMProvider):
         tools: list[dict] | None = None,
         system: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        converted = _convert_messages(messages, system)
+        converted = self._prepare_messages(messages, system)
 
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -191,7 +199,7 @@ class OpenAIProvider(LLMProvider):
         }
 
         if tools:
-            kwargs["tools"] = _anthropic_tools_to_openai(tools)
+            kwargs["tools"] = self._prepare_tools(tools)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

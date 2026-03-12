@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
 
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 25
 MAX_SAME_ACTION = 3  # Break after N identical consecutive tool calls
 TOOL_TIMEOUT = 30  # seconds per tool execution
+CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
 
 # Errors that should NOT be retried (deterministic failures)
 DETERMINISTIC_ERRORS = (
@@ -197,6 +199,7 @@ class Agent:
         # None key is used for non-user contexts (cron jobs, etc.)
         self._conversations: dict[str | None, list[dict]] = {}
         self._locks: dict[str | None, asyncio.Lock] = {}
+        self._last_active: dict[str | None, float] = {}
         self._last_user_msg_id = ""
 
     def _get_lock(self, user_id: str | None) -> asyncio.Lock:
@@ -205,8 +208,23 @@ class Agent:
             self._locks[user_id] = asyncio.Lock()
         return self._locks[user_id]
 
+    def _evict_stale(self) -> None:
+        """Remove conversation state for users idle longer than CONVERSATION_TTL."""
+        now = time.monotonic()
+        stale = [
+            uid for uid, ts in self._last_active.items()
+            if now - ts > CONVERSATION_TTL
+        ]
+        for uid in stale:
+            self._conversations.pop(uid, None)
+            self._locks.pop(uid, None)
+            self._last_active.pop(uid, None)
+            logger.debug("Evicted stale conversation for user_id=%s", uid)
+
     def _get_messages(self, user_id: str | None = None) -> list[dict]:
         """Get or create conversation history for a user."""
+        self._evict_stale()
+        self._last_active[user_id] = time.monotonic()
         if user_id not in self._conversations:
             self._conversations[user_id] = []
         return self._conversations[user_id]
@@ -221,6 +239,153 @@ class Agent:
             context_percent=self.context.get_context_percent(),
             total_tokens=self.context.total_tokens,
             mode=self.prompt_mode,
+        )
+
+    def _prepare_turn(self, user_message: str, messages: list[dict]) -> str:
+        """Shared turn setup: WAL scan, compaction recovery, add user message.
+
+        Returns the (possibly modified) user_message.
+        """
+        # WAL Protocol: scan user message BEFORE generating response
+        wal_entries = wal_scan(user_message)
+        if wal_entries:
+            wal_write(wal_entries, self.config.workspace_dir)
+            logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
+
+        # Check for compaction recovery
+        if self.context.detect_compaction(messages):
+            recovery = self.context.recover_from_compaction()
+            if recovery:
+                user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
+                logger.info("Compaction recovery injected")
+
+        # Add user message to conversation
+        messages.append({"role": "user", "content": user_message})
+
+        # Log to session
+        self._last_user_msg_id = self.session.log_user_message(user_message)
+        return user_message
+
+    def _prepare_iteration(self, messages: list[dict], user_id: str | None) -> tuple[list[dict], str, list[dict]]:
+        """Shared per-iteration prep: compaction, repair, build prompt/tools.
+
+        Returns (messages, system_prompt, tool_defs).
+        """
+        if self.context.needs_compaction() and len(messages) > 6:
+            compacted = self.context.compact_messages(messages)
+            self._conversations[user_id] = compacted
+            messages = compacted
+            logger.info("Proactive compaction triggered at %.1f%%",
+                       self.context.get_context_percent())
+
+        messages = _repair_messages(messages)
+        self._conversations[user_id] = messages
+
+        system = self._build_system_prompt()
+        tool_defs = self.tools.get_definitions()
+        return messages, system, tool_defs
+
+    def _track_usage(self, response: ProviderResponse) -> None:
+        """Track usage and check context threshold."""
+        self.context.add_usage(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
+        if self.context.check_threshold():
+            logger.warning("Context at %.1f%% — Working Buffer activated",
+                         self.context.get_context_percent())
+
+    def _check_loop(
+        self, tool_calls: list[ToolCall], recent_fingerprints: list[str]
+    ) -> str | None:
+        """Check for tool call loops. Returns loop message if detected, None otherwise."""
+        batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
+        batch_key = ":".join(sorted(batch_fps))
+
+        if _is_loop_detected(recent_fingerprints, batch_key):
+            logger.warning(
+                "Loop detected BEFORE execution: %s (count=%d)",
+                tool_calls[0].name, MAX_SAME_ACTION,
+            )
+            return (
+                f"Kechirasiz, {tool_calls[0].name} "
+                f"amali takrorlanmoqda. Iltimos, boshqacha so'rov bering."
+            )
+
+        recent_fingerprints.append(batch_key)
+        return None
+
+    def _build_assistant_tool_message(
+        self, text: str | None, tool_calls: list[ToolCall]
+    ) -> dict:
+        """Build an assistant message with text + tool_use blocks."""
+        content: list[dict] = []
+        if text:
+            content.append({"type": "text", "text": text})
+        for tc in tool_calls:
+            content.append({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "input": tc.input,
+            })
+        return {"role": "assistant", "content": content}
+
+    def _log_tool_use(
+        self, text: str, tool_calls: list[ToolCall], usage: Usage
+    ) -> None:
+        """Log tool uses to session."""
+        self.session.log_assistant_message(
+            text=text,
+            tool_uses=[{"name": tc.name, "input": tc.input} for tc in tool_calls],
+            usage=usage,
+            parent_id=self._last_user_msg_id,
+            model=self.provider.model,
+        )
+
+    async def _execute_tools(self, tool_calls: list[ToolCall]) -> list[dict]:
+        """Execute tool calls and return tool_result blocks."""
+        tool_results: list[dict] = []
+        for tc in tool_calls:
+            logger.info("Executing tool: %s", tc.name)
+            result = await self.tools.execute(tc.name, tc.input)
+
+            if _is_deterministic_error(result):
+                result_data = json.loads(result)
+                result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
+                result = json.dumps(result_data)
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tc.id,
+                "content": result,
+            })
+        return tool_results
+
+    def _handle_end_turn(
+        self,
+        final_text: str,
+        user_message: str,
+        messages: list[dict],
+        usage: Usage,
+    ) -> None:
+        """Shared end-turn handling: append message, log, buffer, daily note."""
+        messages.append({"role": "assistant", "content": final_text})
+
+        self.session.log_assistant_message(
+            text=final_text,
+            usage=usage,
+            parent_id=self._last_user_msg_id,
+            model=self.provider.model,
+        )
+
+        if self.context.buffer_active:
+            summary = final_text[:200] + "..." if len(final_text) > 200 else final_text
+            self.context.append_to_buffer(user_message, summary)
+
+        write_daily_note(
+            f"**User:** {user_message[:100]}...\n**Agent:** {final_text[:200]}...",
+            self.config.workspace_dir,
         )
 
     async def _call_provider_with_retry(
@@ -277,51 +442,14 @@ class Agent:
     async def _run_turn_impl(self, user_message: str, user_id: str | None) -> str:
         """Internal implementation of run_turn (called under lock)."""
         messages = self._get_messages(user_id)
+        user_message = self._prepare_turn(user_message, messages)
 
-        # WAL Protocol: scan user message BEFORE generating response
-        wal_entries = wal_scan(user_message)
-        if wal_entries:
-            wal_write(wal_entries, self.config.workspace_dir)
-            logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
-
-        # Check for compaction recovery
-        if self.context.detect_compaction(messages):
-            recovery = self.context.recover_from_compaction()
-            if recovery:
-                user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
-                logger.info("Compaction recovery injected")
-
-        # Add user message to conversation
-        messages.append({
-            "role": "user",
-            "content": user_message,
-        })
-
-        # Log to session
-        self._last_user_msg_id = self.session.log_user_message(user_message)
-
-        # Agent loop with circuit breaker
         final_text = ""
         recent_fingerprints: list[str] = []
 
         for iteration in range(MAX_ITERATIONS):
-            # ── Proactive compaction ──
-            if self.context.needs_compaction() and len(messages) > 6:
-                messages_ref = self._get_messages(user_id)
-                compacted = self.context.compact_messages(messages_ref)
-                self._conversations[user_id] = compacted
-                messages = compacted
-                logger.info("Proactive compaction triggered at %.1f%%",
-                           self.context.get_context_percent())
+            messages, system, tool_defs = self._prepare_iteration(messages, user_id)
 
-            # Repair messages before sending
-            messages = _repair_messages(messages)
-            self._conversations[user_id] = messages
-
-            system = self._build_system_prompt()
-            tool_defs = self.tools.get_definitions()
-
-            # Call LLM with retry
             try:
                 response = await self._call_provider_with_retry(
                     messages=messages,
@@ -337,129 +465,32 @@ class Agent:
                     return "API kalitda xatolik. Administrator bilan bog'laning."
                 elif error_type == ERROR_BILLING:
                     return "API hisob muammosi. Administrator bilan bog'laning."
-                return f"Xatolik yuz berdi, qaytadan urinib ko'ring."
+                return "Xatolik yuz berdi, qaytadan urinib ko'ring."
 
-            # Track usage
-            self.context.add_usage(
-                response.usage.input_tokens,
-                response.usage.output_tokens,
-            )
-
-            # Check 60% threshold
-            if self.context.check_threshold():
-                logger.warning("Context at %.1f%% — Working Buffer activated",
-                             self.context.get_context_percent())
+            self._track_usage(response)
 
             if response.stop_reason == "tool_use" and response.tool_calls:
-                # ── Pre-execution loop detection ──
-                batch_fps = [
-                    _tool_call_fingerprint(tc.name, tc.input)
-                    for tc in response.tool_calls
-                ]
-                batch_key = ":".join(sorted(batch_fps))
-
-                if _is_loop_detected(recent_fingerprints, batch_key):
-                    logger.warning(
-                        "Loop detected BEFORE execution: %s (count=%d)",
-                        response.tool_calls[0].name, MAX_SAME_ACTION,
-                    )
-                    final_text = (
-                        f"Kechirasiz, {response.tool_calls[0].name} "
-                        f"amali takrorlanmoqda. Iltimos, boshqacha so'rov bering."
-                    )
+                loop_msg = self._check_loop(response.tool_calls, recent_fingerprints)
+                if loop_msg:
+                    final_text = loop_msg
                     messages.append({"role": "assistant", "content": final_text})
                     break
 
-                recent_fingerprints.append(batch_key)
-
-                # Build assistant message with text + tool_use blocks
-                assistant_content: list[dict] = []
-                if response.content:
-                    assistant_content.append({"type": "text", "text": response.content})
-                for tc in response.tool_calls:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": tc.input,
-                    })
-
-                messages.append({
-                    "role": "assistant",
-                    "content": assistant_content,
-                })
-
-                # Log tool uses
-                tool_use_dicts = [{"name": tc.name, "input": tc.input} for tc in response.tool_calls]
-                self.session.log_assistant_message(
-                    text=response.content,
-                    tool_uses=tool_use_dicts,
-                    usage=response.usage,
-                    parent_id=self._last_user_msg_id,
-                    model=self.provider.model,
+                messages.append(
+                    self._build_assistant_tool_message(response.content, response.tool_calls)
                 )
+                self._log_tool_use(response.content, response.tool_calls, response.usage)
 
-                # Execute tools and collect results (truncated)
-                tool_results: list[dict] = []
-                for tc in response.tool_calls:
-                    logger.info("Executing tool: %s", tc.name)
-                    result = await self.tools.execute(tc.name, tc.input)
-
-                    # ── Error classification ──
-                    if _is_deterministic_error(result):
-                        # Inject hint so LLM doesn't retry the same call
-                        result_data = json.loads(result)
-                        result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
-                        result = json.dumps(result_data)
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc.id,
-                        "content": result,
-                    })
-
-                # Add tool results as user message
-                messages.append({
-                    "role": "user",
-                    "content": tool_results,
-                })
+                tool_results = await self._execute_tools(response.tool_calls)
+                messages.append({"role": "user", "content": tool_results})
 
             elif response.stop_reason == "end_turn":
                 final_text = response.content
-
-                # Add assistant response to messages
-                messages.append({
-                    "role": "assistant",
-                    "content": response.content,
-                })
-
-                # Log final response
-                self.session.log_assistant_message(
-                    text=response.content,
-                    usage=response.usage,
-                    parent_id=self._last_user_msg_id,
-                    model=self.provider.model,
-                )
-
-                # Write to working buffer if active
-                if self.context.buffer_active:
-                    summary = final_text[:200] + "..." if len(final_text) > 200 else final_text
-                    self.context.append_to_buffer(user_message, summary)
-
-                # Write daily note
-                write_daily_note(
-                    f"**User:** {user_message[:100]}...\n**Agent:** {final_text[:200]}...",
-                    self.config.workspace_dir,
-                )
-
+                self._handle_end_turn(final_text, user_message, messages, response.usage)
                 break
             else:
-                # Unknown stop reason
                 final_text = response.content or "(No response)"
-                messages.append({
-                    "role": "assistant",
-                    "content": final_text,
-                })
+                messages.append({"role": "assistant", "content": final_text})
                 break
         else:
             final_text = "(Agent reached maximum iterations)"
@@ -486,37 +517,12 @@ class Agent:
     ) -> AsyncIterator[StreamEvent]:
         """Internal streaming implementation (called under lock)."""
         messages = self._get_messages(user_id)
-
-        # WAL Protocol
-        wal_entries = wal_scan(user_message)
-        if wal_entries:
-            wal_write(wal_entries, self.config.workspace_dir)
-
-        # Compaction recovery
-        if self.context.detect_compaction(messages):
-            recovery = self.context.recover_from_compaction()
-            if recovery:
-                user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
-
-        messages.append({"role": "user", "content": user_message})
-        self._last_user_msg_id = self.session.log_user_message(user_message)
+        user_message = self._prepare_turn(user_message, messages)
 
         recent_fingerprints: list[str] = []
 
         for iteration in range(MAX_ITERATIONS):
-            # ── Proactive compaction ──
-            if self.context.needs_compaction() and len(messages) > 6:
-                messages_ref = self._get_messages(user_id)
-                compacted = self.context.compact_messages(messages_ref)
-                self._conversations[user_id] = compacted
-                messages = compacted
-
-            # Repair messages
-            messages = _repair_messages(messages)
-            self._conversations[user_id] = messages
-
-            system = self._build_system_prompt()
-            tool_defs = self.tools.get_definitions()
+            messages, system, tool_defs = self._prepare_iteration(messages, user_id)
 
             response: ProviderResponse | None = None
             text_parts: list[str] = []
@@ -539,11 +545,9 @@ class Agent:
                 error_type = classify_error(e)
                 logger.error("Stream error: %s [%s]", e, error_type)
 
-                # Try non-streaming retry for transient errors
+                # Try non-streaming fallback for transient errors
                 if error_type in TRANSIENT_FAILURES:
-                    backoff = 3
-                    logger.info("Stream failed, retrying non-stream in %ds...", backoff)
-                    await asyncio.sleep(backoff)
+                    await asyncio.sleep(3)
                     try:
                         response = await self.provider.chat(
                             messages=messages,
@@ -554,117 +558,51 @@ class Agent:
                             yield StreamEvent(type="text_delta", text=response.content)
                             text_parts.append(response.content)
                         tool_calls = response.tool_calls
-                    except Exception as e2:
-                        error_msg = "Xatolik yuz berdi, qaytadan urinib ko'ring."
+                    except Exception:
                         yield StreamEvent(
                             type="done",
-                            response=ProviderResponse(content=error_msg),
+                            response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),
                         )
                         return
                 else:
-                    error_msg = "Xatolik yuz berdi, qaytadan urinib ko'ring."
                     yield StreamEvent(
                         type="done",
-                        response=ProviderResponse(content=error_msg),
+                        response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),
                     )
                     return
 
             if response is None and not tool_calls:
                 break
 
-            # Track usage
             if response:
-                self.context.add_usage(
-                    response.usage.input_tokens,
-                    response.usage.output_tokens,
-                )
-                if self.context.check_threshold():
-                    logger.warning(
-                        "Context at %.1f%% — Working Buffer activated",
-                        self.context.get_context_percent(),
-                    )
+                self._track_usage(response)
 
             stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
 
             if stop_reason == "tool_use" and tool_calls:
-                # ── Pre-execution loop detection ──
-                batch_fps = [
-                    _tool_call_fingerprint(tc.name, tc.input)
-                    for tc in tool_calls
-                ]
-                batch_key = ":".join(sorted(batch_fps))
-
-                if _is_loop_detected(recent_fingerprints, batch_key):
-                    logger.warning("Loop detected in stream BEFORE execution")
+                loop_msg = self._check_loop(tool_calls, recent_fingerprints)
+                if loop_msg:
                     yield StreamEvent(
                         type="done",
-                        response=ProviderResponse(
-                            content=f"Kechirasiz, {tool_calls[0].name} amali takrorlanmoqda.",
-                        ),
+                        response=ProviderResponse(content=loop_msg),
                     )
                     return
 
-                recent_fingerprints.append(batch_key)
+                text = response.content if response else ""
+                usage = response.usage if response else Usage()
 
-                # Build assistant message
-                assistant_content: list[dict] = []
-                if response and response.content:
-                    assistant_content.append({"type": "text", "text": response.content})
-                for tc in tool_calls:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": tc.input,
-                    })
-                messages.append({"role": "assistant", "content": assistant_content})
+                messages.append(self._build_assistant_tool_message(text, tool_calls))
+                self._log_tool_use(text, tool_calls, usage)
 
-                self.session.log_assistant_message(
-                    text=response.content if response else "",
-                    tool_uses=[{"name": tc.name, "input": tc.input} for tc in tool_calls],
-                    usage=response.usage if response else Usage(),
-                    parent_id=self._last_user_msg_id,
-                    model=self.provider.model,
-                )
-
-                # Execute tools with timeout and truncation
-                tool_results: list[dict] = []
-                for tc in tool_calls:
-                    logger.info("Executing tool: %s", tc.name)
-                    result = await self.tools.execute(tc.name, tc.input)
-                    if _is_deterministic_error(result):
-                        result_data = json.loads(result)
-                        result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
-                        result = json.dumps(result_data)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc.id,
-                        "content": result,
-                    })
+                tool_results = await self._execute_tools(tool_calls)
                 messages.append({"role": "user", "content": tool_results})
 
-                # Signal that tools ran and we're continuing
                 yield StreamEvent(type="tool_use")
 
             elif stop_reason == "end_turn":
                 final_text = response.content if response else "".join(text_parts)
-                messages.append({"role": "assistant", "content": final_text})
-
-                self.session.log_assistant_message(
-                    text=final_text,
-                    usage=response.usage if response else Usage(),
-                    parent_id=self._last_user_msg_id,
-                    model=self.provider.model,
-                )
-
-                if self.context.buffer_active:
-                    summary = final_text[:200] + "..." if len(final_text) > 200 else final_text
-                    self.context.append_to_buffer(user_message, summary)
-
-                write_daily_note(
-                    f"**User:** {user_message[:100]}...\n**Agent:** {final_text[:200]}...",
-                    self.config.workspace_dir,
-                )
+                usage = response.usage if response else Usage()
+                self._handle_end_turn(final_text, user_message, messages, usage)
 
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return
@@ -674,10 +612,8 @@ class Agent:
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return
 
-        # Max iterations reached
         yield StreamEvent(
             type="done",
-            text="(Agent reached maximum iterations)",
             response=ProviderResponse(content="(Agent reached maximum iterations)"),
         )
 
@@ -685,8 +621,12 @@ class Agent:
         """Reset conversation state for a user, or all if user_id is None."""
         if user_id is not None:
             self._conversations.pop(user_id, None)
+            self._locks.pop(user_id, None)
+            self._last_active.pop(user_id, None)
         else:
             self._conversations.clear()
+            self._locks.clear()
+            self._last_active.clear()
 
 
 async def spawn_isolated_agent(
