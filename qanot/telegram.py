@@ -25,8 +25,22 @@ logger = logging.getLogger(__name__)
 
 MAX_MSG_LEN = 4000
 
+# Regex to strip leaked tool-call text (Llama models sometimes output these as text)
+_TOOL_LEAK_RE = re.compile(
+    r'<function[^>]*>.*?</function>|'
+    r'<tool_call>.*?</tool_call>|'
+    r'\{"name"\s*:\s*"[^"]+"\s*,\s*"parameters"\s*:',
+    re.DOTALL,
+)
+
 
 # ── Formatting helpers ──────────────────────────────────────
+
+
+def _sanitize_response(text: str) -> str:
+    """Strip leaked tool call artifacts from LLM output."""
+    cleaned = _TOOL_LEAK_RE.sub("", text).strip()
+    return cleaned if cleaned else text
 
 
 def _md_to_html(text: str) -> str:
@@ -152,11 +166,19 @@ class TelegramAdapter:
                 else:
                     await self._respond_blocked(message.chat.id, str(user_id), text)
             except Exception as e:
-                logger.error("Agent error: %s", e)
-                await self._send_final(
-                    message.chat.id,
-                    "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-                )
+                logger.error("Agent error: %s", e, exc_info=True)
+                # User-friendly error messages
+                err_msg = str(e).lower()
+                if "rate_limit" in err_msg or "429" in err_msg:
+                    await self._send_final(
+                        message.chat.id,
+                        "Limitga yetdik. Iltimos, 20-30 soniya kutib qayta yozing.",
+                    )
+                else:
+                    await self._send_final(
+                        message.chat.id,
+                        "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+                    )
 
     # ── Response strategies ──────────────────────────────────
 
@@ -168,6 +190,7 @@ class TelegramAdapter:
         - Tracks last sent draft text to avoid redundant updates
         - Only sends final message after draft is fully settled
         """
+        typing_task = asyncio.create_task(self._typing_loop(chat_id))
         draft_id = self._next_draft_id()
         accumulated = ""
         last_flush = 0.0
@@ -175,35 +198,43 @@ class TelegramAdapter:
         interval = self.config.stream_flush_interval
         drafting_paused = False
 
-        async for event in self.agent.run_turn_stream(text, user_id=user_id):
-            if event.type == "text_delta" and not drafting_paused:
-                accumulated += event.text
-                now = asyncio.get_event_loop().time()
-                if now - last_flush >= interval and accumulated != last_sent_text:
-                    await self._send_draft(chat_id, draft_id, accumulated)
-                    last_sent_text = accumulated
-                    last_flush = now
+        try:
+            async for event in self.agent.run_turn_stream(text, user_id=user_id):
+                if event.type == "text_delta" and not drafting_paused:
+                    accumulated += event.text
+                    now = asyncio.get_event_loop().time()
+                    if now - last_flush >= interval and accumulated != last_sent_text:
+                        typing_task.cancel()
+                        await self._send_draft(chat_id, draft_id, accumulated)
+                        last_sent_text = accumulated
+                        last_flush = now
 
-            elif event.type == "text_delta" and drafting_paused:
-                # Tool iteration done, new text arriving — resume drafting
-                accumulated += event.text
-                drafting_paused = False
+                elif event.type == "text_delta" and drafting_paused:
+                    # Tool iteration done, new text arriving — resume drafting
+                    accumulated += event.text
+                    drafting_paused = False
 
-            elif event.type == "tool_use":
-                # Pause drafting during tool execution to avoid race
-                drafting_paused = True
-                if accumulated and accumulated != last_sent_text:
-                    await self._send_draft(chat_id, draft_id, accumulated)
-                    last_sent_text = accumulated
+                elif event.type == "tool_use":
+                    # Pause drafting during tool execution to avoid race
+                    drafting_paused = True
+                    if accumulated and accumulated != last_sent_text:
+                        await self._send_draft(chat_id, draft_id, accumulated)
+                        last_sent_text = accumulated
+                    # Restart typing while tools execute
+                    typing_task.cancel()
+                    typing_task = asyncio.create_task(self._typing_loop(chat_id))
 
-            elif event.type == "done":
-                break
+                elif event.type == "done":
+                    break
+        finally:
+            typing_task.cancel()
 
         final_text = accumulated or "(No response)"
         await self._send_final(chat_id, final_text)
 
     async def _respond_partial(self, chat_id: int, user_id: str, text: str) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
+        typing_task = asyncio.create_task(self._typing_loop(chat_id))
         accumulated = ""
         last_flush = 0.0
         interval = self.config.stream_flush_interval
@@ -235,6 +266,8 @@ class TelegramAdapter:
 
             elif event.type == "done":
                 break
+
+        typing_task.cancel()
 
         # Final edit or send
         final_text = accumulated or "(No response)"
@@ -280,6 +313,7 @@ class TelegramAdapter:
         """Send the final formatted message, splitting if needed."""
         if not text:
             return
+        text = _sanitize_response(text)
         html = _md_to_html(text)
         for chunk in _split_text(html):
             await self._send_final_chunk(chat_id, chunk)

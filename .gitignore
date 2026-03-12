@@ -4,6 +4,7 @@ __pycache__/
 dist/
 build/
 .env
+config.json
 *.log
 /data/
 .venv/

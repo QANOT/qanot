@@ -75,10 +75,10 @@ def build_system_prompt(
     if user:
         parts.append(user)
 
-    # 7. ONBOARDING.md (if not complete)
+    # 7. ONBOARDING.md — only include a short reminder, not the full file
     onboarding = _read_file(ws / "ONBOARDING.md")
     if onboarding and "state: complete" not in onboarding.lower():
-        parts.append(onboarding)
+        parts.append("# Onboarding\nUser onboarding is pending. Ask user about themselves naturally during conversation.")
 
     # Session info
     now = datetime.now(timezone.utc)
