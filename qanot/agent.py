@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 25
 MAX_SAME_ACTION = 3  # Break after N identical consecutive tool calls
 TOOL_TIMEOUT = 30  # seconds per tool execution
+# Tools that run LLM agents internally need much longer timeouts
+_LONG_RUNNING_TOOLS = frozenset({
+    "delegate_to_agent",
+    "converse_with_agent",
+    "spawn_sub_agent",
+})
+LONG_TOOL_TIMEOUT = 300  # 5 minutes for delegation/conversation tools
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
 MAX_COMPACTION_RETRIES = 2  # Max overflow→compact→retry cycles
 
@@ -735,7 +742,8 @@ class Agent:
         tool_results: list[dict] = []
         for tc in tool_calls:
             logger.info("Executing tool: %s", tc.name)
-            result = await self.tools.execute(tc.name, tc.input)
+            timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
+            result = await self.tools.execute(tc.name, tc.input, timeout=timeout)
 
             if _is_deterministic_error(result):
                 result_data = json.loads(result)
