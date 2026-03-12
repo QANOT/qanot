@@ -41,10 +41,21 @@ qanot/
 ## Development
 
 ```bash
-python3 -m pytest tests/ -v    # Run tests (56 tests)
+python3 -m pytest tests/ -v    # Run tests (58 tests)
 python3 -m qanot               # Run via __main__
 qanot start                    # Run via CLI entry point
 ```
+
+## Sub-Agents (.claude/agents/)
+
+Use these to delegate work without losing project context:
+
+| Agent | When to Use |
+|---|---|
+| `qanot-architect` | New features, design decisions, architecture evaluation |
+| `qanot-impl` | Writing code, implementing specs, adding tests |
+| `qanot-review` | Code review, catch regressions, security/perf audit |
+| `qanot-debug` | Trace bugs through agent loop → provider → telegram pipeline |
 
 ## Rules
 
