@@ -36,7 +36,10 @@ class Config:
     allowed_users: list[int] = field(default_factory=list)
 
 
-def load_config(path: str = "/data/config.json") -> Config:
+def load_config(path: str | None = None) -> Config:
+    if path is None:
+        import os
+        path = os.environ.get("QANOT_CONFIG", "/data/config.json")
     """Load configuration from JSON file."""
     p = Path(path)
     if not p.exists():

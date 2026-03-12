@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher, F
@@ -126,9 +128,20 @@ class TelegramAdapter:
         if message.photo:
             text = f"[Photo received] {text}".strip()
 
-        # Handle documents
+        # Handle documents — download to workspace
         if message.document:
-            text = f"[Document: {message.document.file_name}] {text}".strip()
+            fname = message.document.file_name or "file"
+            try:
+                file = await self.bot.get_file(message.document.file_id)
+                dl_dir = Path(self.config.workspace_dir) / "uploads"
+                dl_dir.mkdir(parents=True, exist_ok=True)
+                dl_path = dl_dir / fname
+                await self.bot.download_file(file.file_path, dl_path)
+                text = f"[Fayl yuklandi: uploads/{fname}] {text}".strip()
+                logger.info("Downloaded file: %s", dl_path)
+            except Exception as e:
+                logger.error("File download failed: %s", e)
+                text = f"[Document: {fname} — yuklab bo'lmadi] {text}".strip()
 
         if not text:
             return
