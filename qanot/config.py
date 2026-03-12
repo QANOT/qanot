@@ -63,6 +63,8 @@ class Config:
     voice_mode: str = "inbound"  # "off" | "inbound" | "always"
     voice_name: str = ""  # Voice name (maftuna/asomiddin for muxlisa, aziza/sherzod for kotib)
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
+    # Web search
+    brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
     # Self-healing / heartbeat
     heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
     heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule

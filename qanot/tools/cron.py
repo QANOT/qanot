@@ -36,11 +36,17 @@ def register_cron_tools(
     async def cron_create(params: dict) -> str:
         name = params.get("name", "").strip()
         schedule = params.get("schedule", "").strip()
+        at = params.get("at", "").strip()  # ISO 8601 for one-shot reminders
         mode = params.get("mode", "isolated")
         prompt = params.get("prompt", "").strip()
+        delete_after_run = params.get("delete_after_run", False)
+        tz = params.get("timezone", "")
 
-        if not name or not schedule or not prompt:
-            return json.dumps({"error": "name, schedule, and prompt are required"})
+        if not name or not prompt:
+            return json.dumps({"error": "name and prompt are required"})
+
+        if not schedule and not at:
+            return json.dumps({"error": "Either 'schedule' (cron expression) or 'at' (ISO timestamp) is required"})
 
         if mode not in ("systemEvent", "isolated"):
             return json.dumps({"error": "mode must be 'systemEvent' or 'isolated'"})
@@ -51,13 +57,25 @@ def register_cron_tools(
         if any(j["name"] == name for j in jobs):
             return json.dumps({"error": f"Job '{name}' already exists. Use cron_update to modify."})
 
-        job = {
+        job: dict = {
             "name": name,
-            "schedule": schedule,
             "mode": mode,
             "prompt": prompt,
             "enabled": True,
         }
+
+        if at:
+            # One-shot reminder at specific time
+            job["at"] = at
+            job["delete_after_run"] = True  # Always auto-delete one-shot jobs
+        else:
+            job["schedule"] = schedule
+
+        if delete_after_run:
+            job["delete_after_run"] = True
+        if tz:
+            job["timezone"] = tz
+
         jobs.append(job)
         _save_jobs(jobs)
 
@@ -65,20 +83,29 @@ def register_cron_tools(
         if scheduler_ref and hasattr(scheduler_ref, "reload_jobs"):
             await scheduler_ref.reload_jobs()
 
-        logger.info("Cron job created: %s (%s)", name, schedule)
+        logger.info("Cron job created: %s (%s)", name, at or schedule)
         return json.dumps({"success": True, "job": job})
 
     registry.register(
         name="cron_create",
-        description="Rejali ish yaratish. mode: 'isolated' (mustaqil agent) yoki 'systemEvent' (asosiy sessiyaga yuborish).",
+        description=(
+            "Create a scheduled job or one-shot reminder. "
+            "For reminders: use 'at' with ISO 8601 timestamp (e.g. '2026-03-12T17:00:00+05:00'). "
+            "For recurring jobs: use 'schedule' with cron expression (e.g. '0 */4 * * *'). "
+            "mode: 'systemEvent' for simple text delivery, 'isolated' for tasks needing agent tools. "
+            "Write the prompt as the reminder text the user will see when it fires."
+        ),
         parameters={
             "type": "object",
-            "required": ["name", "schedule", "prompt"],
+            "required": ["name", "prompt"],
             "properties": {
-                "name": {"type": "string", "description": "Ish nomi (unikal)"},
-                "schedule": {"type": "string", "description": "Cron ifodasi (masalan: '0 */4 * * *' = har 4 soatda)"},
-                "mode": {"type": "string", "description": "Bajarish turi: 'isolated' yoki 'systemEvent'", "default": "isolated"},
-                "prompt": {"type": "string", "description": "Agent uchun vazifa/ko'rsatma"},
+                "name": {"type": "string", "description": "Unique job name"},
+                "schedule": {"type": "string", "description": "Cron expression (e.g. '0 9 * * *' = every day at 9am)"},
+                "at": {"type": "string", "description": "ISO 8601 timestamp for one-shot reminder (e.g. '2026-03-12T17:00:00+05:00')"},
+                "mode": {"type": "string", "description": "'isolated' (full agent) or 'systemEvent' (text only)", "default": "systemEvent"},
+                "prompt": {"type": "string", "description": "Reminder text or task prompt"},
+                "delete_after_run": {"type": "boolean", "description": "Auto-delete after execution (default true for 'at' reminders)"},
+                "timezone": {"type": "string", "description": "IANA timezone (e.g. 'Asia/Tashkent')"},
             },
         },
         handler=cron_create,

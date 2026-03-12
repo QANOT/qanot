@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 if TYPE_CHECKING:
     from qanot.agent import Agent, ToolRegistry
@@ -113,50 +114,69 @@ class CronScheduler:
     def _add_job(self, job: dict) -> None:
         """Add a single job to the scheduler."""
         name = job["name"]
-        schedule = job["schedule"]
+        schedule = job.get("schedule", "")
+        at = job.get("at", "")
         mode = job.get("mode", "isolated")
         prompt = job["prompt"]
+        delete_after_run = job.get("delete_after_run", False)
+        tz = job.get("timezone", self.config.timezone)
 
         try:
-            # Parse cron expression (minute hour day month day_of_week)
-            parts = schedule.split()
-            if len(parts) == 5:
-                trigger = CronTrigger(
-                    minute=parts[0],
-                    hour=parts[1],
-                    day=parts[2],
-                    month=parts[3],
-                    day_of_week=parts[4],
-                    timezone=self.config.timezone,
-                )
+            if at:
+                # One-shot reminder at specific time
+                trigger = DateTrigger(run_date=at, timezone=tz)
+            elif schedule:
+                # Recurring cron expression (minute hour day month day_of_week)
+                parts = schedule.split()
+                if len(parts) == 5:
+                    trigger = CronTrigger(
+                        minute=parts[0],
+                        hour=parts[1],
+                        day=parts[2],
+                        month=parts[3],
+                        day_of_week=parts[4],
+                        timezone=tz,
+                    )
+                else:
+                    logger.warning("Invalid cron expression for job %s: %s", name, schedule)
+                    return
             else:
-                logger.warning("Invalid cron expression for job %s: %s", name, schedule)
+                logger.warning("Job %s has no schedule or at — skipping", name)
                 return
 
-            if mode == "isolated":
-                self.scheduler.add_job(
-                    self._run_isolated,
-                    trigger=trigger,
-                    id=f"cron_{name}",
-                    name=name,
-                    kwargs={"job_name": name, "prompt": prompt},
-                    replace_existing=True,
-                )
-            else:  # systemEvent
-                self.scheduler.add_job(
-                    self._run_system_event,
-                    trigger=trigger,
-                    id=f"cron_{name}",
-                    name=name,
-                    kwargs={"job_name": name, "prompt": prompt},
-                    replace_existing=True,
-                )
+            handler = self._run_isolated if mode == "isolated" else self._run_system_event
+            self.scheduler.add_job(
+                handler,
+                trigger=trigger,
+                id=f"cron_{name}",
+                name=name,
+                kwargs={
+                    "job_name": name,
+                    "prompt": prompt,
+                    "delete_after_run": delete_after_run,
+                },
+                replace_existing=True,
+            )
 
-            logger.info("Scheduled cron job: %s (%s, mode=%s)", name, schedule, mode)
+            sched_desc = at or schedule
+            logger.info("Scheduled cron job: %s (%s, mode=%s)", name, sched_desc, mode)
         except Exception as e:
             logger.error("Failed to schedule job %s: %s", name, e)
 
-    async def _run_isolated(self, job_name: str, prompt: str) -> None:
+    def _delete_job(self, job_name: str) -> None:
+        """Delete a job from the jobs file after execution (for one-shot reminders)."""
+        try:
+            jobs = self._load_jobs()
+            new_jobs = [j for j in jobs if j["name"] != job_name]
+            if len(new_jobs) < len(jobs):
+                self._jobs_path.write_text(
+                    json.dumps(new_jobs, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+                logger.info("Auto-deleted one-shot job: %s", job_name)
+        except Exception as e:
+            logger.warning("Failed to auto-delete job %s: %s", job_name, e)
+
+    async def _run_isolated(self, job_name: str, prompt: str, delete_after_run: bool = False) -> None:
         """Run an isolated agent for a cron job."""
         # Skip heartbeat if user is currently active (avoid wasting tokens)
         if job_name == "heartbeat" and not self._is_user_idle():
@@ -211,15 +231,20 @@ class CronScheduler:
             logger.info("Isolated cron job completed: %s", job_name)
         except Exception as e:
             logger.error("Isolated cron job failed (%s): %s", job_name, e)
+        finally:
+            if delete_after_run:
+                self._delete_job(job_name)
 
-    async def _run_system_event(self, job_name: str, prompt: str) -> None:
+    async def _run_system_event(self, job_name: str, prompt: str, delete_after_run: bool = False) -> None:
         """Inject a prompt into the main agent's message queue."""
         logger.info("System event cron job: %s", job_name)
         await self.message_queue.put({
-            "type": "system_event",
+            "type": "proactive",
             "text": prompt,
             "source": job_name,
         })
+        if delete_after_run:
+            self._delete_job(job_name)
 
     async def reload_jobs(self) -> None:
         """Reload all jobs from disk."""

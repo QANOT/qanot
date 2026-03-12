@@ -25,6 +25,7 @@
   "voice_mode": "inbound",
   "voice_name": "",
   "voice_language": "",
+  "brave_api_key": "",
   "heartbeat_enabled": true,
   "heartbeat_interval": "0 */4 * * *",
   "workspace_dir": "/data/workspace",

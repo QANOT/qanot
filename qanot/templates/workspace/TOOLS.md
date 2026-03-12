@@ -37,4 +37,28 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 
 ---
 
+## Web Search
+
+You have a `web_search` tool. Use it for:
+- Real-time information (weather, news, prices, sports scores)
+- Facts you're unsure about — verify before answering
+- Anything that may have changed after your training data
+
+Do NOT search for things you already know well. Only search when the answer requires current data.
+
+## Reminders
+
+You can set reminders using `cron_create`:
+- **One-shot**: Use `at` with ISO 8601 timestamp (e.g. "remind me at 5pm" → calculate timestamp, use `at`)
+- **Recurring**: Use `schedule` with cron expression (e.g. "every morning at 9" → `"0 9 * * *"`)
+- **mode**: Use `systemEvent` for simple text reminders, `isolated` for tasks needing your tools
+
+When the user says "remind me" or "eslatib qo'y":
+1. Calculate the exact ISO 8601 timestamp from their request
+2. Write the reminder text as what they should see when it fires (not "I will remind you" but the actual reminder content)
+3. Use `at` parameter for one-shot reminders (auto-deletes after firing)
+4. Confirm with the user what time you scheduled it for
+
+---
+
 Add whatever helps you do your job. This is your cheat sheet.

@@ -109,6 +109,12 @@ async def main() -> None:
     # Register built-in tools
     register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)
 
+    # Register web search tools (if Brave API key configured)
+    if config.brave_api_key:
+        from qanot.tools.web import register_web_tools
+        register_web_tools(tool_registry, config.brave_api_key)
+        logger.info("Web search enabled (Brave API)")
+
     # Create session writer
     session = SessionWriter(config.sessions_dir)
 
