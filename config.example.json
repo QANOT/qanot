@@ -45,6 +45,7 @@
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",
   "plugins_dir": "/data/plugins",
+  "monitor_group_id": 0,
   "agents": [
     {
       "id": "deep-researcher",

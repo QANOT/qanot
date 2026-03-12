@@ -111,6 +111,8 @@ class Config:
     image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro (highest quality)
     # Multi-agent definitions
     agents: list[AgentDefinition] = field(default_factory=list)
+    # Agent monitoring — mirror agent conversations to this Telegram group
+    monitor_group_id: int = 0
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""

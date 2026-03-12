@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,6 +38,9 @@ MAX_PING_PONG_TURNS = 5
 MAX_BOARD_ENTRIES = 20  # Max entries on shared project board
 MAX_SESSION_HISTORY = 50  # Max messages to keep per agent session
 MAX_SESSION_HISTORY_RETURN = 20  # Max messages to return in history query
+MAX_ACTIVITY_LOG = 100  # Max entries in the activity log
+LOOP_DETECTION_WINDOW = 5  # Check last N delegations for loops
+LOOP_SIMILARITY_THRESHOLD = 0.8  # Task similarity threshold for loop detection
 
 # Shared project board — agents post results here, other agents can read them
 # Keyed per user_id so different users don't see each other's boards
@@ -45,6 +49,198 @@ _project_boards: dict[str, list[dict]] = {}  # user_id → [{agent_id, task, res
 # Agent session transcripts — store conversation history for cross-agent reading
 # Keyed: user_id → agent_id → [{role, content, timestamp, has_tools}]
 _agent_sessions: dict[str, dict[str, list[dict]]] = {}
+
+# Activity log — real-time feed of ALL agent interactions for monitoring
+# Keyed per user_id → [{event, from_agent, to_agent, task, status, timestamp, ...}]
+_activity_log: dict[str, list[dict]] = {}
+
+# Notification callback — set by main.py to push live updates to Telegram
+_notify_callback: dict[str, object] = {}  # user_id → async callable(text)
+
+
+def set_notify_callback(user_id: str, callback) -> None:
+    """Set notification callback for live agent monitoring."""
+    _notify_callback[user_id] = callback
+
+
+def _log_activity(
+    user_id: str,
+    event: str,
+    *,
+    from_agent: str = "",
+    to_agent: str = "",
+    task: str = "",
+    status: str = "",
+    detail: str = "",
+    depth: int = 0,
+) -> None:
+    """Log an agent activity event."""
+    log = _activity_log.setdefault(user_id, [])
+    entry = {
+        "event": event,
+        "from_agent": from_agent,
+        "to_agent": to_agent,
+        "task": task[:200],
+        "status": status,
+        "detail": detail[:500],
+        "depth": depth,
+        "timestamp": time.time(),
+    }
+    log.append(entry)
+    while len(log) > MAX_ACTIVITY_LOG:
+        log.pop(0)
+
+    # Send live notification to user
+    callback = _notify_callback.get(user_id)
+    if callback:
+        _send_notification(callback, event, entry)
+
+
+def _send_notification(callback, event: str, entry: dict) -> None:
+    """Fire-and-forget notification to user."""
+    icons = {
+        "delegate_start": "🔄",
+        "delegate_done": "✅",
+        "delegate_error": "❌",
+        "delegate_timeout": "⏰",
+        "converse_start": "💬",
+        "converse_turn": "🔁",
+        "converse_done": "✅",
+        "loop_detected": "🚫",
+    }
+    icon = icons.get(event, "📋")
+
+    if event == "delegate_start":
+        text = f"{icon} **Agent delegation**\n{entry['from_agent'] or 'Main'} → {entry['to_agent']}\nTask: {entry['task'][:100]}"
+    elif event == "delegate_done":
+        text = f"{icon} **Delegation complete**\n{entry['to_agent']} finished ({entry['detail']})"
+    elif event in ("delegate_error", "delegate_timeout"):
+        text = f"{icon} **Delegation failed**\n{entry['to_agent']}: {entry['detail'][:100]}"
+    elif event == "converse_start":
+        text = f"{icon} **Agent conversation**\n{entry['from_agent'] or 'Main'} ↔ {entry['to_agent']}"
+    elif event == "converse_turn":
+        text = f"{icon} Turn {entry['detail']} — {entry['to_agent']}"
+    elif event == "loop_detected":
+        text = f"{icon} **Loop detected!** {entry['detail']}"
+    else:
+        return  # Don't notify for unknown events
+
+    try:
+        import asyncio
+        asyncio.create_task(callback(text))
+    except Exception:
+        pass  # Non-fatal
+
+
+def _check_for_loop(user_id: str, agent_id: str, task: str) -> str | None:
+    """Check if this delegation looks like a loop.
+
+    Returns error message if loop detected, None if ok.
+    """
+    log = _activity_log.get(user_id, [])
+    if not log:
+        return None
+
+    # Check ping-pong first: A→B→A→B pattern (needs fewer entries)
+    recent_all = [
+        e for e in log[-10:]
+        if e["event"] == "delegate_start"
+    ]
+    if len(recent_all) >= 4:
+        agents = [e["to_agent"] for e in recent_all[-4:]]
+        if agents[0] == agents[2] and agents[1] == agents[3] and agents[0] != agents[1]:
+            msg = f"Ping-pong loop detected: {agents[0]} ↔ {agents[1]}. Breaking loop."
+            _log_activity(user_id, "loop_detected", to_agent=agent_id, detail=msg)
+            return msg
+
+    # Check repeated similar tasks to the same agent
+    recent = [
+        e for e in log[-LOOP_DETECTION_WINDOW * 2:]
+        if e["event"] == "delegate_start" and e["to_agent"] == agent_id
+    ]
+
+    if len(recent) < LOOP_DETECTION_WINDOW:
+        return None
+
+    task_lower = task.lower().strip()
+    similar_count = 0
+    for entry in recent[-LOOP_DETECTION_WINDOW:]:
+        entry_task = entry["task"].lower().strip()
+        task_words = set(task_lower.split())
+        entry_words = set(entry_task.split())
+        if not task_words or not entry_words:
+            continue
+        overlap = len(task_words & entry_words) / max(len(task_words), len(entry_words))
+        if overlap >= LOOP_SIMILARITY_THRESHOLD:
+            similar_count += 1
+
+    if similar_count >= LOOP_DETECTION_WINDOW - 1:
+        msg = (
+            f"Loop detected: agent '{agent_id}' received {similar_count} similar tasks "
+            f"in last {LOOP_DETECTION_WINDOW} delegations. Breaking loop."
+        )
+        _log_activity(user_id, "loop_detected", to_agent=agent_id, detail=msg)
+        return msg
+
+    return None
+
+
+def get_activity_log(user_id: str, limit: int = 20) -> list[dict]:
+    """Get recent activity log entries for a user."""
+    log = _activity_log.get(user_id, [])
+    return log[-limit:]
+
+
+# ── Group monitoring ─────────────────────────────────────────
+# Mirror agent conversations to a Telegram group so the user can watch live
+
+_group_bot_cache: dict[str, object] = {}  # bot_token → aiogram.Bot
+
+
+async def _mirror_to_group(
+    config: "Config",
+    from_agent: str,
+    to_agent: str,
+    text: str,
+    *,
+    direction: str = "message",
+) -> None:
+    """Mirror an agent interaction message to the monitoring group.
+
+    Uses the from_agent's own bot token if available, else the main bot token.
+    """
+    monitor_group = getattr(config, "monitor_group_id", 0)
+    if not monitor_group:
+        return
+
+    # Find from_agent's bot token (for posting as that agent's bot)
+    bot_token = ""
+    for ad in config.agents:
+        if ad.id == from_agent and ad.bot_token:
+            bot_token = ad.bot_token
+            break
+    if not bot_token:
+        bot_token = config.bot_token
+
+    try:
+        from aiogram import Bot
+
+        if bot_token not in _group_bot_cache:
+            _group_bot_cache[bot_token] = Bot(token=bot_token)
+        bot = _group_bot_cache[bot_token]
+
+        # Format message
+        agent_label = from_agent or "Main"
+        msg = f"<b>[{agent_label}]</b> → {to_agent}\n{text[:1500]}"
+
+        await bot.send_message(
+            chat_id=monitor_group,
+            text=msg,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.debug("Failed to mirror to monitoring group: %s", e)
+
 
 # Built-in roles
 BUILTIN_ROLES: dict[str, dict] = {
@@ -462,6 +658,18 @@ def register_delegate_tools(
         timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
         user_id = get_user_id() or "delegate"
 
+        # Loop detection
+        loop_msg = _check_for_loop(user_id, agent_id, task)
+        if loop_msg:
+            return json.dumps({"error": loop_msg, "status": "loop_detected"})
+
+        # Log start
+        _log_activity(
+            user_id, "delegate_start",
+            from_agent=caller_agent_id, to_agent=agent_id,
+            task=task, depth=depth,
+        )
+
         # Get project board for context
         board_summary = _get_board_summary(user_id, exclude_agent=agent_id)
 
@@ -480,6 +688,12 @@ def register_delegate_tools(
         start = time.monotonic()
         logger.info("Delegating to '%s' (depth=%d) for user %s: %s", agent_id, depth, user_id, task[:80])
 
+        # Mirror to monitoring group if configured
+        await _mirror_to_group(
+            config, caller_agent_id or "main", agent_id,
+            f"📋 Task: {task[:300]}", direction="delegate",
+        )
+
         try:
             result = await _create_delegate_agent(
                 config, delegate_provider, child_registry, prompt, agent_id, timeout,
@@ -496,6 +710,20 @@ def register_delegate_tools(
             _record_session_message(user_id, agent_id, "user", f"[delegation] {task}")
             _record_session_message(user_id, agent_id, "assistant", result)
 
+            # Log completion
+            _log_activity(
+                user_id, "delegate_done",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=task, status="completed",
+                detail=f"{elapsed:.1f}s, {len(result)} chars",
+            )
+
+            # Mirror result to monitoring group
+            await _mirror_to_group(
+                config, agent_id, caller_agent_id or "main",
+                f"✅ Result: {result[:500]}", direction="result",
+            )
+
             logger.info("Delegation to '%s' completed in %.1fs", agent_id, elapsed)
             return json.dumps({
                 "status": "completed",
@@ -508,6 +736,12 @@ def register_delegate_tools(
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start
             logger.warning("Delegation to '%s' timed out after %.0fs", agent_id, elapsed)
+            _log_activity(
+                user_id, "delegate_timeout",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=task, status="timeout",
+                detail=f"Timed out after {timeout}s",
+            )
             return json.dumps({
                 "status": "timeout", "agent_id": agent_id,
                 "error": f"Agent timed out after {timeout}s.",
@@ -516,6 +750,12 @@ def register_delegate_tools(
         except Exception as e:
             elapsed = time.monotonic() - start
             logger.error("Delegation to '%s' failed: %s", agent_id, e)
+            _log_activity(
+                user_id, "delegate_error",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=task, status="error",
+                detail=str(e)[:200],
+            )
             return json.dumps({
                 "status": "error", "agent_id": agent_id,
                 "error": str(e), "elapsed_seconds": round(elapsed, 1),
@@ -555,6 +795,18 @@ def register_delegate_tools(
         timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
         user_id = get_user_id() or "delegate"
 
+        # Loop detection
+        loop_msg = _check_for_loop(user_id, agent_id, message)
+        if loop_msg:
+            return json.dumps({"error": loop_msg, "status": "loop_detected"})
+
+        # Log start
+        _log_activity(
+            user_id, "converse_start",
+            from_agent=caller_agent_id, to_agent=agent_id,
+            task=message, depth=current_depth + 1,
+        )
+
         child_registry = _build_delegate_registry(
             parent_registry, depth,
             tools_allow=agent_info.get("tools_allow") or None,
@@ -573,6 +825,12 @@ def register_delegate_tools(
         logger.info(
             "Starting ping-pong with '%s' (max %d turns) for user %s",
             agent_id, max_turns, user_id,
+        )
+
+        # Mirror to monitoring group
+        await _mirror_to_group(
+            config, caller_agent_id or "main", agent_id,
+            f"💬 Conversation started: {message[:300]}", direction="converse",
         )
 
         # Turn 1: send initial message to agent
@@ -623,6 +881,19 @@ def register_delegate_tools(
                 conversation_log.append({"role": "requester", "message": current_message})
                 conversation_log.append({"role": "agent", "message": result})
 
+                # Log turn
+                _log_activity(
+                    user_id, "converse_turn",
+                    from_agent=caller_agent_id, to_agent=agent_id,
+                    task=message, detail=f"{turn}/{max_turns}",
+                )
+
+                # Mirror turn to group
+                await _mirror_to_group(
+                    config, agent_id, caller_agent_id or "main",
+                    f"🔁 Turn {turn}: {result[:400]}", direction="turn",
+                )
+
                 logger.debug("Ping-pong turn %d/%d with '%s'", turn, max_turns, agent_id)
 
                 # Check if agent signaled completion
@@ -650,16 +921,25 @@ def register_delegate_tools(
                 role = "user" if entry["role"] == "requester" else "assistant"
                 _record_session_message(user_id, agent_id, role, entry["message"])
 
+            # Log completion
+            turns_done = len(conversation_log) // 2
+            _log_activity(
+                user_id, "converse_done",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=message, status="completed",
+                detail=f"{turns_done} turns, {elapsed:.1f}s",
+            )
+
             logger.info(
                 "Ping-pong with '%s' completed: %d turns in %.1fs",
-                agent_id, len(conversation_log) // 2, elapsed,
+                agent_id, turns_done, elapsed,
             )
 
             return json.dumps({
                 "status": "completed",
                 "agent_id": agent_id,
                 "agent_name": agent_info["name"],
-                "turns": len(conversation_log) // 2,
+                "turns": turns_done,
                 "conversation": [
                     {"role": e["role"], "message": e["message"][:1000]}
                     for e in conversation_log
@@ -671,6 +951,12 @@ def register_delegate_tools(
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start
             logger.warning("Ping-pong with '%s' timed out", agent_id)
+            _log_activity(
+                user_id, "delegate_timeout",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=message, status="timeout",
+                detail=f"Timed out after {timeout}s",
+            )
             return json.dumps({
                 "status": "timeout", "agent_id": agent_id,
                 "turns_completed": len(conversation_log) // 2,
@@ -680,6 +966,12 @@ def register_delegate_tools(
         except Exception as e:
             elapsed = time.monotonic() - start
             logger.error("Ping-pong with '%s' failed: %s", agent_id, e)
+            _log_activity(
+                user_id, "delegate_error",
+                from_agent=caller_agent_id, to_agent=agent_id,
+                task=message, status="error",
+                detail=str(e)[:200],
+            )
             return json.dumps({
                 "status": "error", "agent_id": agent_id,
                 "error": str(e), "elapsed_seconds": round(elapsed, 1),
@@ -792,6 +1084,65 @@ def register_delegate_tools(
         return json.dumps({
             "sessions": sessions,
             "total": len(sessions),
+        })
+
+    # ── 7. view_agent_activity ──
+
+    async def view_agent_activity(params: dict) -> str:
+        """View real-time agent activity log — see what agents are doing."""
+        user_id = get_user_id() or "default"
+        limit = min(params.get("limit", 20), 50)
+        agent_filter = params.get("agent_id", "").strip()
+
+        log = get_activity_log(user_id, limit=limit)
+
+        if agent_filter:
+            log = [
+                e for e in log
+                if e["from_agent"] == agent_filter or e["to_agent"] == agent_filter
+            ]
+
+        if not log:
+            return json.dumps({
+                "entries": [],
+                "message": "No agent activity yet.",
+            })
+
+        return json.dumps({
+            "entries": log,
+            "total": len(log),
+        })
+
+    # ── 8. set_monitor_group ──
+
+    async def set_monitor_group(params: dict) -> str:
+        """Set a Telegram group for live agent monitoring.
+
+        Add both agent bots and the main bot to the group,
+        then use this tool to start mirroring conversations there.
+        """
+        group_id = params.get("group_id", 0)
+        if not group_id:
+            return json.dumps({"error": "group_id is required (negative number for groups)"})
+
+        config.monitor_group_id = int(group_id)
+
+        # Persist to config.json
+        config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
+        p = Path(config_path)
+        if p.exists():
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            raw["monitor_group_id"] = config.monitor_group_id
+            p.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        return json.dumps({
+            "status": "configured",
+            "monitor_group_id": config.monitor_group_id,
+            "message": (
+                f"Monitoring group set to {group_id}. "
+                "All agent-to-agent interactions will be mirrored there. "
+                "Make sure all agent bots are added to this group."
+            ),
         })
 
     # ── Register all tools ──
@@ -927,4 +1278,46 @@ def register_delegate_tools(
         ),
         parameters={"type": "object", "properties": {}},
         handler=agent_sessions_list,
+    )
+
+    registry.register(
+        name="view_agent_activity",
+        description=(
+            "Agent faoliyat jurnalini ko'rish — qaysi agent kimga vazifa berdi, "
+            "natijalar, xatolar, vaqtlar. Real-time monitoring."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maksimum yozuvlar soni (default: 20, max: 50).",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Ixtiyoriy — faqat ma'lum agent faoliyatini ko'rish.",
+                },
+            },
+        },
+        handler=view_agent_activity,
+    )
+
+    registry.register(
+        name="set_monitor_group",
+        description=(
+            "Telegram guruhni monitoring uchun sozlash. "
+            "Agentlar o'zaro gaplashganda xabarlar shu guruhga yuboriladii — "
+            "siz real-time ko'rasiz. Har bir agent bot guruhga qo'shilgan bo'lishi kerak."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["group_id"],
+            "properties": {
+                "group_id": {
+                    "type": "integer",
+                    "description": "Telegram guruh ID (manfiy raqam, masalan: -1001234567890).",
+                },
+            },
+        },
+        handler=set_monitor_group,
     )

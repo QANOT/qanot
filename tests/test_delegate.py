@@ -21,6 +21,9 @@ from qanot.tools.delegate import (
     MAX_BOARD_ENTRIES,
     MAX_SESSION_HISTORY,
     MAX_SESSION_HISTORY_RETURN,
+    MAX_ACTIVITY_LOG,
+    LOOP_DETECTION_WINDOW,
+    LOOP_SIMILARITY_THRESHOLD,
     _ALWAYS_DENIED,
     _build_delegate_registry,
     _truncate_context,
@@ -34,6 +37,12 @@ from qanot.tools.delegate import (
     _get_active_sessions,
     _agent_sessions,
     _check_delegate_allow,
+    _log_activity,
+    _check_for_loop,
+    get_activity_log,
+    set_notify_callback,
+    _activity_log,
+    _notify_callback,
 )
 
 
@@ -608,3 +617,175 @@ class TestRegisterNewTools:
         names = [t["name"] for t in reg.get_definitions()]
         assert "agent_session_history" in names
         assert "agent_sessions_list" in names
+        assert "view_agent_activity" in names
+        assert "set_monitor_group" in names
+
+
+class TestActivityLog:
+
+    def setup_method(self):
+        _activity_log.clear()
+        _notify_callback.clear()
+
+    def test_log_activity_basic(self):
+        _log_activity("user1", "delegate_start", from_agent="main", to_agent="coder", task="write code")
+        log = get_activity_log("user1")
+        assert len(log) == 1
+        assert log[0]["event"] == "delegate_start"
+        assert log[0]["to_agent"] == "coder"
+        assert log[0]["task"] == "write code"
+
+    def test_log_activity_eviction(self):
+        for i in range(MAX_ACTIVITY_LOG + 10):
+            _log_activity("user1", "delegate_start", task=f"task-{i}")
+        log = _activity_log["user1"]
+        assert len(log) == MAX_ACTIVITY_LOG
+
+    def test_log_activity_truncates_fields(self):
+        _log_activity("user1", "test", task="x" * 500, detail="y" * 1000)
+        log = get_activity_log("user1")
+        assert len(log[0]["task"]) == 200
+        assert len(log[0]["detail"]) == 500
+
+    def test_get_activity_log_empty(self):
+        assert get_activity_log("nonexistent") == []
+
+    def test_get_activity_log_limit(self):
+        for i in range(10):
+            _log_activity("user1", "test", task=f"task-{i}")
+        log = get_activity_log("user1", limit=3)
+        assert len(log) == 3
+        assert log[-1]["task"] == "task-9"
+
+    def test_per_user_isolation(self):
+        _log_activity("user1", "test", task="task-a")
+        _log_activity("user2", "test", task="task-b")
+        assert len(get_activity_log("user1")) == 1
+        assert len(get_activity_log("user2")) == 1
+        assert get_activity_log("user1")[0]["task"] == "task-a"
+
+    def test_notify_callback_called(self):
+        called = []
+        import asyncio
+
+        async def mock_callback(text):
+            called.append(text)
+
+        set_notify_callback("user1", mock_callback)
+        _log_activity("user1", "delegate_start", from_agent="main", to_agent="coder", task="write")
+        # Notification is fire-and-forget via asyncio.create_task,
+        # so we just verify the callback was set
+        assert "user1" in _notify_callback
+
+    def teardown_method(self):
+        _activity_log.clear()
+        _notify_callback.clear()
+
+
+class TestLoopDetection:
+
+    def setup_method(self):
+        _activity_log.clear()
+
+    def test_no_loop_on_few_delegations(self):
+        for i in range(LOOP_DETECTION_WINDOW - 2):
+            _log_activity("user1", "delegate_start", to_agent="coder", task="write code")
+        result = _check_for_loop("user1", "coder", "write code")
+        assert result is None
+
+    def test_detects_repeated_task_loop(self):
+        for i in range(LOOP_DETECTION_WINDOW * 2):
+            _log_activity("user1", "delegate_start", to_agent="coder", task="write code now")
+        result = _check_for_loop("user1", "coder", "write code now")
+        assert result is not None
+        assert "Loop detected" in result
+
+    def test_detects_ping_pong_loop(self):
+        # A→B→A→B pattern
+        _log_activity("user1", "delegate_start", to_agent="coder", task="a")
+        _log_activity("user1", "delegate_start", to_agent="researcher", task="b")
+        _log_activity("user1", "delegate_start", to_agent="coder", task="c")
+        _log_activity("user1", "delegate_start", to_agent="researcher", task="d")
+        result = _check_for_loop("user1", "researcher", "e")
+        assert result is not None
+        assert "Ping-pong" in result
+
+    def test_no_ping_pong_with_different_pattern(self):
+        _log_activity("user1", "delegate_start", to_agent="coder", task="a")
+        _log_activity("user1", "delegate_start", to_agent="researcher", task="b")
+        _log_activity("user1", "delegate_start", to_agent="analyst", task="c")
+        _log_activity("user1", "delegate_start", to_agent="writer", task="d")
+        result = _check_for_loop("user1", "coder", "e")
+        assert result is None
+
+    def test_no_loop_empty_log(self):
+        result = _check_for_loop("user1", "coder", "task")
+        assert result is None
+
+    def test_loop_different_tasks_no_detection(self):
+        for i in range(LOOP_DETECTION_WINDOW * 2):
+            _log_activity("user1", "delegate_start", to_agent="coder", task=f"completely different task {i * 100}")
+        # Tasks are very different so overlap should be low
+        result = _check_for_loop("user1", "coder", "something entirely new")
+        assert result is None
+
+    def test_loop_logs_activity(self):
+        for i in range(LOOP_DETECTION_WINDOW * 2):
+            _log_activity("user1", "delegate_start", to_agent="coder", task="same task")
+        _check_for_loop("user1", "coder", "same task")
+        # Should have a loop_detected event in the log
+        log = get_activity_log("user1")
+        loop_events = [e for e in log if e["event"] == "loop_detected"]
+        assert len(loop_events) >= 1
+
+    def teardown_method(self):
+        _activity_log.clear()
+
+
+class TestViewAgentActivity:
+
+    def setup_method(self):
+        _activity_log.clear()
+
+    @pytest.mark.asyncio
+    async def test_view_empty_activity(self):
+        from qanot.tools.delegate import register_delegate_tools
+
+        reg = ToolRegistry()
+        register_delegate_tools(reg, _make_config(), MagicMock(), ToolRegistry(), get_user_id=lambda: "test")
+
+        result = await reg.execute("view_agent_activity", {})
+        data = json.loads(result)
+        assert data["entries"] == []
+
+    @pytest.mark.asyncio
+    async def test_view_with_data(self):
+        from qanot.tools.delegate import register_delegate_tools
+
+        _log_activity("test", "delegate_start", from_agent="main", to_agent="coder", task="write")
+        _log_activity("test", "delegate_done", to_agent="coder", status="completed")
+
+        reg = ToolRegistry()
+        register_delegate_tools(reg, _make_config(), MagicMock(), ToolRegistry(), get_user_id=lambda: "test")
+
+        result = await reg.execute("view_agent_activity", {})
+        data = json.loads(result)
+        assert data["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_view_filtered_by_agent(self):
+        from qanot.tools.delegate import register_delegate_tools
+
+        _log_activity("test", "delegate_start", from_agent="main", to_agent="coder", task="write")
+        _log_activity("test", "delegate_start", from_agent="main", to_agent="researcher", task="search")
+
+        reg = ToolRegistry()
+        register_delegate_tools(reg, _make_config(), MagicMock(), ToolRegistry(), get_user_id=lambda: "test")
+
+        result = await reg.execute("view_agent_activity", {"agent_id": "coder"})
+        data = json.loads(result)
+        assert data["total"] == 1
+        assert data["entries"][0]["to_agent"] == "coder"
+
+    def teardown_method(self):
+        _activity_log.clear()

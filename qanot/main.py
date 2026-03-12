@@ -239,6 +239,20 @@ async def main() -> None:
         scheduler=scheduler,
     )
 
+    # Wire live agent monitoring notifications to Telegram
+    async def _notify_user(text: str) -> None:
+        try:
+            uid = agent.current_user_id
+            cid = agent.current_chat_id
+            if cid:
+                await telegram.send_message(cid, text)
+        except Exception:
+            pass  # Non-fatal
+
+    # Set notify callback for all owner users
+    for uid in config.allowed_users:
+        set_notify_callback(str(uid), _notify_user)
+
     # Register sub-agent tools (needs agent + telegram for delivery)
     from qanot.tools.subagent import register_sub_agent_tools
     register_sub_agent_tools(
@@ -249,7 +263,7 @@ async def main() -> None:
     )
 
     # Register agent-to-agent delegation tools
-    from qanot.tools.delegate import register_delegate_tools
+    from qanot.tools.delegate import register_delegate_tools, set_notify_callback
     register_delegate_tools(
         tool_registry, config, provider, tool_registry,
         get_user_id=lambda: agent.current_user_id,
