@@ -1,16 +1,17 @@
-"""Telegram adapter — aiogram 3.x long polling."""
+"""Telegram adapter — aiogram 3.x long polling with configurable response modes."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction, ParseMode
+from aiogram.methods import SendMessageDraft
 from aiogram.types import Message
 
 if TYPE_CHECKING:
@@ -23,34 +24,22 @@ logger = logging.getLogger(__name__)
 MAX_MSG_LEN = 4000
 
 
+# ── Formatting helpers ──────────────────────────────────────
+
+
 def _md_to_html(text: str) -> str:
     """Convert agent markdown to Telegram HTML."""
-    # Escape HTML entities
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    # ```code blocks``` → <pre>
     text = re.sub(r"```(\w*)\n([\s\S]*?)```", r"<pre>\2</pre>", text)
 
-    # Markdown tables → <pre>
     def wrap_table(m: re.Match) -> str:
         return f"\n<pre>{m.group(0).strip()}</pre>\n"
     text = re.sub(r"(?:^[|].*\n?)+", wrap_table, text, flags=re.MULTILINE)
-
-    # Horizontal rules
     text = re.sub(r"^---+$", "\u2501" * 18, text, flags=re.MULTILINE)
-
-    # **bold** → <b>
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-
-    # `inline code` → <code>
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-
-    # ## Headings → <b>
     text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
-
-    # Clean extra blanks
     text = re.sub(r"\n{3,}", "\n\n", text)
-
     return text
 
 
@@ -71,8 +60,17 @@ def _split_text(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
     return chunks
 
 
+# ── Adapter ─────────────────────────────────────────────────
+
+
 class TelegramAdapter:
-    """Handles Telegram bot communication via aiogram long polling."""
+    """Handles Telegram bot communication via aiogram long polling.
+
+    Response modes (config.response_mode):
+      - "stream":  Live streaming via sendMessageDraft (Bot API 9.5)
+      - "partial": Periodic edits via editMessageText (fallback)
+      - "blocked": Wait for full response, then send (simplest)
+    """
 
     def __init__(
         self,
@@ -86,12 +84,15 @@ class TelegramAdapter:
         self.bot = Bot(token=config.bot_token)
         self.dp = Dispatcher()
         self._setup_handlers()
-        self._lock = asyncio.Lock()
         self._concurrent = asyncio.Semaphore(config.max_concurrent)
+        self._draft_counter = 0
+
+    def _next_draft_id(self) -> int:
+        """Generate a unique draft_id for sendMessageDraft."""
+        self._draft_counter += 1
+        return self._draft_counter
 
     def _setup_handlers(self) -> None:
-        """Register message handlers."""
-
         @self.dp.message(F.text)
         async def handle_text(message: Message) -> None:
             await self._handle_message(message)
@@ -105,30 +106,23 @@ class TelegramAdapter:
             await self._handle_message(message)
 
     def _is_allowed(self, user_id: int) -> bool:
-        """Check if user is in allowed list."""
         if not self.config.allowed_users:
-            return True  # No restriction
+            return True
         return user_id in self.config.allowed_users
 
     async def _handle_message(self, message: Message) -> None:
-        """Process an incoming message."""
         if not message.from_user:
             return
 
         user_id = message.from_user.id
-
-        # Check allowlist
         if not self._is_allowed(user_id):
             return
 
-        # Extract text
         text = message.text or message.caption or ""
 
-        # Handle photos
         if message.photo:
             text = f"[Photo received] {text}".strip()
 
-        # Handle documents — download to workspace
         if message.document:
             fname = message.document.file_name or "file"
             try:
@@ -146,33 +140,167 @@ class TelegramAdapter:
         if not text:
             return
 
-        user_id = str(user_id)
-
         async with self._concurrent:
-            # Start periodic typing indicator
-            typing_task = asyncio.create_task(
-                self._typing_loop(message.chat.id)
-            )
-
-            # Run agent
+            mode = self.config.response_mode
             try:
-                response = await self.agent.run_turn(text, user_id=user_id)
+                if mode == "stream":
+                    await self._respond_stream(message.chat.id, str(user_id), text)
+                elif mode == "partial":
+                    await self._respond_partial(message.chat.id, str(user_id), text)
+                else:
+                    await self._respond_blocked(message.chat.id, str(user_id), text)
             except Exception as e:
                 logger.error("Agent error: %s", e)
-                response = "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-            finally:
-                typing_task.cancel()
+                await self._send_final(
+                    message.chat.id,
+                    "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+                )
 
-            # Send response
-            await self._send_response(message.chat.id, response)
+    # ── Response strategies ──────────────────────────────────
+
+    async def _respond_stream(self, chat_id: int, user_id: str, text: str) -> None:
+        """Stream response via sendMessageDraft → sendMessage.
+
+        Handles race conditions between draft updates and tool execution:
+        - Pauses draft updates during tool execution to avoid conflicts
+        - Tracks last sent draft text to avoid redundant updates
+        - Only sends final message after draft is fully settled
+        """
+        draft_id = self._next_draft_id()
+        accumulated = ""
+        last_flush = 0.0
+        last_sent_text = ""
+        interval = self.config.stream_flush_interval
+        drafting_paused = False
+
+        async for event in self.agent.run_turn_stream(text, user_id=user_id):
+            if event.type == "text_delta" and not drafting_paused:
+                accumulated += event.text
+                now = asyncio.get_event_loop().time()
+                if now - last_flush >= interval and accumulated != last_sent_text:
+                    await self._send_draft(chat_id, draft_id, accumulated)
+                    last_sent_text = accumulated
+                    last_flush = now
+
+            elif event.type == "text_delta" and drafting_paused:
+                # Tool iteration done, new text arriving — resume drafting
+                accumulated += event.text
+                drafting_paused = False
+
+            elif event.type == "tool_use":
+                # Pause drafting during tool execution to avoid race
+                drafting_paused = True
+                if accumulated and accumulated != last_sent_text:
+                    await self._send_draft(chat_id, draft_id, accumulated)
+                    last_sent_text = accumulated
+
+            elif event.type == "done":
+                break
+
+        final_text = accumulated or "(No response)"
+        await self._send_final(chat_id, final_text)
+
+    async def _respond_partial(self, chat_id: int, user_id: str, text: str) -> None:
+        """Stream response via editMessageText (pre-9.5 fallback)."""
+        accumulated = ""
+        last_flush = 0.0
+        interval = self.config.stream_flush_interval
+        sent_msg_id: int | None = None
+
+        async for event in self.agent.run_turn_stream(text, user_id=user_id):
+            if event.type == "text_delta":
+                accumulated += event.text
+                now = asyncio.get_event_loop().time()
+                if now - last_flush >= interval and accumulated.strip():
+                    if sent_msg_id is None:
+                        try:
+                            msg = await self.bot.send_message(
+                                chat_id=chat_id, text=accumulated[:MAX_MSG_LEN],
+                            )
+                            sent_msg_id = msg.message_id
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            await self.bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=sent_msg_id,
+                                text=accumulated[:MAX_MSG_LEN],
+                            )
+                        except Exception:
+                            pass
+                    last_flush = now
+
+            elif event.type == "done":
+                break
+
+        # Final edit or send
+        final_text = accumulated or "(No response)"
+        if sent_msg_id:
+            html = _md_to_html(final_text)
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=chat_id, message_id=sent_msg_id,
+                    text=html[:MAX_MSG_LEN], parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            # Send remaining chunks if text exceeds limit
+            if len(html) > MAX_MSG_LEN:
+                for chunk in _split_text(html[MAX_MSG_LEN:]):
+                    await self._send_final_chunk(chat_id, chunk)
+        else:
+            await self._send_final(chat_id, final_text)
+
+    async def _respond_blocked(self, chat_id: int, user_id: str, text: str) -> None:
+        """Wait for full response, then send."""
+        typing_task = asyncio.create_task(self._typing_loop(chat_id))
+        try:
+            response = await self.agent.run_turn(text, user_id=user_id)
+        finally:
+            typing_task.cancel()
+        await self._send_final(chat_id, response or "(No response)")
+
+    # ── Low-level send methods ───────────────────────────────
+
+    async def _send_draft(self, chat_id: int, draft_id: int, text: str) -> None:
+        """Send a streaming draft via sendMessageDraft."""
+        try:
+            await self.bot(SendMessageDraft(
+                chat_id=chat_id,
+                draft_id=draft_id,
+                text=text[:4096],
+            ))
+        except Exception as e:
+            logger.debug("sendMessageDraft failed: %s", e)
+
+    async def _send_final(self, chat_id: int, text: str) -> None:
+        """Send the final formatted message, splitting if needed."""
+        if not text:
+            return
+        html = _md_to_html(text)
+        for chunk in _split_text(html):
+            await self._send_final_chunk(chat_id, chunk)
+            await asyncio.sleep(0.1)
+
+    async def _send_final_chunk(self, chat_id: int, html_chunk: str) -> None:
+        """Send a single chunk with HTML fallback to plain text."""
+        try:
+            await self.bot.send_message(
+                chat_id=chat_id, text=html_chunk, parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            try:
+                await self.bot.send_message(chat_id=chat_id, text=html_chunk)
+            except Exception as e:
+                logger.error("Failed to send message: %s", e)
 
     async def _typing_loop(self, chat_id: int) -> None:
         """Send typing indicator every 4 seconds until cancelled."""
         try:
             while True:
                 await self.bot.send_chat_action(
-                    chat_id=chat_id,
-                    action=ChatAction.TYPING,
+                    chat_id=chat_id, action=ChatAction.TYPING,
                 )
                 await asyncio.sleep(4)
         except asyncio.CancelledError:
@@ -180,60 +308,23 @@ class TelegramAdapter:
         except Exception:
             pass
 
-    async def _send_response(self, chat_id: int, text: str) -> None:
-        """Send a response, splitting long messages."""
-        if not text:
-            return
-
-        html = _md_to_html(text)
-        chunks = _split_text(html)
-
-        for chunk in chunks:
-            try:
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=ParseMode.HTML,
-                )
-                logger.info("sendMessage ok")
-            except Exception:
-                # Fallback to plain text
-                try:
-                    plain_chunks = _split_text(text)
-                    for pc in plain_chunks:
-                        await self.bot.send_message(
-                            chat_id=chat_id,
-                            text=pc,
-                        )
-                        logger.info("sendMessage ok")
-                except Exception as e:
-                    logger.error("Failed to send message: %s", e)
-                break
-
-            await asyncio.sleep(0.1)
+    # ── Proactive & lifecycle ────────────────────────────────
 
     async def _proactive_loop(self) -> None:
-        """Check scheduler queue for proactive messages to send."""
         if not self.scheduler:
             return
-
         while True:
             try:
                 msg = await asyncio.wait_for(
-                    self.scheduler.message_queue.get(), timeout=5.0
+                    self.scheduler.message_queue.get(), timeout=5.0,
                 )
                 msg_type = msg.get("type", "")
                 text = msg.get("text", "")
-
                 if msg_type == "proactive" and text:
-                    # Send to all allowed users
-                    for user_id in self.config.allowed_users:
-                        await self._send_response(user_id, text)
+                    for uid in self.config.allowed_users:
+                        await self._send_final(uid, text)
                 elif msg_type == "system_event" and text:
-                    # Inject into agent as if user sent it
-                    response = await self.agent.run_turn(text)
-                    # System events don't produce user-visible output by default
-                    # unless the agent writes to proactive-outbox
+                    await self.agent.run_turn(text)
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -242,12 +333,12 @@ class TelegramAdapter:
 
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
-        print("[telegram] starting provider")
-        logger.info("[telegram] starting provider")
-
-        # Start proactive message delivery loop
+        logger.info(
+            "[telegram] starting — mode=%s, flush=%.1fs",
+            self.config.response_mode,
+            self.config.stream_flush_interval,
+        )
         asyncio.create_task(self._proactive_loop())
-
         try:
             await self.dp.start_polling(self.bot, drop_pending_updates=True)
         finally:

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import openai
 
-from qanot.providers.base import LLMProvider, ProviderResponse, ToolCall, Usage
+from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -173,3 +174,95 @@ class OpenAIProvider(LLMProvider):
                 cost=self._calc_cost(inp, out),
             ),
         )
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        converted = _convert_messages(messages, system)
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": converted,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        if tools:
+            kwargs["tools"] = _anthropic_tools_to_openai(tools)
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        # Track partial tool calls: index -> {id, name, arguments}
+        partial_tools: dict[int, dict] = {}
+        usage_data: dict | None = None
+
+        try:
+            stream = await self.client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if chunk.usage:
+                    usage_data = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                    }
+
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # Text content
+                if delta.content:
+                    text_parts.append(delta.content)
+                    yield StreamEvent(type="text_delta", text=delta.content)
+
+                # Tool call deltas
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in partial_tools:
+                            partial_tools[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        pt = partial_tools[idx]
+                        if tc_delta.id:
+                            pt["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                pt["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                pt["arguments"] += tc_delta.function.arguments
+
+        except openai.APIError as e:
+            logger.error("OpenAI streaming error: %s", e)
+            raise
+
+        # Build final tool calls
+        for _idx, pt in sorted(partial_tools.items()):
+            try:
+                args = json.loads(pt["arguments"]) if pt["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            tc = ToolCall(id=pt["id"], name=pt["name"], input=args)
+            tool_calls.append(tc)
+            yield StreamEvent(type="tool_use", tool_call=tc)
+
+        inp = usage_data["prompt_tokens"] if usage_data else 0
+        out = usage_data["completion_tokens"] if usage_data else 0
+        stop_reason = "tool_use" if tool_calls else "end_turn"
+
+        response = ProviderResponse(
+            content="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            usage=Usage(
+                input_tokens=inp,
+                output_tokens=out,
+                cost=self._calc_cost(inp, out),
+            ),
+        )
+        yield StreamEvent(type="done", response=response)

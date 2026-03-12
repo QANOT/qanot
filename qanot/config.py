@@ -34,6 +34,8 @@ class Config:
     plugins_dir: str = "/data/plugins"
     max_context_tokens: int = 200000
     allowed_users: list[int] = field(default_factory=list)
+    response_mode: str = "stream"  # "stream" | "partial" | "blocked"
+    stream_flush_interval: float = 0.8  # seconds between draft updates
 
 
 def load_config(path: str | None = None) -> Config:
@@ -77,4 +79,6 @@ def load_config(path: str | None = None) -> Config:
         plugins_dir=raw.get("plugins_dir", "/data/plugins"),
         max_context_tokens=raw.get("max_context_tokens", 200000),
         allowed_users=raw.get("allowed_users", []),
+        response_mode=raw.get("response_mode", "stream"),
+        stream_flush_interval=raw.get("stream_flush_interval", 0.8),
     )

@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
 
 from qanot.config import Config
 from qanot.context import ContextTracker
 from qanot.memory import wal_scan, wal_write, write_daily_note
 from qanot.prompt import build_system_prompt
-from qanot.providers.base import LLMProvider, ProviderResponse, ToolCall
+from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall
 from qanot.session import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -247,6 +248,140 @@ class Agent:
             logger.warning("Agent hit max iterations (%d)", MAX_ITERATIONS)
 
         return final_text
+
+    async def run_turn_stream(
+        self, user_message: str, user_id: str | None = None
+    ) -> AsyncIterator[StreamEvent]:
+        """Process a user message with streaming.
+
+        Yields StreamEvent objects as they arrive from the provider.
+        The final event has type="done" with the complete ProviderResponse.
+        Tool-use iterations are handled internally; text deltas from each
+        iteration are yielded as they arrive.
+        """
+        messages = self._get_messages(user_id)
+
+        # WAL Protocol
+        wal_entries = wal_scan(user_message)
+        if wal_entries:
+            wal_write(wal_entries, self.config.workspace_dir)
+
+        # Compaction recovery
+        if self.context.detect_compaction(messages):
+            recovery = self.context.recover_from_compaction()
+            if recovery:
+                user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
+
+        messages.append({"role": "user", "content": user_message})
+        self._last_user_msg_id = self.session.log_user_message(user_message)
+
+        final_text = ""
+        for iteration in range(MAX_ITERATIONS):
+            system = self._build_system_prompt()
+            tool_defs = self.tools.get_definitions()
+
+            response: ProviderResponse | None = None
+            text_parts: list[str] = []
+            tool_calls: list[ToolCall] = []
+
+            async for event in self.provider.chat_stream(
+                messages=messages,
+                tools=tool_defs if tool_defs else None,
+                system=system,
+            ):
+                if event.type == "text_delta":
+                    text_parts.append(event.text)
+                    yield event
+                elif event.type == "tool_use" and event.tool_call:
+                    tool_calls.append(event.tool_call)
+                elif event.type == "done":
+                    response = event.response
+
+            if response is None:
+                break
+
+            # Track usage
+            self.context.add_usage(
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+            )
+            if self.context.check_threshold():
+                logger.warning(
+                    "Context at %.1f%% — Working Buffer activated",
+                    self.context.get_context_percent(),
+                )
+
+            if response.stop_reason == "tool_use" and tool_calls:
+                # Build assistant message
+                assistant_content: list[dict] = []
+                if response.content:
+                    assistant_content.append({"type": "text", "text": response.content})
+                for tc in tool_calls:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.input,
+                    })
+                messages.append({"role": "assistant", "content": assistant_content})
+
+                self.session.log_assistant_message(
+                    text=response.content,
+                    tool_uses=[{"name": tc.name, "input": tc.input} for tc in tool_calls],
+                    usage=response.usage,
+                    parent_id=self._last_user_msg_id,
+                    model=self.provider.model,
+                )
+
+                # Execute tools
+                tool_results: list[dict] = []
+                for tc in tool_calls:
+                    logger.info("Executing tool: %s", tc.name)
+                    result = await self.tools.execute(tc.name, tc.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc.id,
+                        "content": result,
+                    })
+                messages.append({"role": "user", "content": tool_results})
+
+                # Signal that tools ran and we're continuing
+                yield StreamEvent(type="tool_use")
+
+            elif response.stop_reason == "end_turn":
+                final_text = response.content
+                messages.append({"role": "assistant", "content": final_text})
+
+                self.session.log_assistant_message(
+                    text=final_text,
+                    usage=response.usage,
+                    parent_id=self._last_user_msg_id,
+                    model=self.provider.model,
+                )
+
+                if self.context.buffer_active:
+                    summary = final_text[:200] + "..." if len(final_text) > 200 else final_text
+                    self.context.append_to_buffer(user_message, summary)
+
+                write_daily_note(
+                    f"**User:** {user_message[:100]}...\n**Agent:** {final_text[:200]}...",
+                    self.config.workspace_dir,
+                )
+
+                yield StreamEvent(type="done", response=response)
+                return
+            else:
+                final_text = response.content or "(No response)"
+                messages.append({"role": "assistant", "content": final_text})
+                yield StreamEvent(type="done", response=response)
+                return
+
+        # Max iterations reached
+        yield StreamEvent(
+            type="done",
+            text="(Agent reached maximum iterations)",
+            response=ProviderResponse(content="(Agent reached maximum iterations)"),
+        )
 
     def reset(self, user_id: str | None = None) -> None:
         """Reset conversation state for a user, or all if user_id is None."""
