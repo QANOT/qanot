@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from qanot.utils import truncate_with_marker
+
 logger = logging.getLogger(__name__)
 
 MAX_FILE_CHARS = 20_000
@@ -16,7 +18,6 @@ _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
 
 def _truncate_content(content: str, max_chars: int) -> str:
     """Truncate content keeping 70% head and 20% tail with a marker."""
-    from qanot.utils import truncate_with_marker
     return truncate_with_marker(content, max_chars)
 
 

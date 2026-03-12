@@ -32,38 +32,43 @@ class ContextTracker:
     def __init__(self, max_tokens: int = 200_000, workspace_dir: str = "/data/workspace"):
         self.max_tokens = max_tokens
         self.workspace_dir = Path(workspace_dir)
-        self.total_input = 0
+        # Billing: total output tokens generated (input is not additive — it's the same context resent)
         self.total_output = 0
         self.turn_count = 0
+        self.api_calls = 0  # Total API calls (including tool loop iterations)
         self.buffer_active = False
         self._buffer_started: str | None = None
-        # Track the last prompt_tokens (what the API actually saw)
+        # Context size: last API call's input_tokens = actual context window usage
         self.last_prompt_tokens = 0
 
     @property
     def total_tokens(self) -> int:
-        return self.total_input + self.total_output
+        """Current context size: last prompt + all generated output."""
+        return self.last_prompt_tokens + self.total_output
 
     def get_context_percent(self) -> float:
         """Get current context usage as a percentage.
 
-        Uses last_prompt_tokens (actual context window usage) if available,
-        otherwise estimates from cumulative input tokens.
+        Uses last_prompt_tokens (actual context window usage from API).
+        This is the real context size — NOT accumulated input tokens.
         """
         if self.max_tokens == 0:
             return 0.0
-        # Use actual prompt tokens from last API call — this is the real
-        # context window usage (includes all messages + system prompt)
-        tokens = self.last_prompt_tokens if self.last_prompt_tokens > 0 else self.total_input
-        return (tokens / self.max_tokens) * 100.0
+        return (self.last_prompt_tokens / self.max_tokens) * 100.0
 
     def add_usage(self, input_tokens: int, output_tokens: int) -> None:
-        """Record token usage from a provider response."""
-        self.total_input += input_tokens
+        """Record token usage from a provider response.
+
+        input_tokens = full context sent to API (messages + system prompt).
+        This is NOT additive — each call resends the full context.
+        We track the latest value as current context size.
+        """
         self.total_output += output_tokens
-        self.turn_count += 1
-        # input_tokens from the API IS the actual prompt size (all messages + system)
+        self.api_calls += 1
+        # input_tokens from API = actual context window size right now
         self.last_prompt_tokens = input_tokens
+        # Increment turn count only on first call per user turn (not tool iterations)
+        # Turn count is managed separately in agent.py
 
     def needs_compaction(self) -> bool:
         """Check if context needs proactive compaction before next API call.
@@ -289,12 +294,12 @@ class ContextTracker:
         """Return current session status for the session_status tool."""
         return {
             "context_percent": round(self.get_context_percent(), 1),
-            "total_input_tokens": self.total_input,
+            "context_tokens": self.last_prompt_tokens,
             "total_output_tokens": self.total_output,
             "total_tokens": self.total_tokens,
             "max_tokens": self.max_tokens,
             "buffer_active": self.buffer_active,
             "buffer_started": self._buffer_started,
             "turn_count": self.turn_count,
-            "last_prompt_tokens": self.last_prompt_tokens,
+            "api_calls": self.api_calls,
         }

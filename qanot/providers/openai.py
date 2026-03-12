@@ -133,8 +133,11 @@ def _extract_text(content: Any) -> str:
 class OpenAIProvider(LLMProvider):
     """OpenAI GPT provider."""
 
-    def __init__(self, api_key: str, model: str = "gpt-4.1"):
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "gpt-4.1", base_url: str | None = None):
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = openai.AsyncOpenAI(**kwargs)
         self.model = model
 
     def _calc_cost(self, inp: int, out: int) -> float:

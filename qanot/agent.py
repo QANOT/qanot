@@ -25,6 +25,7 @@ from qanot.providers.errors import (
     ERROR_RATE_LIMIT,
     ERROR_CONTEXT_OVERFLOW,
 )
+from qanot.plugins.base import validate_tool_params
 from qanot.session import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -238,7 +239,6 @@ class ToolRegistry:
         tool_def = self._tools.get(name, {})
         schema = tool_def.get("input_schema", {})
         if schema:
-            from qanot.plugins.base import validate_tool_params
             errors = validate_tool_params(input_data, schema)
             if errors:
                 logger.warning("Tool %s param validation: %s", name, errors)
@@ -299,6 +299,10 @@ class Agent:
         """Current user ID being processed (for RAG user-scoped queries)."""
         return self._current_user_id
 
+    def get_conversation(self, user_id: str | None) -> list[dict]:
+        """Get conversation history for a user (read-only view)."""
+        return self._conversations.get(user_id, [])
+
     def _get_lock(self, user_id: str | None) -> asyncio.Lock:
         """Get or create a per-user lock for write safety."""
         if user_id not in self._locks:
@@ -319,11 +323,26 @@ class Agent:
             logger.debug("Evicted stale conversation for user_id=%s", uid)
 
     def _get_messages(self, user_id: str | None = None) -> list[dict]:
-        """Get or create conversation history for a user."""
+        """Get or create conversation history for a user.
+
+        On first access for a user (after restart or TTL eviction),
+        restores recent history from JSONL session files so the bot
+        remembers previous conversations.
+        """
         self._evict_stale()
         self._last_active[user_id] = time.monotonic()
         if user_id not in self._conversations:
-            self._conversations[user_id] = []
+            # Try to restore from session history
+            restored: list[dict] = []
+            if user_id is not None:
+                try:
+                    restored = self.session.restore_history(
+                        user_id=str(user_id),
+                        max_turns=self.config.history_limit,
+                    )
+                except Exception as e:
+                    logger.warning("Session restore failed for user %s: %s", user_id, e)
+            self._conversations[user_id] = restored
         return self._conversations[user_id]
 
     def _build_system_prompt(self) -> str:
@@ -393,8 +412,10 @@ class Agent:
         else:
             messages.append({"role": "user", "content": user_message})
 
-        # Log to session
-        self._last_user_msg_id = self.session.log_user_message(user_message)
+        # Log to session (with user_id for replay filtering)
+        self._last_user_msg_id = self.session.log_user_message(
+            user_message, user_id=self._current_user_id,
+        )
         return user_message
 
     async def _summarize_for_compaction(self, messages: list[dict]) -> str | None:
@@ -445,8 +466,15 @@ class Agent:
 
         return None
 
-    async def _prepare_iteration(self, messages: list[dict], user_id: str | None) -> tuple[list[dict], str, list[dict]]:
+    async def _prepare_iteration(
+        self, messages: list[dict], user_id: str | None, *,
+        cached_system: str | None = None,
+        cached_tool_defs: list[dict] | None = None,
+    ) -> tuple[list[dict], str, list[dict]]:
         """Shared per-iteration prep: compaction, repair, build prompt/tools.
+
+        Pass cached_system/cached_tool_defs to reuse from the first iteration
+        (system prompt and tool defs don't change within a single turn).
 
         Returns (messages, system_prompt, tool_defs).
         """
@@ -458,11 +486,13 @@ class Agent:
             logger.info("Proactive compaction triggered at %.1f%% (mode=%s)",
                        self.context.get_context_percent(), self.config.compaction_mode)
 
-        messages = _repair_messages(messages)
-        self._conversations[user_id] = messages
+        # Repair messages only on the first iteration (cached_system is None)
+        if cached_system is None:
+            messages = _repair_messages(messages)
+            self._conversations[user_id] = messages
 
-        system = self._build_system_prompt()
-        tool_defs = self.tools.get_definitions()
+        system = cached_system or self._build_system_prompt()
+        tool_defs = cached_tool_defs if cached_tool_defs is not None else self.tools.get_definitions()
         return messages, system, tool_defs
 
     async def _handle_overflow(self, messages: list[dict], user_id: str | None) -> list[dict]:
@@ -532,6 +562,7 @@ class Agent:
             usage=usage,
             parent_id=self._last_user_msg_id,
             model=self.provider.model,
+            user_id=self._current_user_id,
         )
 
     async def _execute_tools(self, tool_calls: list[ToolCall]) -> list[dict]:
@@ -568,6 +599,7 @@ class Agent:
             usage=usage,
             parent_id=self._last_user_msg_id,
             model=self.provider.model,
+            user_id=self._current_user_id,
         )
 
         if self.context.buffer_active:
@@ -634,15 +666,25 @@ class Agent:
     async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None) -> str:
         """Internal implementation of run_turn (called under lock)."""
         self._current_user_id = user_id or ""
+        self.context.turn_count += 1
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
         final_text = ""
         recent_fingerprints: list[str] = []
         overflow_retries = 0
+        cached_system: str | None = None
+        cached_tool_defs: list[dict] | None = None
 
         for iteration in range(MAX_ITERATIONS):
-            messages, system, tool_defs = await self._prepare_iteration(messages, user_id)
+            messages, system, tool_defs = await self._prepare_iteration(
+                messages, user_id,
+                cached_system=cached_system, cached_tool_defs=cached_tool_defs,
+            )
+            # Cache after first iteration — prompt/tools don't change within a turn
+            if cached_system is None:
+                cached_system = system
+                cached_tool_defs = tool_defs
 
             try:
                 response = await self._call_provider_with_retry(
@@ -721,14 +763,23 @@ class Agent:
     ) -> AsyncIterator[StreamEvent]:
         """Internal streaming implementation (called under lock)."""
         self._current_user_id = user_id or ""
+        self.context.turn_count += 1
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
         recent_fingerprints: list[str] = []
         overflow_retries = 0
+        cached_system: str | None = None
+        cached_tool_defs: list[dict] | None = None
 
         for iteration in range(MAX_ITERATIONS):
-            messages, system, tool_defs = await self._prepare_iteration(messages, user_id)
+            messages, system, tool_defs = await self._prepare_iteration(
+                messages, user_id,
+                cached_system=cached_system, cached_tool_defs=cached_tool_defs,
+            )
+            if cached_system is None:
+                cached_system = system
+                cached_tool_defs = tool_defs
 
             response: ProviderResponse | None = None
             text_parts: list[str] = []

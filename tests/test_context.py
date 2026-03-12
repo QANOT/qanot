@@ -23,9 +23,10 @@ class TestContextTracker:
     def test_add_usage(self):
         ct = ContextTracker(max_tokens=100_000)
         ct.add_usage(1000, 500)
-        assert ct.total_input == 1000
+        assert ct.last_prompt_tokens == 1000
         assert ct.total_output == 500
-        assert ct.total_tokens == 1500
+        assert ct.total_tokens == 1500  # last_prompt_tokens + total_output
+        assert ct.api_calls == 1
 
     def test_context_percent_uses_last_prompt_tokens(self):
         ct = ContextTracker(max_tokens=100_000)
@@ -106,8 +107,9 @@ class TestContextTracker:
         assert status["total_tokens"] == 60_000
         assert status["context_percent"] == 25.0
         assert status["buffer_active"] is False
-        assert status["turn_count"] == 1
-        assert status["last_prompt_tokens"] == 50_000
+        assert status["turn_count"] == 0  # turn_count managed by agent.py, not add_usage
+        assert status["api_calls"] == 1
+        assert status["context_tokens"] == 50_000
 
     def test_zero_max_tokens(self):
         ct = ContextTracker(max_tokens=0)

@@ -12,9 +12,12 @@ from qanot.providers.base import Usage
 
 logger = logging.getLogger(__name__)
 
+# Default max turns to restore from session history
+DEFAULT_HISTORY_LIMIT = 50
+
 
 class SessionWriter:
-    """Append-only JSONL session writer with file locking."""
+    """Append-only JSONL session writer with file locking and replay."""
 
     def __init__(self, sessions_dir: str = "/data/sessions"):
         self.sessions_dir = Path(sessions_dir)
@@ -36,7 +39,7 @@ class SessionWriter:
         self._msg_counter += 1
         return f"msg_{self._msg_counter:06d}"
 
-    def log_user_message(self, text: str, parent_id: str = "") -> str:
+    def log_user_message(self, text: str, parent_id: str = "", user_id: str = "") -> str:
         """Log a user message. Returns the message ID."""
         msg_id = self._next_id()
         entry = {
@@ -49,6 +52,8 @@ class SessionWriter:
                 "content": text,
             },
         }
+        if user_id:
+            entry["user_id"] = user_id
         self._append(entry)
         return msg_id
 
@@ -59,6 +64,7 @@ class SessionWriter:
         usage: Usage | None = None,
         parent_id: str = "",
         model: str = "",
+        user_id: str = "",
     ) -> str:
         """Log an assistant message. Returns the message ID."""
         msg_id = self._next_id()
@@ -87,6 +93,8 @@ class SessionWriter:
 
         if model:
             entry["model"] = model
+        if user_id:
+            entry["user_id"] = user_id
 
         if usage:
             entry["usage"] = {
@@ -114,3 +122,200 @@ class SessionWriter:
         """Start a new session with an optional custom ID."""
         self._session_id = session_id or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._msg_counter = 0
+
+    # ── Session Replay ──
+
+    def restore_history(
+        self,
+        user_id: str,
+        max_turns: int = DEFAULT_HISTORY_LIMIT,
+    ) -> list[dict]:
+        """Restore conversation history for a user from JSONL session files.
+
+        Reads recent session files, filters by user_id, extracts user/assistant
+        message pairs, and returns the last `max_turns` user turns (each turn =
+        user message + assistant response).
+
+        Returns a list of message dicts ready to be used as conversation history.
+        """
+        raw_messages = self._read_user_messages(user_id)
+        if not raw_messages:
+            return []
+
+        # Convert JSONL entries to conversation messages
+        messages = _entries_to_messages(raw_messages)
+
+        # Limit to last N user turns
+        messages = _limit_history_turns(messages, max_turns)
+
+        # Sanitize: remove orphaned tool results, fix broken pairs
+        messages = _sanitize_restored_messages(messages)
+
+        if messages:
+            logger.info(
+                "Restored %d messages for user %s from session history",
+                len(messages), user_id,
+            )
+
+        return messages
+
+    def _read_user_messages(self, user_id: str) -> list[dict]:
+        """Read all JSONL entries for a specific user from recent session files."""
+        entries: list[dict] = []
+
+        # Read from recent session files (last 7 days)
+        session_files = sorted(self.sessions_dir.glob("*.jsonl"), reverse=True)[:7]
+
+        for filepath in session_files:
+            try:
+                with open(filepath, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # Filter by user_id.
+                        # Legacy entries without user_id are included (personal bot
+                        # — all messages belong to the same user).
+                        entry_uid = entry.get("user_id", "")
+                        if entry_uid == user_id or not entry_uid:
+                            entries.append(entry)
+            except Exception as e:
+                logger.warning("Failed to read session file %s: %s", filepath, e)
+
+        # Sort by timestamp (oldest first)
+        entries.sort(key=lambda e: e.get("timestamp", ""))
+        return entries
+
+
+def _entries_to_messages(entries: list[dict]) -> list[dict]:
+    """Convert JSONL session entries to conversation message format.
+
+    Handles both simple text messages and structured content (tool_use blocks).
+    Skips tool-use intermediate messages to keep history clean — only preserves
+    user text messages and assistant final text responses.
+    """
+    messages: list[dict] = []
+
+    for entry in entries:
+        msg = entry.get("message", {})
+        role = msg.get("role", "")
+        content = msg.get("content")
+
+        if not role or content is None:
+            continue
+
+        if role == "user":
+            # User messages: keep text content only (skip tool_result blocks)
+            if isinstance(content, str):
+                # Strip RAG/compaction injection artifacts
+                clean = _strip_injection(content)
+                if clean:
+                    messages.append({"role": "user", "content": clean})
+            elif isinstance(content, list):
+                # Structured content — extract text blocks only
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_result":
+                            continue  # Skip tool results in restored history
+                if text_parts:
+                    text = "\n".join(text_parts)
+                    clean = _strip_injection(text)
+                    if clean:
+                        messages.append({"role": "user", "content": clean})
+
+        elif role == "assistant":
+            if isinstance(content, str):
+                if content:
+                    messages.append({"role": "assistant", "content": content})
+            elif isinstance(content, list):
+                # Extract only text blocks from assistant (skip tool_use blocks)
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                if text_parts:
+                    text = "\n".join(text_parts)
+                    if text.strip():
+                        messages.append({"role": "assistant", "content": text})
+
+    return messages
+
+
+def _strip_injection(text: str) -> str:
+    """Strip RAG/compaction injection artifacts from restored user messages.
+
+    These are added dynamically per-turn and should not be persisted in history.
+    """
+    # Strip memory context injection
+    if "\n\n---\n[MEMORY CONTEXT" in text:
+        text = text[:text.index("\n\n---\n[MEMORY CONTEXT")]
+    # Strip compaction recovery injection
+    if "\n\n---\n\n[COMPACTION RECOVERY]" in text:
+        text = text[:text.index("\n\n---\n\n[COMPACTION RECOVERY]")]
+    return text.strip()
+
+
+def _limit_history_turns(messages: list[dict], max_turns: int) -> list[dict]:
+    """Keep only the last N user turns from message history.
+
+    A "turn" is a user message + the following assistant response.
+    """
+    if max_turns <= 0:
+        return []
+
+    # Walk backward counting user messages
+    user_count = 0
+    cut_index = 0
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            user_count += 1
+            if user_count > max_turns:
+                cut_index = i + 1
+                break
+
+    return messages[cut_index:]
+
+
+def _sanitize_restored_messages(messages: list[dict]) -> list[dict]:
+    """Sanitize restored history to prevent API errors.
+
+    Fixes:
+    - Consecutive same-role messages (merge or keep last)
+    - Empty messages
+    - Ensures conversation starts with user message
+    """
+    if not messages:
+        return messages
+
+    # Remove empty messages
+    messages = [m for m in messages if m.get("content")]
+
+    # Ensure first message is from user
+    while messages and messages[0].get("role") != "user":
+        messages.pop(0)
+
+    # Merge consecutive same-role messages
+    sanitized: list[dict] = []
+    for msg in messages:
+        if sanitized and sanitized[-1].get("role") == msg.get("role"):
+            # Merge: append text
+            prev = sanitized[-1]
+            if isinstance(prev["content"], str) and isinstance(msg["content"], str):
+                prev["content"] += "\n" + msg["content"]
+            else:
+                sanitized.append(msg)  # Can't merge structured, just keep both
+        else:
+            sanitized.append(msg)
+
+    # Ensure conversation ends properly (no trailing user without response)
+    # This is fine — the next turn will add a new user message
+
+    return sanitized

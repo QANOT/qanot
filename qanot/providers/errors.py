@@ -52,11 +52,11 @@ def classify_error(error: Exception) -> str:
     if is_context_overflow_error(msg):
         return ERROR_CONTEXT_OVERFLOW
 
-    if "rate" in msg and "limit" in msg or "429" in msg:
+    if ("rate" in msg and "limit" in msg) or "429" in msg:
         return ERROR_RATE_LIMIT
     if "overloaded" in msg or "503" in msg or "529" in msg:
         return ERROR_OVERLOADED
-    if "unauthorized" in msg or "forbidden" in msg or "invalid" in msg and "key" in msg:
+    if "unauthorized" in msg or "forbidden" in msg or ("invalid" in msg and "key" in msg):
         return ERROR_AUTH
     if "billing" in msg or "402" in msg or "quota" in msg:
         return ERROR_BILLING

@@ -289,14 +289,21 @@ class TestHandleStatus:
         adapter = TelegramAdapter.__new__(TelegramAdapter)
         adapter.config = config
         adapter.agent = MagicMock()
-        adapter.agent._context = MagicMock()
-        adapter.agent._context.session_status.return_value = {
+        adapter.agent.context = MagicMock()
+        adapter.agent.context.session_status.return_value = {
             "context_percent": 42.5,
             "total_tokens": 15000,
             "turn_count": 7,
             "buffer_active": False,
         }
         adapter.agent._conversations = {"12345": [{"role": "user"}, {"role": "assistant"}]}
+        # Mock provider with status() for failover info
+        mock_provider = MagicMock()
+        mock_provider.status.return_value = [
+            {"name": "claude-main", "model": "claude-sonnet-4-6", "available": True, "active": True, "last_error": ""},
+            {"name": "gemini-backup", "model": "gemini-2.5-flash", "available": True, "active": False, "last_error": ""},
+        ]
+        adapter.agent.provider = mock_provider
         adapter._send_final = AsyncMock()
 
         message = _make_message(user_id=12345)
@@ -308,7 +315,8 @@ class TestHandleStatus:
         assert "42.5%" in status_text
         assert "15,000" in status_text
         assert "7" in status_text
-        assert "anthropic" in status_text
+        assert "claude-main" in status_text
+        assert "gemini-backup" in status_text
 
     @pytest.mark.asyncio
     async def test_status_blocked_user(self):

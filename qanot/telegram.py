@@ -33,6 +33,15 @@ _TOOL_LEAK_RE = re.compile(
     re.DOTALL,
 )
 
+# Pre-compiled regex patterns for _md_to_html (avoid recompilation per call)
+_RE_CODE_BLOCK = re.compile(r"```(\w*)\n([\s\S]*?)```")
+_RE_TABLE = re.compile(r"(?:^[|].*\n?)+", re.MULTILINE)
+_RE_HR = re.compile(r"^---+$", re.MULTILINE)
+_RE_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_RE_INLINE_CODE = re.compile(r"`([^`]+)`")
+_RE_HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
+_RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
+
 
 # ── Formatting helpers ──────────────────────────────────────
 
@@ -46,16 +55,16 @@ def _sanitize_response(text: str) -> str:
 def _md_to_html(text: str) -> str:
     """Convert agent markdown to Telegram HTML."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    text = re.sub(r"```(\w*)\n([\s\S]*?)```", r"<pre>\2</pre>", text)
+    text = _RE_CODE_BLOCK.sub(r"<pre>\2</pre>", text)
 
     def wrap_table(m: re.Match) -> str:
         return f"\n<pre>{m.group(0).strip()}</pre>\n"
-    text = re.sub(r"(?:^[|].*\n?)+", wrap_table, text, flags=re.MULTILINE)
-    text = re.sub(r"^---+$", "\u2501" * 18, text, flags=re.MULTILINE)
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = _RE_TABLE.sub(wrap_table, text)
+    text = _RE_HR.sub("\u2501" * 18, text)
+    text = _RE_BOLD.sub(r"<b>\1</b>", text)
+    text = _RE_INLINE_CODE.sub(r"<code>\1</code>", text)
+    text = _RE_HEADING.sub(r"<b>\1</b>", text)
+    text = _RE_MULTI_NEWLINE.sub("\n\n", text)
     return text
 
 
@@ -269,23 +278,41 @@ class TelegramAdapter:
                 logger.error("File download failed: %s", e)
                 text = f"[Document: {fname} — yuklab bo'lmadi] {text}".strip()
 
-        # Reply-to-message context (message quoting)
+        # Reply-to-message context (message quoting + media)
         if message.reply_to_message:
             quoted = message.reply_to_message
             quoted_text = quoted.text or quoted.caption or ""
-            if quoted_text:
-                # Truncate long quotes
-                if len(quoted_text) > 500:
-                    quoted_text = quoted_text[:500] + "…"
-                quoted_from = ""
-                if quoted.from_user:
-                    if quoted.from_user.is_bot:
-                        quoted_from = "your previous message"
-                    else:
-                        name = quoted.from_user.full_name or str(quoted.from_user.id)
-                        quoted_from = f"a message from {name}"
+            # Truncate long quotes
+            if len(quoted_text) > 1000:
+                quoted_text = quoted_text[:1000] + "…"
+            # Determine source
+            quoted_from = "a message"
+            if quoted.from_user:
+                if quoted.from_user.is_bot:
+                    quoted_from = "your previous message"
                 else:
-                    quoted_from = "a message"
+                    name = quoted.from_user.full_name or str(quoted.from_user.id)
+                    quoted_from = f"a message from {name}"
+            # Extract media from quoted message
+            if quoted.photo and not images:
+                quoted_img = await self._download_photo(quoted)
+                if quoted_img:
+                    images.append(quoted_img)
+                    if not quoted_text:
+                        quoted_text = "[image]"
+            if quoted.sticker and not images:
+                sticker_data = await self._download_sticker(quoted)
+                if isinstance(sticker_data, dict) and sticker_data.get("type") == "image":
+                    images.append(sticker_data)
+                    emoji = quoted.sticker.emoji or ""
+                    if not quoted_text:
+                        quoted_text = f"[sticker {emoji}]"
+            if quoted.voice and not voice_request:
+                transcript = await self._transcribe_voice(quoted)
+                if transcript:
+                    quoted_text = f"{quoted_text} [voice: {transcript}]".strip()
+            # Build reply annotation
+            if quoted_text:
                 text = f"[Replying to {quoted_from}: \"{quoted_text}\"]\n\n{text}"
 
         if not text:
@@ -344,8 +371,10 @@ class TelegramAdapter:
                 for earlier_msg, _, _, _ in batch[:-1]:
                     await self._react(earlier_msg.chat.id, earlier_msg.message_id, "✅")
 
+            # Only reply-to when messages were coalesced (multiple rapid messages)
+            coalesced = len(batch) > 1
             async with self._concurrent:
-                await self._process_turn(msg, coalesce_key, text, images, voice_req)
+                await self._process_turn(msg, coalesce_key, text, images, voice_req, coalesced=coalesced)
 
     async def _process_turn(
         self,
@@ -354,16 +383,26 @@ class TelegramAdapter:
         text: str,
         images: list[dict] | None,
         voice_request: bool,
+        *,
+        coalesced: bool = False,
     ) -> None:
         """Process a single (possibly coalesced) turn for a conversation."""
         mode = self.config.response_mode
+        # Reply-to based on config: off=never, coalesced=only batched, always=every message
+        rm = self.config.reply_mode
+        if rm == "always":
+            reply_to = message.message_id
+        elif rm == "coalesced" and coalesced:
+            reply_to = message.message_id
+        else:
+            reply_to = None
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, conv_key, text, images=images)
+                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, conv_key, text, images=images)
+                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
             else:
-                await self._respond_blocked(message.chat.id, conv_key, text, images=images)
+                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
 
             # Send TTS voice reply if configured
             should_tts = (
@@ -536,16 +575,22 @@ class TelegramAdapter:
 
     # ── Telegram commands ────────────────────────────────────
 
-    async def _handle_reset(self, message: Message) -> None:
-        """Handle /reset — clear conversation history."""
+    def _check_command_access(self, message: Message) -> tuple[int, str] | None:
+        """Check command access and return (user_id, conv_key), or None if denied."""
         if not message.from_user:
-            return
+            return None
         user_id = message.from_user.id
         if not self._is_allowed(user_id):
-            return
+            return None
+        conv_key = f"group_{message.chat.id}" if self._is_group_chat(message) else str(user_id)
+        return user_id, conv_key
 
-        is_group = self._is_group_chat(message)
-        conv_key = f"group_{message.chat.id}" if is_group else str(user_id)
+    async def _handle_reset(self, message: Message) -> None:
+        """Handle /reset — clear conversation history."""
+        access = self._check_command_access(message)
+        if not access:
+            return
+        _, conv_key = access
         self.agent.reset(conv_key)
         await self._send_final(
             message.chat.id,
@@ -555,16 +600,24 @@ class TelegramAdapter:
 
     async def _handle_status(self, message: Message) -> None:
         """Handle /status — show session info."""
-        if not message.from_user:
+        access = self._check_command_access(message)
+        if not access:
             return
-        user_id = message.from_user.id
-        if not self._is_allowed(user_id):
-            return
+        _, conv_key = access
+        status = self.agent.context.session_status()
+        conv = self.agent.get_conversation(conv_key)
 
-        is_group = self._is_group_chat(message)
-        conv_key = f"group_{message.chat.id}" if is_group else str(user_id)
-        status = self.agent._context.session_status()
-        conv = self.agent._conversations.get(conv_key, [])
+        # Provider health info
+        provider = self.agent.provider
+        provider_info = f"Provider: {self.config.provider}\nModel: {self.config.model}"
+        if hasattr(provider, "status"):
+            lines = []
+            for ps in provider.status():
+                icon = "🟢" if ps["available"] else "🔴"
+                active = " ◀" if ps["active"] else ""
+                err = f" ({ps['last_error']})" if ps["last_error"] else ""
+                lines.append(f"{icon} {ps['name']} — {ps['model']}{err}{active}")
+            provider_info = "Providers:\n" + "\n".join(lines)
 
         status_text = (
             f"**Session Status**\n\n"
@@ -573,16 +626,13 @@ class TelegramAdapter:
             f"Turns: {status['turn_count']}\n"
             f"Messages: {len(conv)}\n"
             f"Buffer: {'active' if status['buffer_active'] else 'inactive'}\n"
-            f"Provider: {self.config.provider}\n"
-            f"Model: {self.config.model}"
+            f"{provider_info}"
         )
         await self._send_final(message.chat.id, status_text)
 
     async def _handle_help(self, message: Message) -> None:
         """Handle /help — show available commands."""
-        if not message.from_user:
-            return
-        if not self._is_allowed(message.from_user.id):
+        if not self._check_command_access(message):
             return
 
         help_text = (
@@ -679,7 +729,7 @@ class TelegramAdapter:
         import os
 
         # Get the last assistant response from conversation
-        conv = self.agent._conversations.get(user_id)
+        conv = self.agent.get_conversation(user_id)
         if not conv:
             return
         last_text = ""
@@ -752,7 +802,7 @@ class TelegramAdapter:
 
     # ── Response strategies ──────────────────────────────────
 
-    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
+    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
         """Stream response via sendMessageDraft → sendMessage.
 
         Handles race conditions between draft updates and tool execution:
@@ -800,9 +850,9 @@ class TelegramAdapter:
             typing_task.cancel()
 
         final_text = accumulated or "(No response)"
-        await self._send_final(chat_id, final_text)
+        await self._send_final(chat_id, final_text, reply_to=reply_to)
 
-    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
+    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         accumulated = ""
@@ -817,12 +867,13 @@ class TelegramAdapter:
                 if now - last_flush >= interval and accumulated.strip():
                     if sent_msg_id is None:
                         try:
-                            msg = await self.bot.send_message(
-                                chat_id=chat_id, text=accumulated[:MAX_MSG_LEN],
-                            )
+                            send_kwargs: dict = {"chat_id": chat_id, "text": accumulated[:MAX_MSG_LEN]}
+                            if reply_to:
+                                send_kwargs["reply_to_message_id"] = reply_to
+                            msg = await self.bot.send_message(**send_kwargs)
                             sent_msg_id = msg.message_id
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning("Partial send failed: %s", e)
                     else:
                         try:
                             await self.bot.edit_message_text(
@@ -831,7 +882,7 @@ class TelegramAdapter:
                                 text=accumulated[:MAX_MSG_LEN],
                             )
                         except Exception:
-                            pass
+                            pass  # Edit failures are expected (unchanged text)
                     last_flush = now
 
             elif event.type == "done":
@@ -855,16 +906,16 @@ class TelegramAdapter:
                 for chunk in _split_text(html[MAX_MSG_LEN:]):
                     await self._send_final_chunk(chat_id, chunk)
         else:
-            await self._send_final(chat_id, final_text)
+            await self._send_final(chat_id, final_text, reply_to=reply_to)
 
-    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
+    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
             response = await self.agent.run_turn(text, user_id=user_id, images=images)
         finally:
             typing_task.cancel()
-        await self._send_final(chat_id, response or "(No response)")
+        await self._send_final(chat_id, response or "(No response)", reply_to=reply_to)
 
     # ── Low-level send methods ───────────────────────────────
 
@@ -879,53 +930,47 @@ class TelegramAdapter:
         except Exception as e:
             logger.debug("sendMessageDraft failed: %s", e)
 
-    async def _send_final(self, chat_id: int, text: str) -> None:
+    async def _send_final(self, chat_id: int, text: str, *, reply_to: int | None = None) -> None:
         """Send the final formatted message, splitting if needed."""
         if not text:
             return
         text = _sanitize_response(text)
         html = _md_to_html(text)
-        for chunk in _split_text(html):
-            await self._send_final_chunk(chat_id, chunk)
+        chunks = _split_text(html)
+        for i, chunk in enumerate(chunks):
+            # Only reply_to on first chunk
+            await self._send_final_chunk(chat_id, chunk, reply_to=reply_to if i == 0 else None)
             await asyncio.sleep(0.1)
 
-    async def _send_final_chunk(self, chat_id: int, html_chunk: str) -> None:
+    async def _send_final_chunk(self, chat_id: int, html_chunk: str, *, reply_to: int | None = None) -> None:
         """Send a single chunk with HTML fallback to plain text."""
+        kwargs: dict = {"chat_id": chat_id, "text": html_chunk}
+        if reply_to:
+            kwargs["reply_to_message_id"] = reply_to
         try:
-            await self.bot.send_message(
-                chat_id=chat_id, text=html_chunk, parse_mode=ParseMode.HTML,
-            )
+            await self.bot.send_message(**kwargs, parse_mode=ParseMode.HTML)
         except Exception:
             try:
-                await self.bot.send_message(chat_id=chat_id, text=html_chunk)
+                await self.bot.send_message(**kwargs)
             except Exception as e:
                 logger.error("Failed to send message: %s", e)
 
-    async def _typing_loop(self, chat_id: int) -> None:
-        """Send typing indicator every 4 seconds until cancelled."""
+    async def _action_loop(self, chat_id: int, action: ChatAction = ChatAction.TYPING) -> None:
+        """Send a chat action indicator every 4 seconds until cancelled."""
         try:
             while True:
-                await self.bot.send_chat_action(
-                    chat_id=chat_id, action=ChatAction.TYPING,
-                )
+                await self.bot.send_chat_action(chat_id=chat_id, action=action)
                 await asyncio.sleep(4)
-        except asyncio.CancelledError:
-            pass
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             pass
 
+    async def _typing_loop(self, chat_id: int) -> None:
+        """Send typing indicator until cancelled."""
+        await self._action_loop(chat_id, ChatAction.TYPING)
+
     async def _voice_action_loop(self, chat_id: int) -> None:
-        """Send 'recording voice' indicator every 4 seconds until cancelled."""
-        try:
-            while True:
-                await self.bot.send_chat_action(
-                    chat_id=chat_id, action=ChatAction.RECORD_VOICE,
-                )
-                await asyncio.sleep(4)
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+        """Send 'recording voice' indicator until cancelled."""
+        await self._action_loop(chat_id, ChatAction.RECORD_VOICE)
 
     async def _react(self, chat_id: int, message_id: int, emoji: str) -> None:
         """Set a reaction emoji on a message. Silently fails if unsupported."""
@@ -939,17 +984,6 @@ class TelegramAdapter:
             ))
         except Exception:
             pass  # Reactions may not be available in all chats
-
-    async def _clear_reaction(self, chat_id: int, message_id: int) -> None:
-        """Remove all reactions from a message."""
-        try:
-            await self.bot(SetMessageReaction(
-                chat_id=chat_id,
-                message_id=message_id,
-                reaction=[],
-            ))
-        except Exception:
-            pass
 
     # ── Proactive & lifecycle ────────────────────────────────
 

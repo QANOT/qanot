@@ -63,14 +63,13 @@ def wal_scan(user_message: str) -> list[WALEntry]:
         return entries
 
     for pattern, category in WAL_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
             # Extract relevant snippet (up to 200 chars around the match)
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                start = max(0, match.start() - 50)
-                end = min(len(text), match.end() + 150)
-                snippet = text[start:end].strip()
-                entries.append(WALEntry(category=category, detail=snippet))
+            start = max(0, match.start() - 50)
+            end = min(len(text), match.end() + 150)
+            snippet = text[start:end].strip()
+            entries.append(WALEntry(category=category, detail=snippet))
 
     return entries
 

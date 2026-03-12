@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from qanot.agent import ToolRegistry
+from qanot.tools.jobs_io import load_jobs as _load_jobs_from_file, save_jobs as _save_jobs_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +22,10 @@ def register_cron_tools(
     jobs_path = Path(cron_dir) / "jobs.json"
 
     def _load_jobs() -> list[dict]:
-        if jobs_path.exists():
-            try:
-                return json.loads(jobs_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                return []
-        return []
+        return _load_jobs_from_file(jobs_path)
 
     def _save_jobs(jobs: list[dict]) -> None:
-        jobs_path.parent.mkdir(parents=True, exist_ok=True)
-        jobs_path.write_text(json.dumps(jobs, indent=2, ensure_ascii=False), encoding="utf-8")
+        _save_jobs_to_file(jobs_path, jobs)
 
     # ── cron_create ──
     async def cron_create(params: dict) -> str:

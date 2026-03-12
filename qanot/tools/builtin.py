@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,8 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_COMMANDS = {"python3", "python", "curl", "ffmpeg", "zip", "unzip", "git", "ls", "cat", "head", "tail", "grep", "wc", "pip", "pip3"}
-MAX_OUTPUT = 10000
+MAX_OUTPUT = 50_000
+COMMAND_TIMEOUT = 120
 
 
 def register_builtin_tools(
@@ -50,12 +49,12 @@ def register_builtin_tools(
 
     registry.register(
         name="read_file",
-        description="Faylni o'qish. Workspace ichidagi fayllar uchun.",
+        description="Faylni o'qish. Istalgan yo'ldan (absolyut yoki workspace ichida).",
         parameters={
             "type": "object",
             "required": ["path"],
             "properties": {
-                "path": {"type": "string", "description": "Fayl yo'li (workspace ichida yoki absolyut)"},
+                "path": {"type": "string", "description": "Fayl yo'li (absolyut yoki workspace ichida)"},
             },
         },
         handler=read_file,
@@ -71,18 +70,18 @@ def register_builtin_tools(
         try:
             Path(full).parent.mkdir(parents=True, exist_ok=True)
             Path(full).write_text(content, encoding="utf-8")
-            return json.dumps({"success": True, "path": path, "bytes": len(content.encode())})
+            return json.dumps({"success": True, "path": full, "bytes": len(content.encode())})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
     registry.register(
         name="write_file",
-        description="Faylga yozish yoki yangi fayl yaratish.",
+        description="Faylga yozish yoki yangi fayl yaratish. Istalgan yo'lga.",
         parameters={
             "type": "object",
             "required": ["path", "content"],
             "properties": {
-                "path": {"type": "string", "description": "Fayl yo'li"},
+                "path": {"type": "string", "description": "Fayl yo'li (absolyut yoki relative)"},
                 "content": {"type": "string", "description": "Fayl tarkibi"},
             },
         },
@@ -107,7 +106,7 @@ def register_builtin_tools(
 
     registry.register(
         name="list_files",
-        description="Papka ichidagi fayllar ro'yxati.",
+        description="Papka ichidagi fayllar ro'yxati. Istalgan yo'ldan.",
         parameters={
             "type": "object",
             "properties": {
@@ -118,61 +117,47 @@ def register_builtin_tools(
     )
 
     # ── run_command ──
-    # Shell metacharacters that indicate injection attempts
-    _SHELL_METACHARS = set("|;&`$(){}><\n")
-
     async def run_command(params: dict) -> str:
         command = params.get("command", "").strip()
         if not command:
             return json.dumps({"error": "command is required"})
 
-        # Security: reject shell metacharacters to prevent injection
-        if any(c in command for c in _SHELL_METACHARS):
-            return json.dumps({"error": "Shell operators (|, ;, &, $, `, etc.) are not allowed. Use separate commands."})
-
-        # Parse command safely
-        try:
-            args = shlex.split(command)
-        except ValueError as e:
-            return json.dumps({"error": f"Invalid command syntax: {e}"})
-
-        if not args:
-            return json.dumps({"error": "command is required"})
-
-        # Security: check executable against allowlist
-        exe = args[0]
-        if exe not in ALLOWED_COMMANDS:
-            return json.dumps({"error": f"Command '{exe}' is not allowed. Allowed: {', '.join(sorted(ALLOWED_COMMANDS))}"})
+        timeout = params.get("timeout", COMMAND_TIMEOUT)
+        cwd = params.get("cwd", workspace_dir)
 
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
-                args,
-                shell=False,
+                command,
+                shell=True,
                 capture_output=True,
                 text=True,
-                timeout=30,
-                cwd=workspace_dir,
+                timeout=timeout,
+                cwd=cwd,
             )
             output = result.stdout
             if result.stderr:
                 output += f"\n--- stderr ---\n{result.stderr}"
+            if result.returncode != 0:
+                output += f"\n--- exit code: {result.returncode} ---"
             if len(output) > MAX_OUTPUT:
                 output = output[:MAX_OUTPUT] + "\n... (truncated)"
             return output or "(no output)"
         except subprocess.TimeoutExpired:
-            return json.dumps({"error": "Command timed out (30s)"})
+            return json.dumps({"error": f"Command timed out ({timeout}s)"})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
     registry.register(
         name="run_command",
-        description="Buyruq bajarish (sandboxed). Ruxsat: python3, curl, ffmpeg, zip, git, pip.",
+        description="Shell buyruq bajarish. Barcha buyruqlar, pipe, redirect ruxsat.",
         parameters={
             "type": "object",
             "required": ["command"],
             "properties": {
-                "command": {"type": "string", "description": "Bajariladigan buyruq"},
+                "command": {"type": "string", "description": "Shell buyruq (pipe, redirect, && ishlatsa bo'ladi)"},
+                "timeout": {"type": "integer", "description": "Timeout sekundlarda (default: 120)"},
+                "cwd": {"type": "string", "description": "Ishchi papka (default: workspace)"},
             },
         },
         handler=run_command,
@@ -227,7 +212,7 @@ def register_builtin_tools(
 
 
 def _resolve_path(path: str, workspace_dir: str) -> str:
-    """Resolve a path relative to workspace or as absolute."""
+    """Resolve a path — absolute paths used as-is, relative resolved from workspace."""
     if os.path.isabs(path):
         return path
-    return os.path.join(workspace_dir, path)
+    return os.path.normpath(os.path.join(workspace_dir, path))

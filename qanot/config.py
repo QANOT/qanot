@@ -67,6 +67,7 @@ class Config:
     brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
     # UX
     reactions_enabled: bool = True  # Send emoji reactions (👀, ✅, ❌) on messages
+    reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"
     # Group chat
     group_mode: str = "off"  # "off" | "mention" | "all"
     # Self-healing / heartbeat
@@ -77,6 +78,8 @@ class Config:
     briefing_schedule: str = "0 8 * * *"  # Default: 8:00 AM daily
     # Memory injection budget
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
+    # Session history replay
+    history_limit: int = 50  # Max user turns to restore from session history on restart
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""

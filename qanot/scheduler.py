@@ -13,6 +13,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
+from qanot.tools.jobs_io import load_jobs, save_jobs
+
 if TYPE_CHECKING:
     from qanot.agent import Agent, ToolRegistry
     from qanot.config import Config
@@ -89,13 +91,7 @@ class CronScheduler:
 
     def _load_jobs(self) -> list[dict]:
         """Load jobs from JSON file."""
-        if self._jobs_path.exists():
-            try:
-                jobs = json.loads(self._jobs_path.read_text(encoding="utf-8"))
-                return jobs
-            except json.JSONDecodeError:
-                return []
-        return []
+        return load_jobs(self._jobs_path)
 
     def _ensure_builtin_jobs(self, jobs: list[dict]) -> list[dict]:
         """Ensure heartbeat and briefing jobs exist in the job list."""
@@ -122,10 +118,7 @@ class CronScheduler:
             changed = True
 
         if changed:
-            self._jobs_path.parent.mkdir(parents=True, exist_ok=True)
-            self._jobs_path.write_text(
-                json.dumps(jobs, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            save_jobs(self._jobs_path, jobs)
         return jobs
 
     def start(self) -> None:
@@ -199,9 +192,7 @@ class CronScheduler:
             jobs = self._load_jobs()
             new_jobs = [j for j in jobs if j["name"] != job_name]
             if len(new_jobs) < len(jobs):
-                self._jobs_path.write_text(
-                    json.dumps(new_jobs, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
+                save_jobs(self._jobs_path, new_jobs)
                 logger.info("Auto-deleted one-shot job: %s", job_name)
         except Exception as e:
             logger.warning("Failed to auto-delete job %s: %s", job_name, e)
