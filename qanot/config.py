@@ -65,9 +65,15 @@ class Config:
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
     # Web search
     brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
+    # UX
+    reactions_enabled: bool = True  # Send emoji reactions (👀, ✅, ❌) on messages
+    # Group chat
+    group_mode: str = "off"  # "off" | "mention" | "all"
     # Self-healing / heartbeat
     heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
     heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule
+    # Memory injection budget
+    max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""

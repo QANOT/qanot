@@ -102,10 +102,11 @@ class TelegramAdapter:
         self._setup_handlers()
         self._concurrent = asyncio.Semaphore(config.max_concurrent)
         self._draft_counter = 0
+        self._bot_username: str | None = None  # Cached bot username
         # Per-user message coalescing: when user sends rapid messages while
         # the agent is processing, collect them and process as one turn.
-        self._user_locks: dict[int, asyncio.Lock] = {}
-        self._pending_messages: dict[int, list[tuple]] = {}
+        self._user_locks: dict[str, asyncio.Lock] = {}
+        self._pending_messages: dict[str, list[tuple]] = {}
 
     def _next_draft_id(self) -> int:
         """Generate a unique draft_id for sendMessageDraft."""
@@ -155,6 +156,44 @@ class TelegramAdapter:
             return True
         return user_id in self.config.allowed_users
 
+    async def _get_bot_username(self) -> str:
+        """Get and cache the bot's username."""
+        if self._bot_username is None:
+            me = await self.bot.me()
+            self._bot_username = me.username or ""
+        return self._bot_username
+
+    def _is_group_chat(self, message: Message) -> bool:
+        """Check if the message is from a group or supergroup."""
+        return message.chat.type in ("group", "supergroup")
+
+    async def _should_respond_in_group(self, message: Message) -> bool:
+        """Determine if the bot should respond to a group message."""
+        mode = self.config.group_mode
+        if mode == "off":
+            return False
+        if mode == "all":
+            return True
+        if mode == "mention":
+            bot_username = await self._get_bot_username()
+            # Check if bot is @mentioned in text
+            text = message.text or message.caption or ""
+            if bot_username and f"@{bot_username}" in text:
+                return True
+            # Check if message is a reply to bot's own message
+            if message.reply_to_message and message.reply_to_message.from_user:
+                me = await self.bot.me()
+                if message.reply_to_message.from_user.id == me.id:
+                    return True
+            return False
+        return False
+
+    def _strip_bot_mention(self, text: str, bot_username: str) -> str:
+        """Remove @bot_mention from message text."""
+        if not bot_username:
+            return text
+        return text.replace(f"@{bot_username}", "").strip()
+
     async def _handle_message(self, message: Message, *, is_voice: bool = False) -> None:
         if not message.from_user:
             return
@@ -162,6 +201,12 @@ class TelegramAdapter:
         user_id = message.from_user.id
         if not self._is_allowed(user_id):
             return
+
+        # Group chat handling
+        is_group = self._is_group_chat(message)
+        if is_group:
+            if not await self._should_respond_in_group(message):
+                return
 
         text = message.text or message.caption or ""
         voice_request = False
@@ -246,6 +291,13 @@ class TelegramAdapter:
         if not text:
             return
 
+        # Group chat: strip bot mention and prefix sender name
+        if is_group:
+            bot_username = await self._get_bot_username()
+            text = self._strip_bot_mention(text, bot_username)
+            sender_name = message.from_user.full_name or str(user_id)
+            text = f"[{sender_name}]: {text}"
+
         # Record user activity (helps heartbeat skip when user is active)
         if self.scheduler:
             self.scheduler.record_user_activity()
@@ -253,17 +305,21 @@ class TelegramAdapter:
         # React with 👀 to acknowledge the message
         await self._react(message.chat.id, message.message_id, "👀")
 
-        # Add to per-user pending buffer (before acquiring lock)
-        self._pending_messages.setdefault(user_id, []).append(
+        # For groups, use chat_id as coalescing key so all members share one conversation.
+        # For DMs, use user_id.
+        coalesce_key = f"group_{message.chat.id}" if is_group else str(user_id)
+
+        # Add to pending buffer (before acquiring lock)
+        self._pending_messages.setdefault(coalesce_key, []).append(
             (message, text, images, voice_request)
         )
 
-        # Acquire per-user lock — only one processor per user at a time.
+        # Acquire lock — only one processor per conversation at a time.
         # If the lock is held (agent is processing), this handler waits.
         # When released, it drains ALL pending messages and coalesces them.
-        lock = self._user_locks.setdefault(user_id, asyncio.Lock())
+        lock = self._user_locks.setdefault(coalesce_key, asyncio.Lock())
         async with lock:
-            batch = self._pending_messages.pop(user_id, [])
+            batch = self._pending_messages.pop(coalesce_key, [])
             if not batch:
                 return  # Already processed by a previous handler
 
@@ -281,33 +337,33 @@ class TelegramAdapter:
                 msg = batch[-1][0]  # Use last message for reactions/chat_id
                 voice_req = any(vr for _, _, _, vr in batch)
                 logger.info(
-                    "Coalesced %d messages from user %d into one turn",
-                    len(batch), user_id,
+                    "Coalesced %d messages into one turn (key=%s)",
+                    len(batch), coalesce_key,
                 )
                 # React ✅ on earlier messages (they're included)
                 for earlier_msg, _, _, _ in batch[:-1]:
                     await self._react(earlier_msg.chat.id, earlier_msg.message_id, "✅")
 
             async with self._concurrent:
-                await self._process_turn(msg, user_id, text, images, voice_req)
+                await self._process_turn(msg, coalesce_key, text, images, voice_req)
 
     async def _process_turn(
         self,
         message: Message,
-        user_id: int,
+        conv_key: str,
         text: str,
         images: list[dict] | None,
         voice_request: bool,
     ) -> None:
-        """Process a single (possibly coalesced) turn for a user."""
+        """Process a single (possibly coalesced) turn for a conversation."""
         mode = self.config.response_mode
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, str(user_id), text, images=images)
+                await self._respond_stream(message.chat.id, conv_key, text, images=images)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, str(user_id), text, images=images)
+                await self._respond_partial(message.chat.id, conv_key, text, images=images)
             else:
-                await self._respond_blocked(message.chat.id, str(user_id), text, images=images)
+                await self._respond_blocked(message.chat.id, conv_key, text, images=images)
 
             # Send TTS voice reply if configured
             should_tts = (
@@ -315,7 +371,7 @@ class TelegramAdapter:
                 or (self.config.voice_mode == "inbound" and voice_request)
             )
             if should_tts and self.config.get_voice_api_key():
-                await self._send_voice_reply(message.chat.id, str(user_id))
+                await self._send_voice_reply(message.chat.id, conv_key)
 
             # React with ✅ when done
             await self._react(message.chat.id, message.message_id, "✅")
@@ -488,12 +544,14 @@ class TelegramAdapter:
         if not self._is_allowed(user_id):
             return
 
-        self.agent.reset(str(user_id))
+        is_group = self._is_group_chat(message)
+        conv_key = f"group_{message.chat.id}" if is_group else str(user_id)
+        self.agent.reset(conv_key)
         await self._send_final(
             message.chat.id,
             "Suhbat tozalandi. Yangi suhbatni boshlashingiz mumkin.",
         )
-        logger.info("Conversation reset for user %d", user_id)
+        logger.info("Conversation reset: %s", conv_key)
 
     async def _handle_status(self, message: Message) -> None:
         """Handle /status — show session info."""
@@ -503,8 +561,10 @@ class TelegramAdapter:
         if not self._is_allowed(user_id):
             return
 
+        is_group = self._is_group_chat(message)
+        conv_key = f"group_{message.chat.id}" if is_group else str(user_id)
         status = self.agent._context.session_status()
-        conv = self.agent._conversations.get(str(user_id), [])
+        conv = self.agent._conversations.get(conv_key, [])
 
         status_text = (
             f"**Session Status**\n\n"
@@ -869,6 +929,8 @@ class TelegramAdapter:
 
     async def _react(self, chat_id: int, message_id: int, emoji: str) -> None:
         """Set a reaction emoji on a message. Silently fails if unsupported."""
+        if not self.config.reactions_enabled:
+            return
         try:
             await self.bot(SetMessageReaction(
                 chat_id=chat_id,

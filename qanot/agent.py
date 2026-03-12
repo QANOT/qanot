@@ -364,6 +364,9 @@ class Agent:
                     hint_text = "\n".join(
                         f"- [{h['file']}] {h['content'][:200]}" for h in hints[:3]
                     )
+                    cap = self.config.max_memory_injection_chars
+                    if len(hint_text) > cap:
+                        hint_text = hint_text[:cap] + "\n[... truncated]"
                     user_message = (
                         f"{user_message}\n\n---\n"
                         f"[MEMORY CONTEXT — relevant past information]\n{hint_text}"
@@ -376,6 +379,9 @@ class Agent:
         if self.context.detect_compaction(messages):
             recovery = self.context.recover_from_compaction()
             if recovery:
+                cap = self.config.max_memory_injection_chars
+                if len(recovery) > cap:
+                    recovery = recovery[:cap] + "\n[... truncated]"
                 user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
                 logger.info("Compaction recovery injected")
 
