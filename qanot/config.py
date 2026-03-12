@@ -80,6 +80,11 @@ class Config:
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
     # Session history replay
     history_limit: int = 50  # Max user turns to restore from session history on restart
+    # Extended thinking (Claude reasoning mode)
+    thinking_level: str = "off"  # "off" | "low" | "medium" | "high"
+    thinking_budget: int = 10000  # max thinking tokens
+    # Backup
+    backup_enabled: bool = True  # Enable startup backups
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""

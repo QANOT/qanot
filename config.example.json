@@ -34,6 +34,8 @@
   "briefing_enabled": true,
   "briefing_schedule": "0 8 * * *",
   "max_memory_injection_chars": 4000,
+  "thinking_level": "off",
+  "thinking_budget": 10000,
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",

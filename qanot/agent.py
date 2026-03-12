@@ -172,6 +172,28 @@ def _strip_old_images(messages: list[dict]) -> list[dict]:
     return result
 
 
+def _strip_thinking_blocks(messages: list[dict]) -> list[dict]:
+    """Strip thinking blocks from assistant messages in conversation history.
+
+    Thinking blocks are internal reasoning from the model (extended thinking).
+    They must not be sent back in context — the API rejects them and they
+    waste tokens. Like OpenClaw's dropThinkingBlocks().
+    """
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        filtered = [
+            block for block in content
+            if not (isinstance(block, dict) and block.get("type") == "thinking")
+        ]
+        if len(filtered) != len(content):
+            msg["content"] = filtered if filtered else [{"type": "text", "text": ""}]
+    return messages
+
+
 def _repair_messages(messages: list[dict]) -> list[dict]:
     """Repair message history to fix common corruption issues.
 
@@ -592,6 +614,7 @@ class Agent:
 
         # Repair messages only on the first iteration (cached_system is None)
         if cached_system is None:
+            messages = _strip_thinking_blocks(messages)
             messages = _repair_messages(messages)
             self._conversations[user_id] = messages
 

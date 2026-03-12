@@ -29,6 +29,9 @@ class ProviderProfile:
     api_key: str
     model: str
     base_url: str | None = None
+    # Extended thinking (Anthropic only)
+    thinking_level: str = "off"
+    thinking_budget: int = 10000
     # Runtime state
     _cooldown_until: float = field(default=0.0, repr=False)
     _failure_count: int = field(default=0, repr=False)
@@ -64,7 +67,12 @@ def _create_single_provider(profile: ProviderProfile) -> LLMProvider:
     """Create a concrete LLM provider from a profile."""
     if profile.provider_type == "anthropic":
         from qanot.providers.anthropic import AnthropicProvider
-        return AnthropicProvider(api_key=profile.api_key, model=profile.model)
+        return AnthropicProvider(
+            api_key=profile.api_key,
+            model=profile.model,
+            thinking_level=profile.thinking_level,
+            thinking_budget=profile.thinking_budget,
+        )
     elif profile.provider_type == "openai":
         from qanot.providers.openai import OpenAIProvider
         kwargs = {"api_key": profile.api_key, "model": profile.model}

@@ -31,7 +31,13 @@ def _is_oauth_token(api_key: str) -> bool:
 class AnthropicProvider(LLMProvider):
     """Claude provider using the Anthropic API."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-sonnet-4-6",
+        thinking_level: str = "off",
+        thinking_budget: int = 10000,
+    ):
         self._is_oauth = _is_oauth_token(api_key)
         client_kwargs: dict[str, Any] = {}
         if self._is_oauth:
@@ -45,6 +51,8 @@ class AnthropicProvider(LLMProvider):
             client_kwargs["api_key"] = api_key
         self.client = anthropic.AsyncAnthropic(**client_kwargs)
         self.model = model
+        self._thinking_level = thinking_level
+        self._thinking_budget = thinking_budget
 
     @staticmethod
     def _extract_usage_dict(u) -> dict:
@@ -55,6 +63,23 @@ class AnthropicProvider(LLMProvider):
             "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
             "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
         }
+
+    @property
+    def _thinking_enabled(self) -> bool:
+        return self._thinking_level != "off"
+
+    def _apply_thinking_kwargs(self, kwargs: dict[str, Any]) -> None:
+        """Add extended thinking parameters to API kwargs if enabled."""
+        if not self._thinking_enabled:
+            return
+        kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": self._thinking_budget,
+        }
+        # Anthropic requires temperature=1 when thinking is enabled
+        kwargs["temperature"] = 1
+        # Increase max_tokens to accommodate thinking budget
+        kwargs["max_tokens"] = self._thinking_budget + 8192
 
     def _calc_cost(self, usage: dict) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
@@ -93,18 +118,23 @@ class AnthropicProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
 
+        self._apply_thinking_kwargs(kwargs)
+
         try:
             response = await self.client.messages.create(**kwargs)
         except anthropic.APIError as e:
             logger.error("Anthropic API error: %s", e)
             raise
 
-        # Extract content
+        # Extract content — skip thinking blocks (they are internal reasoning)
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
 
         for block in response.content:
-            if block.type == "text":
+            if block.type == "thinking":
+                # Skip thinking blocks — model used them internally
+                continue
+            elif block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(
@@ -155,24 +185,36 @@ class AnthropicProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
 
+        self._apply_thinking_kwargs(kwargs)
+
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         # Track partial tool_use blocks being built
         current_tool_id = ""
         current_tool_name = ""
         current_tool_json = ""
+        # Track whether current block is a thinking block (skip its deltas)
+        _in_thinking_block = False
 
         try:
             async with self.client.messages.stream(**kwargs) as stream:
                 async for event in stream:
                     if event.type == "content_block_start":
                         block = event.content_block
-                        if block.type == "tool_use":
+                        if block.type == "thinking":
+                            _in_thinking_block = True
+                        elif block.type == "tool_use":
+                            _in_thinking_block = False
                             current_tool_id = block.id
                             current_tool_name = block.name
                             current_tool_json = ""
+                        else:
+                            _in_thinking_block = False
 
                     elif event.type == "content_block_delta":
+                        if _in_thinking_block:
+                            # Skip thinking deltas — don't yield to user
+                            continue
                         delta = event.delta
                         if delta.type == "text_delta":
                             text_parts.append(delta.text)
@@ -181,6 +223,9 @@ class AnthropicProvider(LLMProvider):
                             current_tool_json += delta.partial_json
 
                     elif event.type == "content_block_stop":
+                        if _in_thinking_block:
+                            _in_thinking_block = False
+                            continue
                         if current_tool_id:
                             try:
                                 tool_input = json.loads(current_tool_json) if current_tool_json else {}

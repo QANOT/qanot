@@ -12,8 +12,10 @@ from qanot.context import ContextTracker
 from qanot.session import SessionWriter
 from qanot.scheduler import CronScheduler
 from qanot.telegram import TelegramAdapter
+from qanot.backup import backup_workspace
 from qanot.tools.builtin import register_builtin_tools
 from qanot.tools.cron import register_cron_tools
+from qanot.tools.doctor import register_doctor_tool
 from qanot.tools.workspace import init_workspace
 from qanot.plugins.loader import load_plugins, shutdown_plugins
 
@@ -41,12 +43,18 @@ def _create_provider(config):
     if config.providers:
         profiles = []
         for pc in config.providers:
+            # Pass thinking config only to anthropic providers
+            thinking_kwargs = {}
+            if pc.provider == "anthropic":
+                thinking_kwargs["thinking_level"] = config.thinking_level
+                thinking_kwargs["thinking_budget"] = config.thinking_budget
             profiles.append(ProviderProfile(
                 name=pc.name,
                 provider_type=pc.provider,
                 api_key=pc.api_key,
                 model=pc.model,
                 base_url=pc.base_url or None,
+                **thinking_kwargs,
             ))
         provider = FailoverProvider(profiles)
         names = [p.name for p in profiles]
@@ -54,11 +62,16 @@ def _create_provider(config):
         return provider
 
     # Single provider mode — reuse the same factory
+    thinking_kwargs = {}
+    if config.provider == "anthropic":
+        thinking_kwargs["thinking_level"] = config.thinking_level
+        thinking_kwargs["thinking_budget"] = config.thinking_budget
     profile = ProviderProfile(
         name="default",
         provider_type=config.provider,
         api_key=config.api_key,
         model=config.model,
+        **thinking_kwargs,
     )
     return _create_single_provider(profile)
 
@@ -71,6 +84,15 @@ async def main() -> None:
 
     # Initialize workspace (copy templates on first run)
     init_workspace(config.workspace_dir)
+
+    # Backup critical workspace files (non-fatal)
+    if config.backup_enabled:
+        try:
+            backup_path = backup_workspace(config.workspace_dir)
+            if backup_path:
+                logger.info("Startup backup created: %s", backup_path)
+        except Exception as e:
+            logger.warning("Startup backup failed (non-fatal): %s", e)
 
     # Create provider
     provider = _create_provider(config)
@@ -111,6 +133,9 @@ async def main() -> None:
 
     # Register built-in tools
     register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)
+
+    # Register doctor diagnostics tool
+    register_doctor_tool(tool_registry, config, context)
 
     # Register web search tools (only if Brave API key is configured)
     if config.brave_api_key:
