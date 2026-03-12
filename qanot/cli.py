@@ -358,8 +358,19 @@ def cmd_init(args: list[str]) -> None:
         voice_mode = "inbound"
         print(_green("  ✓ Voice enabled (inbound mode — replies to voice with voice)"))
 
-    # ── Step 4: Build config ──
-    print(f"\n{_bold('  Step 4: Saving configuration')}")
+    # ── Step 4: Web Search (optional) ──
+    print(f"\n{_bold('  Step 4: Web Search (optional)')}")
+    brave_api_key = ""
+    web_search_enabled = _prompt_yn("Enable web search? (free Brave Search API)")
+    if web_search_enabled:
+        brave_api_key = _prompt_secret("Brave Search API key", "Get free at brave.com/search/api")
+        if brave_api_key:
+            print(_green("  ✓ Web search enabled"))
+        else:
+            print(_yellow("  ! Skipped — you can add brave_api_key to config.json later"))
+
+    # ── Step 5: Build config ──
+    print(f"\n{_bold('  Step 5: Saving configuration')}")
 
     config = {
         "bot_token": bot_token,
@@ -389,6 +400,7 @@ def cmd_init(args: list[str]) -> None:
         "workspace_dir": str(target / "workspace"),
         "sessions_dir": str(target / "sessions"),
         "cron_dir": str(target / "cron"),
+        "brave_api_key": brave_api_key,
         "plugins_dir": str(target / "plugins"),
         "plugins": [],
     }
@@ -422,6 +434,8 @@ def cmd_init(args: list[str]) -> None:
         print(f"  Backup: {', '.join(AI_PROVIDERS[o]['label'] for o in others)}")
     if voice_enabled:
         print(f"  Voice: {VOICE_PROVIDERS[voice_provider]['label']}")
+    if brave_api_key:
+        print(f"  Web Search: Brave API")
     print()
     print(f"  Run: {_cyan(f'qanot start {target}')}")
     print()
