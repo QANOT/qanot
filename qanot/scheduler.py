@@ -1,4 +1,4 @@
-"""APScheduler-based cron executor with isolated agent spawner."""
+"""APScheduler-based cron executor with isolated agent spawner and self-healing."""
 
 from __future__ import annotations
 
@@ -19,26 +19,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default heartbeat cron
-HEARTBEAT_JOB = {
-    "name": "heartbeat",
-    "schedule": "0 */4 * * *",  # Every 4 hours
-    "mode": "isolated",
-    "prompt": (
-        "HEARTBEAT: Read HEARTBEAT.md and perform self-improvement checks:\n"
-        "1. Check proactive-tracker.md — overdue behaviors?\n"
-        "2. Pattern check — repeated requests to automate?\n"
-        "3. Outcome check — decisions >7 days old to follow up?\n"
-        "4. Memory — context %, update MEMORY.md with distilled learnings\n"
-        "5. Proactive surprise — anything to delight human?\n"
-        "If you have a message for the human, write it to /data/workspace/proactive-outbox.md"
-    ),
-    "enabled": True,
-}
+# Heartbeat response token — agent returns this when nothing needs attention
+HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
+
+# Default heartbeat prompt (reads the real HEARTBEAT.md checklist)
+HEARTBEAT_PROMPT = (
+    "HEARTBEAT: You are running as an autonomous self-healing agent.\n"
+    "Read HEARTBEAT.md and follow every check listed there.\n\n"
+    "Rules:\n"
+    "- Fix issues silently using your tools (read_file, write_file, etc.)\n"
+    "- If you found and fixed issues, write a summary to proactive-outbox.md\n"
+    "- If nothing needs attention, respond ONLY with: HEARTBEAT_OK\n"
+    "- Do NOT invent tasks. Only act on real issues found in workspace files.\n"
+    "- Keep reports concise — what you found, what you fixed, recommendations.\n"
+)
 
 
 class CronScheduler:
-    """Manages scheduled cron jobs using APScheduler."""
+    """Manages scheduled cron jobs using APScheduler with self-healing."""
 
     def __init__(
         self,
@@ -55,6 +53,21 @@ class CronScheduler:
         self.message_queue = message_queue or asyncio.Queue()
         self.scheduler = AsyncIOScheduler(timezone=config.timezone)
         self._jobs_path = Path(config.cron_dir) / "jobs.json"
+        # Track last user activity to skip heartbeat when user is active
+        self._last_user_activity: float = 0.0
+        # Idle threshold: skip heartbeat if user was active within this window (seconds)
+        self._idle_threshold = 300  # 5 minutes
+
+    def record_user_activity(self) -> None:
+        """Record that a user interacted with the bot."""
+        self._last_user_activity = asyncio.get_event_loop().time()
+
+    def _is_user_idle(self) -> bool:
+        """Check if user has been idle long enough for heartbeat."""
+        if self._last_user_activity == 0.0:
+            return True  # No activity recorded yet
+        elapsed = asyncio.get_event_loop().time() - self._last_user_activity
+        return elapsed >= self._idle_threshold
 
     def _load_jobs(self) -> list[dict]:
         """Load jobs from JSON file."""
@@ -69,7 +82,14 @@ class CronScheduler:
     def _ensure_heartbeat(self, jobs: list[dict]) -> list[dict]:
         """Ensure heartbeat job exists in the job list."""
         if not any(j["name"] == "heartbeat" for j in jobs):
-            jobs.append(HEARTBEAT_JOB.copy())
+            heartbeat_job = {
+                "name": "heartbeat",
+                "schedule": self.config.heartbeat_interval,
+                "mode": "isolated",
+                "prompt": HEARTBEAT_PROMPT,
+                "enabled": self.config.heartbeat_enabled,
+            }
+            jobs.append(heartbeat_job)
             # Save back
             self._jobs_path.parent.mkdir(parents=True, exist_ok=True)
             self._jobs_path.write_text(
@@ -138,6 +158,22 @@ class CronScheduler:
 
     async def _run_isolated(self, job_name: str, prompt: str) -> None:
         """Run an isolated agent for a cron job."""
+        # Skip heartbeat if user is currently active (avoid wasting tokens)
+        if job_name == "heartbeat" and not self._is_user_idle():
+            logger.info("Heartbeat skipped — user is active")
+            return
+
+        # Check if HEARTBEAT.md is empty (skip API call to save tokens)
+        if job_name == "heartbeat":
+            hb_path = Path(self.config.workspace_dir) / "HEARTBEAT.md"
+            if hb_path.exists():
+                content = hb_path.read_text(encoding="utf-8").strip()
+                # Skip if file is empty or contains only comments
+                lines = [l for l in content.splitlines() if l.strip() and not l.strip().startswith("#")]
+                if not lines:
+                    logger.info("Heartbeat skipped — HEARTBEAT.md is empty")
+                    return
+
         logger.info("Running isolated cron job: %s", job_name)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         session_id = f"cron-{job_name}-{ts}"
@@ -153,6 +189,11 @@ class CronScheduler:
                 session_id=session_id,
             )
 
+            # Suppress HEARTBEAT_OK — don't deliver to users
+            if job_name == "heartbeat" and result and _is_heartbeat_ok(result):
+                logger.info("Heartbeat OK — nothing to report")
+                return
+
             # Check if the agent wrote to proactive-outbox.md
             outbox_path = Path(self.config.workspace_dir) / "proactive-outbox.md"
             if outbox_path.exists():
@@ -163,8 +204,9 @@ class CronScheduler:
                         "text": content,
                         "source": job_name,
                     })
-                    # Clear outbox
+                    # Clear outbox after reading
                     outbox_path.write_text("", encoding="utf-8")
+                    logger.info("Proactive outbox delivered from job: %s", job_name)
 
             logger.info("Isolated cron job completed: %s", job_name)
         except Exception as e:
@@ -200,3 +242,18 @@ class CronScheduler:
         """Stop the scheduler."""
         self.scheduler.shutdown(wait=False)
         logger.info("Cron scheduler stopped")
+
+
+def _is_heartbeat_ok(text: str) -> bool:
+    """Check if the agent response is a HEARTBEAT_OK (nothing to report).
+
+    Handles variations: "HEARTBEAT_OK", "heartbeat_ok", with surrounding text.
+    """
+    stripped = text.strip().upper()
+    # Exact match or the only meaningful content
+    if stripped == HEARTBEAT_OK_TOKEN:
+        return True
+    # Allow minor surrounding text (e.g. "Everything is fine. HEARTBEAT_OK")
+    if HEARTBEAT_OK_TOKEN in stripped and len(stripped) < 300:
+        return True
+    return False

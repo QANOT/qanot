@@ -13,7 +13,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.methods import SendMessageDraft, SetMessageReaction
-from aiogram.types import Message, ReactionTypeEmoji
+from aiogram.types import BotCommand, Message, ReactionTypeEmoji
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 if TYPE_CHECKING:
@@ -109,12 +109,29 @@ class TelegramAdapter:
         return self._draft_counter
 
     def _setup_handlers(self) -> None:
+        # Command handlers (must be registered before generic F.text)
+        @self.dp.message(F.text.startswith("/reset"))
+        async def handle_reset(message: Message) -> None:
+            await self._handle_reset(message)
+
+        @self.dp.message(F.text.startswith("/status"))
+        async def handle_status(message: Message) -> None:
+            await self._handle_status(message)
+
+        @self.dp.message(F.text.startswith("/help"))
+        async def handle_help(message: Message) -> None:
+            await self._handle_help(message)
+
         @self.dp.message(F.text)
         async def handle_text(message: Message) -> None:
             await self._handle_message(message)
 
         @self.dp.message(F.photo)
         async def handle_photo(message: Message) -> None:
+            await self._handle_message(message)
+
+        @self.dp.message(F.sticker)
+        async def handle_sticker(message: Message) -> None:
             await self._handle_message(message)
 
         @self.dp.message(F.document)
@@ -171,6 +188,24 @@ class TelegramAdapter:
                 if not text:
                     text = "Bu rasmni tahlil qiling."  # "Analyze this image"
 
+        # Sticker → treat as conversational expression (like emoji), not image analysis
+        if message.sticker:
+            sticker_data = await self._download_sticker(message)
+            if sticker_data:
+                emoji = message.sticker.emoji or ""
+                # Frame as a conversational reaction, not an image to analyze
+                sticker_ctx = (
+                    f"[The user sent a sticker {emoji}. "
+                    f"Treat it as a conversational expression — react naturally like a human would. "
+                    f"Do NOT describe the image. Respond to the emotion/intent behind it.]"
+                )
+
+                if isinstance(sticker_data, dict) and sticker_data.get("type") == "image":
+                    images.append(sticker_data)
+                    text = f"{sticker_ctx} {text}".strip() if text else sticker_ctx
+                elif isinstance(sticker_data, str):
+                    text = f"{sticker_ctx} {text}".strip() if text else sticker_ctx
+
         if message.document:
             fname = message.document.file_name or "file"
             try:
@@ -187,6 +222,10 @@ class TelegramAdapter:
 
         if not text:
             return
+
+        # Record user activity (helps heartbeat skip when user is active)
+        if self.scheduler:
+            self.scheduler.record_user_activity()
 
         # React with 👀 to acknowledge the message
         await self._react(message.chat.id, message.message_id, "👀")
@@ -314,6 +353,132 @@ class TelegramAdapter:
         except Exception as e:
             logger.error("Photo download failed: %s", e)
             return None
+
+    async def _download_sticker(self, message: Message) -> dict | str | None:
+        """Download sticker and return image block for vision model.
+
+        All sticker types use their thumbnail for vision analysis:
+        - Static WEBP → download the sticker file directly
+        - Animated (TGS) / Video (WEBM) → use the thumbnail image
+        """
+        sticker = message.sticker
+        if not sticker:
+            return None
+
+        import base64
+        from io import BytesIO
+
+        try:
+            raw: bytes | None = None
+
+            if not sticker.is_animated and not sticker.is_video:
+                # Static WEBP sticker → download directly
+                buf = BytesIO()
+                await self.bot.download(sticker, destination=buf)
+                buf.seek(0)
+                raw = buf.read()
+            elif sticker.thumbnail:
+                # Animated/video sticker → use thumbnail (JPEG/WEBP)
+                buf = BytesIO()
+                await self.bot.download(sticker.thumbnail, destination=buf)
+                buf.seek(0)
+                raw = buf.read()
+
+            if not raw:
+                # No image available — return text-only description
+                emoji = sticker.emoji or ""
+                return f"[Sticker {emoji} (no preview available)]"
+
+            # Small images, run through downscale for format normalization
+            raw, media_type = self._downscale_image(raw, max_dim=512)
+            b64 = base64.b64encode(raw).decode("ascii")
+
+            logger.info(
+                "Sticker downloaded: %d bytes, %s, emoji=%s, set=%s, animated=%s",
+                len(raw), media_type, sticker.emoji or "", sticker.set_name or "",
+                sticker.is_animated or sticker.is_video,
+            )
+
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": b64,
+                },
+            }
+        except Exception as e:
+            logger.error("Sticker download failed: %s", e)
+            return None
+
+    # ── Telegram commands ────────────────────────────────────
+
+    async def _handle_reset(self, message: Message) -> None:
+        """Handle /reset — clear conversation history."""
+        if not message.from_user:
+            return
+        user_id = message.from_user.id
+        if not self._is_allowed(user_id):
+            return
+
+        self.agent.reset(str(user_id))
+        await self._send_final(
+            message.chat.id,
+            "Suhbat tozalandi. Yangi suhbatni boshlashingiz mumkin.",
+        )
+        logger.info("Conversation reset for user %d", user_id)
+
+    async def _handle_status(self, message: Message) -> None:
+        """Handle /status — show session info."""
+        if not message.from_user:
+            return
+        user_id = message.from_user.id
+        if not self._is_allowed(user_id):
+            return
+
+        status = self.agent._context.session_status()
+        conv = self.agent._conversations.get(str(user_id), [])
+
+        status_text = (
+            f"**Session Status**\n\n"
+            f"Context: {status['context_percent']}%\n"
+            f"Tokens: {status['total_tokens']:,}\n"
+            f"Turns: {status['turn_count']}\n"
+            f"Messages: {len(conv)}\n"
+            f"Buffer: {'active' if status['buffer_active'] else 'inactive'}\n"
+            f"Provider: {self.config.provider}\n"
+            f"Model: {self.config.model}"
+        )
+        await self._send_final(message.chat.id, status_text)
+
+    async def _handle_help(self, message: Message) -> None:
+        """Handle /help — show available commands."""
+        if not message.from_user:
+            return
+        if not self._is_allowed(message.from_user.id):
+            return
+
+        help_text = (
+            "**Buyruqlar:**\n\n"
+            "/reset — Suhbatni tozalash\n"
+            "/status — Sessiya holati\n"
+            "/help — Yordam\n\n"
+            "Matn, rasm, sticker, ovozli xabar va fayllar qabul qilinadi."
+        )
+        await self._send_final(message.chat.id, help_text)
+
+    async def _register_commands(self) -> None:
+        """Register bot commands with BotFather (appears in Telegram UI menu)."""
+        commands = [
+            BotCommand(command="reset", description="Suhbatni tozalash"),
+            BotCommand(command="status", description="Sessiya holati"),
+            BotCommand(command="help", description="Yordam"),
+        ]
+        try:
+            await self.bot.set_my_commands(commands)
+            logger.info("Bot commands registered: %s", [c.command for c in commands])
+        except Exception as e:
+            logger.warning("Failed to register bot commands: %s", e)
 
     # ── Voice processing ────────────────────────────────────
 
@@ -669,9 +834,9 @@ class TelegramAdapter:
                 )
                 msg_type = msg.get("type", "")
                 text = msg.get("text", "")
+                source = msg.get("source", "")
                 if msg_type == "proactive" and text:
-                    for uid in self.config.allowed_users:
-                        await self._send_final(uid, text)
+                    await self._deliver_proactive(text, source)
                 elif msg_type == "system_event" and text:
                     await self.agent.run_turn(text)
             except asyncio.TimeoutError:
@@ -679,6 +844,24 @@ class TelegramAdapter:
             except Exception as e:
                 logger.error("Proactive loop error: %s", e)
                 await asyncio.sleep(5)
+
+    async def _deliver_proactive(self, text: str, source: str = "") -> None:
+        """Deliver a proactive message to the owner (first allowed user)."""
+        if not self.config.allowed_users:
+            logger.warning("No allowed_users configured — proactive message dropped")
+            return
+
+        if source:
+            formatted = f"#agent #{source}\n{text}"
+        else:
+            formatted = f"#agent\n{text}"
+
+        owner_id = self.config.allowed_users[0]
+        try:
+            await self._send_final(owner_id, formatted)
+            logger.info("Proactive message delivered to owner %d", owner_id)
+        except Exception as e:
+            logger.warning("Failed to deliver proactive message to owner: %s", e)
 
     async def start(self) -> None:
         """Start the Telegram bot (polling or webhook based on config)."""
@@ -688,6 +871,7 @@ class TelegramAdapter:
             self.config.response_mode,
             self.config.stream_flush_interval,
         )
+        await self._register_commands()
         asyncio.create_task(self._proactive_loop())
 
         if self.config.telegram_mode == "webhook" and self.config.webhook_url:

@@ -25,6 +25,8 @@
   "voice_mode": "inbound",
   "voice_name": "",
   "voice_language": "",
+  "heartbeat_enabled": true,
+  "heartbeat_interval": "0 */4 * * *",
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",

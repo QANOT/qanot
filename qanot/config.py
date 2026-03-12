@@ -63,6 +63,9 @@ class Config:
     voice_mode: str = "inbound"  # "off" | "inbound" | "always"
     voice_name: str = ""  # Voice name (maftuna/asomiddin for muxlisa, aziza/sherzod for kotib)
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
+    # Self-healing / heartbeat
+    heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
+    heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
