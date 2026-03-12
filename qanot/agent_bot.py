@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.enums import ChatAction, ParseMode
+from aiogram.enums import ChatAction, ChatType, ParseMode
 from aiogram.types import Message
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ class AgentBot:
         self._agent: Agent | None = None
         self._provider = provider
         self._parent_registry = parent_registry
+        self._bot_username: str = ""  # Resolved on first message
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -104,6 +105,37 @@ class AgentBot:
             self._agent.reset(user_id)
         await message.answer("Suhbat tozalandi.")
 
+    async def _resolve_bot_username(self) -> str:
+        """Resolve and cache this bot's username."""
+        if not self._bot_username:
+            try:
+                me = await self.bot.get_me()
+                self._bot_username = (me.username or "").lower()
+            except Exception:
+                pass
+        return self._bot_username
+
+    def _is_group(self, message: Message) -> bool:
+        """Check if message is from a group/supergroup chat."""
+        return message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+    async def _is_mentioned(self, message: Message) -> bool:
+        """Check if this bot is mentioned in the message (for group filtering)."""
+        text = message.text or message.caption or ""
+        username = await self._resolve_bot_username()
+
+        # Check @username mention in text
+        if username and f"@{username}" in text.lower():
+            return True
+
+        # Check if message is a reply to this bot's message
+        if message.reply_to_message and message.reply_to_message.from_user:
+            me = await self.bot.get_me()
+            if message.reply_to_message.from_user.id == me.id:
+                return True
+
+        return False
+
     async def _handle_message(self, message: Message) -> None:
         """Process an incoming message through the agent."""
         if not message.from_user:
@@ -111,9 +143,19 @@ class AgentBot:
         if not self._is_allowed(message.from_user.id):
             return
 
+        # In groups: only respond when mentioned or replied to
+        if self._is_group(message):
+            if not await self._is_mentioned(message):
+                return
+
         user_id = str(message.from_user.id)
         chat_id = message.chat.id
         text = message.text or message.caption or ""
+
+        # Strip @bot_username from the text
+        username = await self._resolve_bot_username()
+        if username:
+            text = text.replace(f"@{username}", "").replace(f"@{username.upper()}", "").strip()
 
         if not text.strip():
             return
