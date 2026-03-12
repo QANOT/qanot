@@ -8,7 +8,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+# Templates bundled inside qanot package (pip install) or repo root (Docker)
+_pkg_templates = Path(__file__).resolve().parent.parent / "templates"
+_repo_templates = Path(__file__).resolve().parent.parent.parent / "templates"
+TEMPLATE_DIR = _pkg_templates if _pkg_templates.exists() else _repo_templates
 
 
 def init_workspace(workspace_dir: str) -> None:
