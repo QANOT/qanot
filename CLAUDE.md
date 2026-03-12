@@ -57,6 +57,18 @@ Use these to delegate work without losing project context:
 | `qanot-review` | Code review, catch regressions, security/perf audit |
 | `qanot-debug` | Trace bugs through agent loop → provider → telegram pipeline |
 
+## Slash Commands (.claude/commands/)
+
+| Command | What It Does |
+|---|---|
+| `/push` | Auto-analyze changes, write commit message, commit & push |
+| `/fix <description>` | Trace bug → root cause → minimal fix → test |
+| `/add <feature>` | Design → implement → test following project conventions |
+| `/improve [area]` | Audit → prioritize → targeted improvements only |
+| `/review [area]` | Review uncommitted changes or specific code for issues |
+| `/test [area]` | Run tests, analyze failures, identify coverage gaps |
+| `/status` | Full project health: git, tests, architecture, open issues |
+
 ## Rules
 
 - Never add Co-Authored-By to commits
