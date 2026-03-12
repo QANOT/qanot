@@ -98,6 +98,19 @@ async def main() -> None:
     provider = _create_provider(config)
     logger.info("Provider initialized: %s", config.provider)
 
+    # Wrap with routing provider if enabled (cost optimization)
+    if config.routing_enabled:
+        from qanot.routing import RoutingProvider
+        provider = RoutingProvider(
+            provider=provider,
+            cheap_model=config.routing_model,
+            threshold=config.routing_threshold,
+        )
+        logger.info(
+            "Model routing enabled: simple → %s, complex → %s (threshold=%.2f)",
+            config.routing_model, config.model, config.routing_threshold,
+        )
+
     # Create context tracker
     context = ContextTracker(
         max_tokens=config.max_context_tokens,

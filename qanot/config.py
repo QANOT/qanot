@@ -85,6 +85,10 @@ class Config:
     thinking_budget: int = 10000  # max thinking tokens
     # Backup
     backup_enabled: bool = True  # Enable startup backups
+    # Model routing (cost optimization)
+    routing_enabled: bool = False  # Route simple messages to cheaper model
+    routing_model: str = "claude-haiku-4-5"  # Cheap model for simple messages
+    routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
