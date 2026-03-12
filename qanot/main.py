@@ -93,18 +93,21 @@ async def main() -> None:
         from qanot.tools.rag import register_rag_tools
 
         embedder = create_embedder(config)
+        dimensions = embedder.dimensions if embedder else 768
+        store = SqliteVecStore(
+            db_path=f"{config.workspace_dir}/rag.db",
+            dimensions=dimensions,
+        )
+        rag_engine = RAGEngine(embedder=embedder, store=store)
+        rag_indexer = MemoryIndexer(rag_engine, config.workspace_dir)
+
+        # Index existing memory files
+        await rag_indexer.index_workspace()
+
         if embedder:
-            store = SqliteVecStore(
-                db_path=f"{config.workspace_dir}/rag.db",
-                dimensions=embedder.dimensions,
-            )
-            rag_engine = RAGEngine(embedder=embedder, store=store)
-            rag_indexer = MemoryIndexer(rag_engine, config.workspace_dir)
-
-            # Index existing memory files
-            await rag_indexer.index_workspace()
-
-            logger.info("RAG engine initialized with %s", type(embedder).__name__)
+            logger.info("RAG engine initialized with %s (hybrid: vector + %s)", type(embedder).__name__, rag_engine.fts_mode)
+        else:
+            logger.info("RAG engine initialized in FTS-only mode (no embedder available)")
 
     # Register built-in tools
     register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)

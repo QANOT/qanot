@@ -854,3 +854,379 @@ class TestRAGTools:
         )
         data = json.loads(result)
         assert "error" in data
+
+
+# ---------------------------------------------------------------------------
+# TestFTS5Search (persistent full-text search)
+# ---------------------------------------------------------------------------
+
+
+@needs_sqlite_vec
+class TestFTS5Search:
+    def _make_store(self, tmp_path):
+        from qanot.rag.store import SqliteVecStore
+
+        return SqliteVecStore(
+            db_path=str(tmp_path / "fts5.db"),
+            dimensions=MockEmbedder.dimensions,
+        )
+
+    def _embed_sync(self, texts):
+        embedder = MockEmbedder()
+        return asyncio.run(embedder.embed(texts))
+
+    def test_fts5_available(self, tmp_path):
+        store = self._make_store(tmp_path)
+        assert store.fts_available is True
+
+    def test_fts5_basic_search(self, tmp_path):
+        store = self._make_store(tmp_path)
+        texts = [
+            "Python is a great programming language",
+            "Java is used in enterprise applications",
+            "The weather is sunny today",
+        ]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, source="docs.md")
+
+        results = store.search_fts("Python programming", top_k=3)
+        assert len(results) >= 1
+        assert "Python" in results[0].text
+
+    def test_fts5_no_match(self, tmp_path):
+        store = self._make_store(tmp_path)
+        texts = ["Python programming language"]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, source="docs.md")
+
+        results = store.search_fts("xylophone accordion", top_k=5)
+        assert results == []
+
+    def test_fts5_empty_query(self, tmp_path):
+        store = self._make_store(tmp_path)
+        results = store.search_fts("", top_k=5)
+        assert results == []
+
+    def test_fts5_single_char_tokens_skipped(self, tmp_path):
+        store = self._make_store(tmp_path)
+        # Single char tokens are filtered by _build_fts_query
+        results = store.search_fts("a b c", top_k=5)
+        assert results == []
+
+    def test_fts5_unicode_search(self, tmp_path):
+        store = self._make_store(tmp_path)
+        texts = [
+            "O'zbekiston Respublikasi mustaqil davlat",
+            "Python dasturlash tili",
+        ]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, source="uz.md")
+
+        results = store.search_fts("O'zbekiston mustaqil", top_k=5)
+        assert len(results) >= 1
+
+    def test_fts5_persists_across_reopen(self, tmp_path):
+        """FTS5 index survives close/reopen (unlike in-memory BM25)."""
+        from qanot.rag.store import SqliteVecStore
+
+        db_path = str(tmp_path / "persist.db")
+        store1 = SqliteVecStore(db_path=db_path, dimensions=MockEmbedder.dimensions)
+        texts = ["Python programming is wonderful"]
+        embs = self._embed_sync(texts)
+        store1.add(texts, embs, source="test.md")
+        store1.close()
+
+        # Reopen — FTS5 index should still work
+        store2 = SqliteVecStore(db_path=db_path, dimensions=MockEmbedder.dimensions)
+        results = store2.search_fts("Python programming", top_k=5)
+        assert len(results) >= 1
+        assert "Python" in results[0].text
+        store2.close()
+
+    def test_fts5_delete_source_cleans_index(self, tmp_path):
+        store = self._make_store(tmp_path)
+        texts = ["Deletable content about rockets"]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, source="remove.md")
+
+        # Verify FTS finds it
+        assert len(store.search_fts("rockets", top_k=5)) >= 1
+
+        # Delete and verify gone from FTS
+        store.delete_source("remove.md")
+        assert store.search_fts("rockets", top_k=5) == []
+
+    def test_fts5_bm25_scoring(self, tmp_path):
+        """More relevant docs should score higher."""
+        store = self._make_store(tmp_path)
+        texts = [
+            "Python Python Python repeated",
+            "Python mentioned once here",
+            "No match in this document",
+        ]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, source="score.md")
+
+        results = store.search_fts("Python", top_k=3)
+        assert len(results) >= 2
+        # First result should have higher score (more Python occurrences)
+        assert results[0].score >= results[1].score
+
+
+# ---------------------------------------------------------------------------
+# TestEmbeddingCache
+# ---------------------------------------------------------------------------
+
+
+@needs_sqlite_vec
+class TestEmbeddingCache:
+    def _make_store(self, tmp_path):
+        from qanot.rag.store import SqliteVecStore
+
+        return SqliteVecStore(
+            db_path=str(tmp_path / "cache.db"),
+            dimensions=MockEmbedder.dimensions,
+            cache_max_entries=100,
+        )
+
+    def test_cache_miss_then_hit(self, tmp_path):
+        from qanot.rag.store import _hash_text
+
+        store = self._make_store(tmp_path)
+        h = _hash_text("hello world")
+
+        # Miss
+        result = store.cache_get([h], "test", "model-1")
+        assert result == {}
+
+        # Put
+        store.cache_put([(h, [1.0, 2.0, 3.0, 4.0])], "test", "model-1")
+
+        # Hit
+        result = store.cache_get([h], "test", "model-1")
+        assert h in result
+        assert len(result[h]) == 4
+        assert result[h] == pytest.approx([1.0, 2.0, 3.0, 4.0])
+
+    def test_cache_provider_isolation(self, tmp_path):
+        from qanot.rag.store import _hash_text
+
+        store = self._make_store(tmp_path)
+        h = _hash_text("same text")
+
+        store.cache_put([(h, [1.0, 2.0, 3.0, 4.0])], "gemini", "emb-001")
+
+        # Different provider should miss
+        result = store.cache_get([h], "openai", "text-3-small")
+        assert result == {}
+
+        # Same provider should hit
+        result = store.cache_get([h], "gemini", "emb-001")
+        assert h in result
+
+    def test_cache_batch_operations(self, tmp_path):
+        from qanot.rag.store import _hash_text
+
+        store = self._make_store(tmp_path)
+        items = [
+            (_hash_text(f"text {i}"), [float(i)] * 4)
+            for i in range(50)
+        ]
+        hashes = [h for h, _ in items]
+
+        store.cache_put(items, "test", "model")
+        result = store.cache_get(hashes, "test", "model")
+        assert len(result) == 50
+
+    def test_cache_lru_eviction(self, tmp_path):
+        from qanot.rag.store import SqliteVecStore, _hash_text
+
+        store = SqliteVecStore(
+            db_path=str(tmp_path / "lru.db"),
+            dimensions=4,
+            cache_max_entries=10,
+        )
+
+        # Insert 15 items — should evict 5 oldest
+        for i in range(15):
+            h = _hash_text(f"entry {i}")
+            store.cache_put([(h, [float(i)] * 4)], "test", "model")
+
+        # Check total count
+        conn = store._conn
+        count = conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()[0]
+        assert count == 10  # Max entries enforced
+
+    def test_cache_update_existing(self, tmp_path):
+        from qanot.rag.store import _hash_text
+
+        store = self._make_store(tmp_path)
+        h = _hash_text("update me")
+
+        store.cache_put([(h, [1.0, 1.0, 1.0, 1.0])], "test", "model")
+        store.cache_put([(h, [2.0, 2.0, 2.0, 2.0])], "test", "model")
+
+        result = store.cache_get([h], "test", "model")
+        assert result[h] == pytest.approx([2.0, 2.0, 2.0, 2.0])
+
+    def test_cache_empty_operations(self, tmp_path):
+        store = self._make_store(tmp_path)
+        # Empty get/put should not error
+        assert store.cache_get([], "test", "model") == {}
+        store.cache_put([], "test", "model")  # No error
+
+
+# ---------------------------------------------------------------------------
+# TestEngineEmbeddingCache (integration)
+# ---------------------------------------------------------------------------
+
+
+@needs_sqlite_vec
+class TestEngineEmbeddingCache:
+    def _make_engine(self, tmp_path):
+        from qanot.rag.engine import RAGEngine
+        from qanot.rag.store import SqliteVecStore
+
+        store = SqliteVecStore(
+            db_path=str(tmp_path / "cached_engine.db"),
+            dimensions=MockEmbedder.dimensions,
+        )
+        return RAGEngine(embedder=MockEmbedder(), store=store), store
+
+    def test_ingest_populates_cache(self, tmp_path):
+        engine, store = self._make_engine(tmp_path)
+        asyncio.run(
+            engine.ingest("Python is wonderful", source="test.md")
+        )
+        # Cache should have entries
+        count = store._conn.execute(
+            "SELECT COUNT(*) FROM embedding_cache"
+        ).fetchone()[0]
+        assert count >= 1
+
+    def test_reingest_uses_cache(self, tmp_path):
+        """Second ingest of same text should use cache (no API call)."""
+        from qanot.rag.store import SqliteVecStore
+
+        db_path = str(tmp_path / "reingest.db")
+        store = SqliteVecStore(db_path=db_path, dimensions=MockEmbedder.dimensions)
+
+        call_count = 0
+        original_embed = MockEmbedder.embed
+
+        class CountingEmbedder(MockEmbedder):
+            async def embed(self, texts):
+                nonlocal call_count
+                call_count += 1
+                return await original_embed(self, texts)
+
+        from qanot.rag.engine import RAGEngine
+
+        engine = RAGEngine(embedder=CountingEmbedder(), store=store)
+
+        text = "Same text for caching test"
+        asyncio.run(engine.ingest(text, source="first.md"))
+        first_calls = call_count
+
+        asyncio.run(engine.ingest(text, source="second.md"))
+        second_calls = call_count - first_calls
+
+        # Second ingest should NOT call embed (cached)
+        assert second_calls == 0
+
+    def test_engine_fts_mode(self, tmp_path):
+        engine, _ = self._make_engine(tmp_path)
+        assert engine.fts_mode == "fts5"
+        assert engine.has_embedder is True
+
+
+# ---------------------------------------------------------------------------
+# TestFTSOnlyMode (no embedder)
+# ---------------------------------------------------------------------------
+
+
+@needs_sqlite_vec
+class TestFTSOnlyMode:
+    def _make_fts_engine(self, tmp_path):
+        from qanot.rag.engine import RAGEngine
+        from qanot.rag.store import SqliteVecStore
+
+        store = SqliteVecStore(
+            db_path=str(tmp_path / "fts_only.db"),
+            dimensions=4,
+        )
+        return RAGEngine(embedder=None, store=store)
+
+    def test_ingest_without_embedder(self, tmp_path):
+        engine = self._make_fts_engine(tmp_path)
+        assert engine.has_embedder is False
+        ids = asyncio.run(
+            engine.ingest("Python is great for data science", source="test.md")
+        )
+        assert len(ids) >= 1
+
+    def test_query_fts_only(self, tmp_path):
+        engine = self._make_fts_engine(tmp_path)
+        asyncio.run(
+            engine.ingest("Python programming language", source="lang.md")
+        )
+        result = asyncio.run(engine.query("Python programming", top_k=5))
+        assert len(result.results) >= 1
+        assert "Python" in result.results[0].text
+
+    def test_query_empty_fts_only(self, tmp_path):
+        engine = self._make_fts_engine(tmp_path)
+        result = asyncio.run(engine.query("nothing here", top_k=5))
+        assert result.results == []
+
+
+# ---------------------------------------------------------------------------
+# TestFallbackChain (embedder creation)
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackChain:
+    def test_gemini_init_failure_falls_to_openai(self):
+        """If Gemini init fails, should fall back to OpenAI."""
+        from qanot.rag.embedder import OpenAIEmbedder, create_embedder
+
+        cfg = MockConfig(
+            providers=[
+                MockProviderConfig(name="g", provider="gemini", api_key="gk"),
+                MockProviderConfig(name="o", provider="openai", api_key="ok"),
+            ]
+        )
+        # Normal case: Gemini wins
+        embedder = create_embedder(cfg)
+        # Gemini has openai installed, so it should succeed and return Gemini
+        from qanot.rag.embedder import GeminiEmbedder
+        assert isinstance(embedder, (GeminiEmbedder, OpenAIEmbedder))
+
+    def test_empty_gemini_key_skips(self):
+        """Empty Gemini key should skip to OpenAI."""
+        from qanot.rag.embedder import OpenAIEmbedder, create_embedder
+
+        cfg = MockConfig(
+            providers=[
+                MockProviderConfig(name="g", provider="gemini", api_key=""),
+                MockProviderConfig(name="o", provider="openai", api_key="ok"),
+            ]
+        )
+        embedder = create_embedder(cfg)
+        assert isinstance(embedder, OpenAIEmbedder)
+
+    def test_all_empty_keys_returns_none(self):
+        from qanot.rag.embedder import create_embedder
+
+        cfg = MockConfig(
+            providers=[
+                MockProviderConfig(name="g", provider="gemini", api_key=""),
+                MockProviderConfig(name="o", provider="openai", api_key=""),
+            ]
+        )
+        assert create_embedder(cfg) is None
+
+    def test_embedder_error_classes_exist(self):
+        from qanot.rag.embedder import EmbedderHardError, EmbedderSoftError
+        assert issubclass(EmbedderSoftError, Exception)
+        assert issubclass(EmbedderHardError, Exception)

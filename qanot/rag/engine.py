@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from qanot.rag.chunker import BM25Index, chunk_text
 from qanot.rag.embedder import Embedder
-from qanot.rag.store import SearchResult, VectorStore
+from qanot.rag.store import SearchResult, SqliteVecStore, VectorStore, _hash_text
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +24,15 @@ class RAGResult:
 class RAGEngine:
     """Orchestrates chunking, embedding, storage, and hybrid retrieval.
 
-    Combines vector similarity search with BM25 keyword matching
-    for more robust retrieval.
+    Combines vector similarity search with keyword matching (FTS5 persistent
+    or in-memory BM25 fallback) for robust hybrid retrieval.
+
+    Uses embedding cache to avoid re-embedding unchanged content.
     """
 
     def __init__(
         self,
-        embedder: Embedder,
+        embedder: Embedder | None,
         store: VectorStore,
         *,
         chunk_size: int = 512,
@@ -42,7 +44,86 @@ class RAGEngine:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.bm25_weight = bm25_weight
+        # In-memory BM25 as fallback when FTS5 is unavailable
         self._bm25 = BM25Index()
+        self._use_fts5 = (
+            isinstance(store, SqliteVecStore) and store.fts_available
+        )
+
+    @property
+    def fts_mode(self) -> str:
+        """Return which keyword search backend is active."""
+        return "fts5" if self._use_fts5 else "bm25"
+
+    @property
+    def has_embedder(self) -> bool:
+        """Whether vector embedding is available."""
+        return self.embedder is not None
+
+    async def _embed_with_cache(
+        self,
+        texts: list[str],
+    ) -> list[list[float]]:
+        """Embed texts using cache when available.
+
+        For SqliteVecStore: checks cache first, only embeds cache misses,
+        then stores new embeddings in cache.
+        For other stores or no embedder: embeds directly.
+        """
+        if self.embedder is None:
+            raise RuntimeError("No embedder available — cannot generate embeddings")
+
+        store = self.store
+        # Use cache only with SqliteVecStore
+        if not isinstance(store, SqliteVecStore):
+            return await self.embedder.embed(texts)
+
+        provider = self.embedder.provider_name
+        model = getattr(self.embedder, "model", "default")
+
+        # Hash all texts
+        hashes = [_hash_text(t) for t in texts]
+
+        # Batch cache lookup
+        cached = store.cache_get(hashes, provider, model)
+
+        # Find misses
+        miss_indices: list[int] = []
+        miss_texts: list[str] = []
+        for i, h in enumerate(hashes):
+            if h not in cached:
+                miss_indices.append(i)
+                miss_texts.append(texts[i])
+
+        # Embed only misses
+        if miss_texts:
+            new_embeddings = await self.embedder.embed(miss_texts)
+            # Store in cache
+            cache_items = [
+                (hashes[miss_indices[j]], new_embeddings[j])
+                for j in range(len(miss_texts))
+            ]
+            store.cache_put(cache_items, provider, model)
+            logger.debug(
+                "Embedding cache: %d hits, %d misses (embedded)",
+                len(texts) - len(miss_texts),
+                len(miss_texts),
+            )
+        else:
+            new_embeddings = []
+            logger.debug("Embedding cache: all %d texts cached", len(texts))
+
+        # Reassemble in original order
+        result: list[list[float]] = []
+        miss_idx = 0
+        for i, h in enumerate(hashes):
+            if h in cached:
+                result.append(cached[h])
+            else:
+                result.append(new_embeddings[miss_idx])
+                miss_idx += 1
+
+        return result
 
     async def ingest(
         self,
@@ -54,14 +135,8 @@ class RAGEngine:
     ) -> list[str]:
         """Chunk, embed, and store a document.
 
-        Args:
-            text: Full document text.
-            source: Source identifier (e.g., filename, URL).
-            user_id: Owner of this content.
-            metadata: Additional metadata per chunk.
-
-        Returns:
-            List of chunk IDs created.
+        Uses embedding cache to skip re-embedding unchanged chunks.
+        Falls back to FTS-only indexing if no embedder is available.
         """
         chunks = chunk_text(
             text,
@@ -73,19 +148,32 @@ class RAGEngine:
             logger.debug("No chunks produced from source=%r", source)
             return []
 
-        embeddings = await self.embedder.embed(chunks)
         metadatas = [metadata or {} for _ in chunks]
 
-        chunk_ids = await self.store.async_add(
-            chunks,
-            embeddings,
-            source=source,
-            user_id=user_id,
-            metadatas=metadatas,
-        )
+        if self.embedder is not None:
+            embeddings = await self._embed_with_cache(chunks)
+            chunk_ids = await self.store.async_add(
+                chunks,
+                embeddings,
+                source=source,
+                user_id=user_id,
+                metadatas=metadatas,
+            )
+        else:
+            # FTS-only mode: store with zero embeddings
+            zero_embs = [[0.0] * 4 for _ in chunks]  # Minimal placeholder
+            chunk_ids = await self.store.async_add(
+                chunks,
+                zero_embs,
+                source=source,
+                user_id=user_id,
+                metadatas=metadatas,
+            )
+            logger.debug("FTS-only ingest: %d chunks (no embeddings)", len(chunks))
 
-        # Update BM25 index
-        self._bm25.add(chunk_ids, chunks)
+        # Update in-memory BM25 as fallback
+        if not self._use_fts5:
+            self._bm25.add(chunk_ids, chunks)
 
         logger.info(
             "Ingested %d chunks from source=%r for user=%r",
@@ -105,48 +193,50 @@ class RAGEngine:
     ) -> RAGResult:
         """Retrieve relevant chunks using hybrid search.
 
-        Combines vector similarity (semantic) with BM25 (keyword) scores
+        Combines vector similarity (semantic) with keyword scores (FTS5 or BM25)
         using weighted reciprocal rank fusion.
 
-        Args:
-            query: Search query text.
-            top_k: Number of results to return.
-            user_id: Filter by user.
-            source: Filter by source.
-
-        Returns:
-            RAGResult with ranked results.
+        If no embedder is available, falls back to keyword-only search.
         """
-        # Vector search
-        query_embedding = await self.embedder.embed_single(query)
-        vec_results = await self.store.async_search(
-            query_embedding,
-            top_k=top_k * 2,
-            user_id=user_id,
-            source=source,
-        )
-
-        # BM25 search
-        bm25_hits = self._bm25.search(query, top_k=top_k * 2)
-        bm25_scores = {doc_id: score for doc_id, score in bm25_hits}
-
-        # Reciprocal rank fusion
+        vec_results: list[SearchResult] = []
         fused_scores: dict[str, float] = {}
         result_map: dict[str, SearchResult] = {}
-
         vec_weight = 1.0 - self.bm25_weight
 
-        for rank, result in enumerate(vec_results):
-            rrf_score = vec_weight / (rank + 60)  # k=60 for RRF
-            fused_scores[result.chunk_id] = fused_scores.get(result.chunk_id, 0) + rrf_score
-            result_map[result.chunk_id] = result
+        # Vector search (if embedder available)
+        if self.embedder is not None:
+            query_embedding = await self._embed_with_cache([query])
+            vec_results = await self.store.async_search(
+                query_embedding[0],
+                top_k=top_k * 2,
+                user_id=user_id,
+                source=source,
+            )
 
-        for rank, (doc_id, _bm25_score) in enumerate(bm25_hits):
-            rrf_score = self.bm25_weight / (rank + 60)
+            for rank, result in enumerate(vec_results):
+                rrf_score = vec_weight / (rank + 60)
+                fused_scores[result.chunk_id] = fused_scores.get(result.chunk_id, 0) + rrf_score
+                result_map[result.chunk_id] = result
+
+        # Keyword search (FTS5 persistent or BM25 in-memory)
+        keyword_hits: list[tuple[str, float]] = []
+        if self._use_fts5:
+            assert isinstance(self.store, SqliteVecStore)
+            fts_results = self.store.search_fts(query, top_k=top_k * 2)
+            keyword_hits = [(r.chunk_id, r.score) for r in fts_results]
+            # Also populate result_map from FTS results
+            for r in fts_results:
+                if r.chunk_id not in result_map:
+                    result_map[r.chunk_id] = r
+        else:
+            keyword_hits = self._bm25.search(query, top_k=top_k * 2)
+
+        # Apply keyword weight to RRF fusion
+        keyword_weight = self.bm25_weight if self.embedder is not None else 1.0
+        for rank, (doc_id, _score) in enumerate(keyword_hits):
+            rrf_score = keyword_weight / (rank + 60)
             fused_scores[doc_id] = fused_scores.get(doc_id, 0) + rrf_score
-            # BM25 results may not have full SearchResult — use vec result if available
             if doc_id not in result_map:
-                # Create a minimal result for BM25-only hits
                 for vr in vec_results:
                     if vr.chunk_id == doc_id:
                         result_map[doc_id] = vr
@@ -162,7 +252,6 @@ class RAGEngine:
                 result.score = fused_scores[chunk_id]
                 results.append(result)
 
-        # Collect source info
         sources = list({r.metadata.get("source", "") for r in results if r.metadata.get("source")})
 
         return RAGResult(results=results, query=query, sources_used=sources)
@@ -170,9 +259,9 @@ class RAGEngine:
     async def delete_source(self, source: str) -> int:
         """Remove all chunks from a source."""
         count = self.store.delete_source(source)
-        # Rebuild BM25 index (simple approach — rebuild from store)
-        self._bm25.clear()
-        logger.info("Deleted source=%r (%d chunks), BM25 index cleared", source, count)
+        if not self._use_fts5:
+            self._bm25.clear()
+        logger.info("Deleted source=%r (%d chunks)", source, count)
         return count
 
     def list_sources(self) -> list[dict]:

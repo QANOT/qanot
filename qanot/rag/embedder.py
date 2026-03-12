@@ -1,10 +1,14 @@
-"""Embedding providers for RAG.
+"""Embedding providers for RAG with fallback chain.
 
 Auto-detects the best available provider from the user's existing config.
 No extra API keys required — reuses whatever provider keys are already set up.
 
-Priority: Gemini (free tier) > OpenAI > fallback error.
+Priority chain: Gemini (free tier) → OpenAI → FTS-only mode (no embeddings).
 Anthropic and Groq do not offer embedding APIs.
+
+Fallback distinguishes:
+- Soft failures (missing API key, unsupported provider) → skip, try next
+- Hard failures (network error, rate limit during embed()) → raise
 """
 
 from __future__ import annotations
@@ -15,10 +19,19 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger(__name__)
 
 
+class EmbedderSoftError(Exception):
+    """Non-fatal error: provider unavailable, try next in chain."""
+
+
+class EmbedderHardError(Exception):
+    """Fatal error: network failure, rate limit — stop trying."""
+
+
 class Embedder(ABC):
     """Abstract base for embedding providers."""
 
     dimensions: int
+    provider_name: str = "unknown"
 
     @abstractmethod
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -32,6 +45,8 @@ class Embedder(ABC):
 
 class GeminiEmbedder(Embedder):
     """Google Gemini embedding via OpenAI-compatible endpoint (free tier)."""
+
+    provider_name = "gemini"
 
     def __init__(self, api_key: str, model: str = "gemini-embedding-001", base_url: str | None = None):
         import openai
@@ -61,6 +76,8 @@ class GeminiEmbedder(Embedder):
 class OpenAIEmbedder(Embedder):
     """OpenAI text-embedding-3-small (1536 dims, $0.02/MTok)."""
 
+    provider_name = "openai"
+
     def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
         import openai
 
@@ -82,22 +99,10 @@ class OpenAIEmbedder(Embedder):
         return all_embeddings
 
 
-def create_embedder(config) -> Embedder | None:
-    """Auto-detect best available embedder from existing provider config.
-
-    Priority: Gemini (free) > OpenAI > None.
-    Anthropic and Groq don't offer embedding APIs.
-
-    Args:
-        config: Qanot Config object with provider/providers fields.
-
-    Returns:
-        Embedder instance or None if no compatible provider found.
-    """
-    # Collect all available provider keys by type
+def _collect_provider_keys(config) -> dict[str, dict]:
+    """Extract all available provider API keys from config."""
     providers: dict[str, dict] = {}
 
-    # Check multi-provider configs first
     for pc in getattr(config, "providers", []):
         if pc.provider not in providers:
             providers[pc.provider] = {
@@ -105,34 +110,68 @@ def create_embedder(config) -> Embedder | None:
                 "base_url": getattr(pc, "base_url", ""),
             }
 
-    # Check single-provider config
     provider_type = getattr(config, "provider", "")
     if provider_type and provider_type not in providers:
         api_key = getattr(config, "api_key", "")
         if api_key:
             providers[provider_type] = {"api_key": api_key}
 
+    return providers
+
+
+def create_embedder(config) -> Embedder | None:
+    """Auto-detect best available embedder with fallback chain.
+
+    Chain: Gemini (free) → OpenAI → None (FTS-only mode).
+
+    Soft failures (missing key, unsupported provider) skip to next.
+    Returns None if no compatible provider found — RAG falls back to FTS-only.
+    """
+    providers = _collect_provider_keys(config)
+    errors: list[str] = []
+
     # Priority 1: Gemini (free embedding tier)
     if "gemini" in providers:
         info = providers["gemini"]
-        logger.info("RAG embedder: using Gemini gemini-embedding-001 (free tier)")
-        return GeminiEmbedder(
-            api_key=info["api_key"],
-            base_url=info.get("base_url") or None,
-        )
+        if info.get("api_key"):
+            try:
+                embedder = GeminiEmbedder(
+                    api_key=info["api_key"],
+                    base_url=info.get("base_url") or None,
+                )
+                logger.info("RAG embedder: using Gemini gemini-embedding-001 (free tier)")
+                return embedder
+            except Exception as e:
+                errors.append(f"gemini: {e}")
+                logger.warning("Gemini embedder init failed: %s — trying next", e)
+        else:
+            errors.append("gemini: empty API key")
 
     # Priority 2: OpenAI
     if "openai" in providers:
         info = providers["openai"]
-        logger.info("RAG embedder: using OpenAI text-embedding-3-small")
-        return OpenAIEmbedder(api_key=info["api_key"])
+        if info.get("api_key"):
+            try:
+                embedder = OpenAIEmbedder(api_key=info["api_key"])
+                logger.info("RAG embedder: using OpenAI text-embedding-3-small")
+                return embedder
+            except Exception as e:
+                errors.append(f"openai: {e}")
+                logger.warning("OpenAI embedder init failed: %s — trying next", e)
+        else:
+            errors.append("openai: empty API key")
 
-    # Groq uses OpenAI-compatible API but doesn't support embeddings
-    # Anthropic doesn't have an embedding API
-    logger.warning(
-        "RAG embedder: no compatible provider found. "
-        "Add a Gemini or OpenAI provider to enable RAG. "
-        "Available providers: %s",
-        list(providers.keys()),
-    )
+    # Fallback: FTS-only mode (no vector search)
+    if errors:
+        logger.warning(
+            "RAG embedder: all providers failed (%s). Falling back to FTS-only mode.",
+            "; ".join(errors),
+        )
+    else:
+        logger.warning(
+            "RAG embedder: no compatible provider found (available: %s). "
+            "RAG will use FTS-only keyword search. "
+            "Add a Gemini or OpenAI provider for vector search.",
+            list(providers.keys()),
+        )
     return None
