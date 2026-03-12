@@ -87,6 +87,8 @@ class AgentBot:
 
     async def _handle_start(self, message: Message) -> None:
         """Handle /start command."""
+        if not message.from_user or message.from_user.is_bot:
+            return
         if not self._is_allowed(message.from_user.id):
             return
         name = self.agent_def.name or self.agent_def.id
@@ -98,6 +100,8 @@ class AgentBot:
 
     async def _handle_reset(self, message: Message) -> None:
         """Handle /reset — clear conversation."""
+        if not message.from_user or message.from_user.is_bot:
+            return
         if not self._is_allowed(message.from_user.id):
             return
         if self._agent:
@@ -139,6 +143,9 @@ class AgentBot:
     async def _handle_message(self, message: Message) -> None:
         """Process an incoming message through the agent."""
         if not message.from_user:
+            return
+        # Ignore messages from other bots (prevents mirror message loops)
+        if message.from_user.is_bot:
             return
         if not self._is_allowed(message.from_user.id):
             return
