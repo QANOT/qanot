@@ -1,10 +1,16 @@
-"""Tests for ContextTracker."""
+"""Tests for ContextTracker and compaction."""
 
 from __future__ import annotations
 
 import pytest
 
 from qanot.context import ContextTracker, truncate_tool_result
+from qanot.providers.errors import (
+    classify_error,
+    is_context_overflow_error,
+    ERROR_CONTEXT_OVERFLOW,
+    ERROR_RATE_LIMIT,
+)
 
 
 class TestContextTracker:
@@ -138,6 +144,78 @@ class TestContextTracker:
         compacted = ct.compact_messages(messages)
         assert len(compacted) == 5  # Not compacted
 
+    def test_compact_messages_with_summary(self):
+        ct = ContextTracker(max_tokens=100_000)
+        messages = [
+            {"role": "user", "content": f"msg {i}"}
+            for i in range(10)
+        ]
+        summary = "User discussed topics A, B, and C. Decision: go with B."
+        compacted = ct.compact_messages(messages, summary_text=summary)
+        assert len(compacted) == 7
+        # Summary should contain the LLM text, not truncation marker
+        assert "CONVERSATION SUMMARY" in compacted[2]["content"]
+        assert "go with B" in compacted[2]["content"]
+        assert "CONTEXT COMPACTION" not in compacted[2]["content"]
+
+    def test_compact_messages_without_summary_fallback(self):
+        ct = ContextTracker(max_tokens=100_000)
+        messages = [
+            {"role": "user", "content": f"msg {i}"}
+            for i in range(10)
+        ]
+        # No summary = truncation marker
+        compacted = ct.compact_messages(messages, summary_text=None)
+        assert "CONTEXT COMPACTION" in compacted[2]["content"]
+
+    def test_extract_compaction_text(self):
+        messages = [
+            {"role": "user", "content": "init 1"},
+            {"role": "assistant", "content": "init 2"},
+            {"role": "user", "content": "middle message 1"},
+            {"role": "assistant", "content": "middle response 1"},
+            {"role": "user", "content": "middle message 2"},
+            {"role": "assistant", "content": "middle response 2"},
+            {"role": "user", "content": "recent 1"},
+            {"role": "assistant", "content": "recent 2"},
+            {"role": "user", "content": "recent 3"},
+            {"role": "assistant", "content": "recent 4"},
+        ]
+        text = ContextTracker.extract_compaction_text(messages)
+        # Should contain middle messages but not head/tail
+        assert "middle message 1" in text
+        assert "middle response 2" in text
+        assert "init 1" not in text
+        assert "recent 4" not in text
+
+    def test_extract_compaction_text_with_tool_blocks(self):
+        messages = [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Let me check"},
+                {"type": "tool_use", "name": "read_file", "id": "1", "input": {}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "1", "content": "file contents here..."},
+            ]},
+            {"role": "user", "content": "recent 1"},
+            {"role": "assistant", "content": "recent 2"},
+            {"role": "user", "content": "recent 3"},
+            {"role": "assistant", "content": "recent 4"},
+        ]
+        text = ContextTracker.extract_compaction_text(messages)
+        assert "Let me check" in text
+        assert "[tool: read_file]" in text
+
+    def test_extract_compaction_text_too_few_messages(self):
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        text = ContextTracker.extract_compaction_text(messages)
+        assert text == ""
+
 
 class TestTruncateToolResult:
     def test_short_result_unchanged(self):
@@ -155,3 +233,33 @@ class TestTruncateToolResult:
         truncated = truncate_tool_result(result, max_chars=1_000)
         assert truncated.startswith("HEAD")
         assert "TAIL" in truncated  # tail portion preserved
+
+
+class TestContextOverflowDetection:
+    def test_anthropic_overflow(self):
+        assert is_context_overflow_error("context_window_exceeded")
+
+    def test_openai_overflow(self):
+        assert is_context_overflow_error("maximum context length exceeded")
+
+    def test_generic_overflow(self):
+        assert is_context_overflow_error("prompt is too long for this model")
+
+    def test_too_many_tokens(self):
+        assert is_context_overflow_error("too many tokens in the request")
+
+    def test_request_too_large(self):
+        assert is_context_overflow_error("request_too_large")
+
+    def test_not_overflow(self):
+        assert not is_context_overflow_error("rate limit exceeded")
+        assert not is_context_overflow_error("unauthorized")
+        assert not is_context_overflow_error("internal server error")
+
+    def test_classify_overflow_error(self):
+        err = Exception("This request exceeds the maximum context length")
+        assert classify_error(err) == ERROR_CONTEXT_OVERFLOW
+
+    def test_classify_rate_limit_not_overflow(self):
+        err = Exception("rate limit exceeded")
+        assert classify_error(err) == ERROR_RATE_LIMIT

@@ -9,12 +9,15 @@ ERROR_BILLING = "billing"
 ERROR_OVERLOADED = "overloaded"
 ERROR_TIMEOUT = "timeout"
 ERROR_NOT_FOUND = "not_found"
+ERROR_CONTEXT_OVERFLOW = "context_overflow"
 ERROR_UNKNOWN = "unknown"
 
 # Permanent failures — don't retry or failover
 PERMANENT_FAILURES = {ERROR_AUTH, ERROR_BILLING}
 # Transient — retry or try next provider
 TRANSIENT_FAILURES = {ERROR_RATE_LIMIT, ERROR_OVERLOADED, ERROR_TIMEOUT, ERROR_NOT_FOUND}
+# Recoverable via compaction
+COMPACTION_FAILURES = {ERROR_CONTEXT_OVERFLOW}
 
 # HTTP status code mappings
 _STATUS_MAP = {
@@ -44,6 +47,11 @@ def classify_error(error: Exception) -> str:
 
     # Fallback: check error message
     msg = str(error).lower()
+
+    # Context overflow detection (before rate limit — some providers use 400)
+    if is_context_overflow_error(msg):
+        return ERROR_CONTEXT_OVERFLOW
+
     if "rate" in msg and "limit" in msg or "429" in msg:
         return ERROR_RATE_LIMIT
     if "overloaded" in msg or "503" in msg or "529" in msg:
@@ -57,3 +65,25 @@ def classify_error(error: Exception) -> str:
     if "not_found" in msg or "not found" in msg:
         return ERROR_NOT_FOUND
     return ERROR_UNKNOWN
+
+
+# Context overflow patterns from all major providers
+_OVERFLOW_PATTERNS = [
+    "context_window_exceeded",
+    "context length exceeded",
+    "maximum context length",
+    "request_too_large",
+    "request exceeds the maximum size",
+    "prompt is too long",
+    "exceeds model context window",
+    "too many tokens",
+    "max_tokens",
+    "token limit",
+    "content would exceed",
+]
+
+
+def is_context_overflow_error(msg: str) -> bool:
+    """Check if an error message indicates context window overflow."""
+    msg_lower = msg.lower() if not msg.islower() else msg
+    return any(pattern in msg_lower for pattern in _OVERFLOW_PATTERNS)

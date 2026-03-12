@@ -78,17 +78,22 @@ class ContextTracker:
         # Apply safety margin for estimation error
         return (estimated_next * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
 
-    def compact_messages(self, messages: list[dict]) -> list[dict]:
+    def compact_messages(self, messages: list[dict], summary_text: str | None = None) -> list[dict]:
         """Compact conversation history to reduce context usage.
 
-        Strategy: Keep system context (first 2 messages) and recent messages,
-        summarize the middle. This is a simple truncation-based approach —
-        a production system would use LLM-generated summaries.
+        Args:
+            messages: Full message history.
+            summary_text: If provided, use this LLM-generated summary instead
+                of a simple truncation marker. When None, falls back to
+                truncation-only mode.
+
+        Strategy:
+        - Keep first 2 messages (initial context) + last 4 (recent turns)
+        - Replace the middle with either an LLM summary or a truncation marker
         """
         if len(messages) <= 6:
             return messages  # Too few to compact
 
-        # Calculate how many messages to keep
         # Keep first 2 (initial context) + last 4 (recent context)
         keep_recent = min(4, len(messages) // 2)
         keep_start = 2
@@ -97,27 +102,80 @@ class ContextTracker:
         tail = messages[-keep_recent:]
         removed_count = len(messages) - keep_start - keep_recent
 
-        # Build a summary marker
-        summary_msg = {
-            "role": "user",
-            "content": (
-                f"[CONTEXT COMPACTION: {removed_count} earlier messages were removed "
-                f"to free context space. Recent conversation preserved below. "
-                f"Check your workspace files (SESSION-STATE.md, memory/) for "
-                f"any important context from earlier in the conversation.]"
-            ),
-        }
+        if summary_text:
+            # LLM-generated summary
+            summary_msg = {
+                "role": "user",
+                "content": (
+                    f"[CONVERSATION SUMMARY — {removed_count} messages compacted]\n\n"
+                    f"{summary_text}\n\n"
+                    f"[End of summary. Recent conversation continues below.]"
+                ),
+            }
+        else:
+            # Fallback: simple truncation marker
+            summary_msg = {
+                "role": "user",
+                "content": (
+                    f"[CONTEXT COMPACTION: {removed_count} earlier messages were removed "
+                    f"to free context space. Recent conversation preserved below. "
+                    f"Check your workspace files (SESSION-STATE.md, memory/) for "
+                    f"any important context from earlier in the conversation.]"
+                ),
+            }
 
         compacted = head + [summary_msg] + tail
         logger.info(
-            "Compacted conversation: %d → %d messages (removed %d)",
-            len(messages), len(compacted), removed_count,
+            "Compacted conversation: %d → %d messages (removed %d, summary=%s)",
+            len(messages), len(compacted), removed_count, bool(summary_text),
         )
 
         # Reset prompt token estimate after compaction
         self.last_prompt_tokens = int(self.last_prompt_tokens * COMPACTION_TARGET / COMPACTION_THRESHOLD)
 
         return compacted
+
+    @staticmethod
+    def extract_compaction_text(messages: list[dict], keep_start: int = 2, keep_recent: int = 4) -> str:
+        """Extract the text content of messages that would be removed during compaction.
+
+        Returns a formatted string suitable for sending to an LLM for summarization.
+        """
+        if len(messages) <= keep_start + keep_recent:
+            return ""
+
+        middle = messages[keep_start:-keep_recent]
+        parts: list[str] = []
+
+        for msg in middle:
+            role = msg.get("role", "?")
+            content = msg.get("content", "")
+
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                # Extract text from content blocks, skip tool results
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            text_parts.append(f"[tool: {block.get('name', '?')}]")
+                        elif block.get("type") == "tool_result":
+                            # Truncate tool results to save tokens
+                            result = block.get("content", "")
+                            if len(result) > 200:
+                                result = result[:200] + "..."
+                            text_parts.append(f"[tool result: {result}]")
+                text = "\n".join(text_parts)
+            else:
+                text = str(content)
+
+            if text.strip():
+                parts.append(f"**{role}**: {text[:500]}")
+
+        return "\n\n".join(parts)
 
     def check_threshold(self) -> bool:
         """Check if we've crossed 60% context threshold.

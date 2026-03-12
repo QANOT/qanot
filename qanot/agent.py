@@ -19,9 +19,11 @@ from qanot.providers.errors import (
     classify_error,
     PERMANENT_FAILURES,
     TRANSIENT_FAILURES,
+    COMPACTION_FAILURES,
     ERROR_AUTH,
     ERROR_BILLING,
     ERROR_RATE_LIMIT,
+    ERROR_CONTEXT_OVERFLOW,
 )
 from qanot.session import SessionWriter
 
@@ -31,6 +33,21 @@ MAX_ITERATIONS = 25
 MAX_SAME_ACTION = 3  # Break after N identical consecutive tool calls
 TOOL_TIMEOUT = 30  # seconds per tool execution
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
+MAX_COMPACTION_RETRIES = 2  # Max overflow→compact→retry cycles
+
+COMPACTION_SUMMARY_PROMPT = (
+    "You are summarizing a conversation for context compaction. "
+    "Create a concise summary that preserves:\n"
+    "1. **Key decisions** made during the conversation\n"
+    "2. **Open tasks/TODOs** that are still pending\n"
+    "3. **Important facts** (names, numbers, IDs, URLs, file paths)\n"
+    "4. **User preferences** expressed during the conversation\n"
+    "5. **Current goal** — what the user is trying to accomplish\n\n"
+    "Be concise but preserve all actionable information. "
+    "Do NOT add commentary — just summarize the facts.\n\n"
+    "---\n\n"
+    "Conversation to summarize:\n\n"
+)
 
 # Errors that should NOT be retried (deterministic failures)
 DETERMINISTIC_ERRORS = (
@@ -374,17 +391,52 @@ class Agent:
         self._last_user_msg_id = self.session.log_user_message(user_message)
         return user_message
 
-    def _prepare_iteration(self, messages: list[dict], user_id: str | None) -> tuple[list[dict], str, list[dict]]:
+    async def _summarize_for_compaction(self, messages: list[dict]) -> str | None:
+        """Use the LLM to summarize messages that will be compacted.
+
+        Returns summary text, or None if summarization fails (falls back to truncation).
+        """
+        if self.config.compaction_mode == "truncate":
+            return None
+
+        text_to_summarize = self.context.extract_compaction_text(messages)
+        if not text_to_summarize or len(text_to_summarize) < 100:
+            return None  # Too little content to summarize
+
+        # Truncate to avoid the summarization itself overflowing
+        if len(text_to_summarize) > 12_000:
+            text_to_summarize = text_to_summarize[:12_000] + "\n\n[... truncated for summarization]"
+
+        try:
+            response = await self.provider.chat(
+                messages=[{
+                    "role": "user",
+                    "content": COMPACTION_SUMMARY_PROMPT + text_to_summarize,
+                }],
+                tools=None,
+                system="You are a concise summarizer. Output only the summary, nothing else.",
+            )
+            summary = response.content.strip()
+            if summary and len(summary) > 20:
+                logger.info("LLM compaction summary generated (%d chars)", len(summary))
+                return summary
+        except Exception as e:
+            logger.warning("LLM summarization failed, falling back to truncation: %s", e)
+
+        return None
+
+    async def _prepare_iteration(self, messages: list[dict], user_id: str | None) -> tuple[list[dict], str, list[dict]]:
         """Shared per-iteration prep: compaction, repair, build prompt/tools.
 
         Returns (messages, system_prompt, tool_defs).
         """
         if self.context.needs_compaction() and len(messages) > 6:
-            compacted = self.context.compact_messages(messages)
+            summary = await self._summarize_for_compaction(messages)
+            compacted = self.context.compact_messages(messages, summary_text=summary)
             self._conversations[user_id] = compacted
             messages = compacted
-            logger.info("Proactive compaction triggered at %.1f%%",
-                       self.context.get_context_percent())
+            logger.info("Proactive compaction triggered at %.1f%% (mode=%s)",
+                       self.context.get_context_percent(), self.config.compaction_mode)
 
         messages = _repair_messages(messages)
         self._conversations[user_id] = messages
@@ -392,6 +444,17 @@ class Agent:
         system = self._build_system_prompt()
         tool_defs = self.tools.get_definitions()
         return messages, system, tool_defs
+
+    async def _handle_overflow(self, messages: list[dict], user_id: str | None) -> list[dict]:
+        """Handle context overflow by force-compacting the conversation.
+
+        Called reactively when the API returns a context_overflow error.
+        """
+        logger.warning("Context overflow detected — forcing compaction")
+        summary = await self._summarize_for_compaction(messages)
+        compacted = self.context.compact_messages(messages, summary_text=summary)
+        self._conversations[user_id] = compacted
+        return compacted
 
     def _track_usage(self, response: ProviderResponse) -> None:
         """Track usage and check context threshold."""
@@ -556,9 +619,10 @@ class Agent:
 
         final_text = ""
         recent_fingerprints: list[str] = []
+        overflow_retries = 0
 
         for iteration in range(MAX_ITERATIONS):
-            messages, system, tool_defs = self._prepare_iteration(messages, user_id)
+            messages, system, tool_defs = await self._prepare_iteration(messages, user_id)
 
             try:
                 response = await self._call_provider_with_retry(
@@ -569,12 +633,22 @@ class Agent:
             except Exception as e:
                 error_type = classify_error(e)
                 logger.error("Provider failed after retries: %s [%s]", e, error_type)
+
+                # Context overflow → compact and retry
+                if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
+                    overflow_retries += 1
+                    logger.info("Overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
+                    messages = await self._handle_overflow(messages, user_id)
+                    continue
+
                 if error_type == ERROR_RATE_LIMIT:
                     return "Limitga yetdik, biroz kutib qaytadan urinib ko'ring."
                 elif error_type == ERROR_AUTH:
                     return "API kalitda xatolik. Administrator bilan bog'laning."
                 elif error_type == ERROR_BILLING:
                     return "API hisob muammosi. Administrator bilan bog'laning."
+                elif error_type == ERROR_CONTEXT_OVERFLOW:
+                    return "Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang."
                 return "Xatolik yuz berdi, qaytadan urinib ko'ring."
 
             self._track_usage(response)
@@ -631,9 +705,10 @@ class Agent:
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
         recent_fingerprints: list[str] = []
+        overflow_retries = 0
 
         for iteration in range(MAX_ITERATIONS):
-            messages, system, tool_defs = self._prepare_iteration(messages, user_id)
+            messages, system, tool_defs = await self._prepare_iteration(messages, user_id)
 
             response: ProviderResponse | None = None
             text_parts: list[str] = []
@@ -656,6 +731,13 @@ class Agent:
                 error_type = classify_error(e)
                 logger.error("Stream error: %s [%s]", e, error_type)
 
+                # Context overflow → compact and retry the iteration
+                if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
+                    overflow_retries += 1
+                    logger.info("Stream overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
+                    messages = await self._handle_overflow(messages, user_id)
+                    continue
+
                 # Try non-streaming fallback for transient errors
                 if error_type in TRANSIENT_FAILURES:
                     await asyncio.sleep(3)
@@ -675,6 +757,14 @@ class Agent:
                             response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),
                         )
                         return
+                elif error_type == ERROR_CONTEXT_OVERFLOW:
+                    yield StreamEvent(
+                        type="done",
+                        response=ProviderResponse(
+                            content="Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang."
+                        ),
+                    )
+                    return
                 else:
                     yield StreamEvent(
                         type="done",
