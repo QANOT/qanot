@@ -403,6 +403,20 @@ class Agent:
         if not text_to_summarize or len(text_to_summarize) < 100:
             return None  # Too little content to summarize
 
+        # Pre-compaction backup: save full context before it's dropped
+        try:
+            from pathlib import Path
+            backup_dir = Path(self.config.workspace_dir) / "memory"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"pre-compact-{int(time.time())}.md"
+            backup_path.write_text(
+                f"# Pre-Compaction Backup\n\n{text_to_summarize}",
+                encoding="utf-8",
+            )
+            logger.info("Pre-compaction backup saved: %s", backup_path.name)
+        except Exception as e:
+            logger.warning("Failed to save pre-compaction backup: %s", e)
+
         # Truncate to avoid the summarization itself overflowing
         if len(text_to_summarize) > 12_000:
             text_to_summarize = text_to_summarize[:12_000] + "\n\n[... truncated for summarization]"

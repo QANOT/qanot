@@ -102,6 +102,10 @@ class TelegramAdapter:
         self._setup_handlers()
         self._concurrent = asyncio.Semaphore(config.max_concurrent)
         self._draft_counter = 0
+        # Per-user message coalescing: when user sends rapid messages while
+        # the agent is processing, collect them and process as one turn.
+        self._user_locks: dict[int, asyncio.Lock] = {}
+        self._pending_messages: dict[int, list[tuple]] = {}
 
     def _next_draft_id(self) -> int:
         """Generate a unique draft_id for sendMessageDraft."""
@@ -249,43 +253,87 @@ class TelegramAdapter:
         # React with 👀 to acknowledge the message
         await self._react(message.chat.id, message.message_id, "👀")
 
-        async with self._concurrent:
-            mode = self.config.response_mode
-            try:
-                if mode == "stream":
-                    await self._respond_stream(message.chat.id, str(user_id), text, images=images)
-                elif mode == "partial":
-                    await self._respond_partial(message.chat.id, str(user_id), text, images=images)
-                else:
-                    await self._respond_blocked(message.chat.id, str(user_id), text, images=images)
+        # Add to per-user pending buffer (before acquiring lock)
+        self._pending_messages.setdefault(user_id, []).append(
+            (message, text, images, voice_request)
+        )
 
-                # Send TTS voice reply if configured
-                should_tts = (
-                    self.config.voice_mode == "always"
-                    or (self.config.voice_mode == "inbound" and voice_request)
+        # Acquire per-user lock — only one processor per user at a time.
+        # If the lock is held (agent is processing), this handler waits.
+        # When released, it drains ALL pending messages and coalesces them.
+        lock = self._user_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            batch = self._pending_messages.pop(user_id, [])
+            if not batch:
+                return  # Already processed by a previous handler
+
+            # Coalesce messages
+            if len(batch) == 1:
+                msg, text, images, voice_req = batch[0]
+            else:
+                texts = [t for _, t, _, _ in batch]
+                text = "\n\n".join(texts)
+                all_images: list[dict] = []
+                for _, _, imgs, _ in batch:
+                    if imgs:
+                        all_images.extend(imgs)
+                images = all_images or None
+                msg = batch[-1][0]  # Use last message for reactions/chat_id
+                voice_req = any(vr for _, _, _, vr in batch)
+                logger.info(
+                    "Coalesced %d messages from user %d into one turn",
+                    len(batch), user_id,
                 )
-                if should_tts and self.config.get_voice_api_key():
-                    await self._send_voice_reply(message.chat.id, str(user_id))
+                # React ✅ on earlier messages (they're included)
+                for earlier_msg, _, _, _ in batch[:-1]:
+                    await self._react(earlier_msg.chat.id, earlier_msg.message_id, "✅")
 
-                # React with ✅ when done
-                await self._react(message.chat.id, message.message_id, "✅")
+            async with self._concurrent:
+                await self._process_turn(msg, user_id, text, images, voice_req)
 
-            except Exception as e:
-                logger.error("Agent error: %s", e, exc_info=True)
-                # React with ❌ on error
-                await self._react(message.chat.id, message.message_id, "❌")
-                # User-friendly error messages
-                err_msg = str(e).lower()
-                if "rate_limit" in err_msg or "429" in err_msg:
-                    await self._send_final(
-                        message.chat.id,
-                        "Limitga yetdik. Iltimos, 20-30 soniya kutib qayta yozing.",
-                    )
-                else:
-                    await self._send_final(
-                        message.chat.id,
-                        "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-                    )
+    async def _process_turn(
+        self,
+        message: Message,
+        user_id: int,
+        text: str,
+        images: list[dict] | None,
+        voice_request: bool,
+    ) -> None:
+        """Process a single (possibly coalesced) turn for a user."""
+        mode = self.config.response_mode
+        try:
+            if mode == "stream":
+                await self._respond_stream(message.chat.id, str(user_id), text, images=images)
+            elif mode == "partial":
+                await self._respond_partial(message.chat.id, str(user_id), text, images=images)
+            else:
+                await self._respond_blocked(message.chat.id, str(user_id), text, images=images)
+
+            # Send TTS voice reply if configured
+            should_tts = (
+                self.config.voice_mode == "always"
+                or (self.config.voice_mode == "inbound" and voice_request)
+            )
+            if should_tts and self.config.get_voice_api_key():
+                await self._send_voice_reply(message.chat.id, str(user_id))
+
+            # React with ✅ when done
+            await self._react(message.chat.id, message.message_id, "✅")
+
+        except Exception as e:
+            logger.error("Agent error: %s", e, exc_info=True)
+            await self._react(message.chat.id, message.message_id, "❌")
+            err_msg = str(e).lower()
+            if "rate_limit" in err_msg or "429" in err_msg:
+                await self._send_final(
+                    message.chat.id,
+                    "Limitga yetdik. Iltimos, 20-30 soniya kutib qayta yozing.",
+                )
+            else:
+                await self._send_final(
+                    message.chat.id,
+                    "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+                )
 
     # ── Image processing ────────────────────────────────────
 
