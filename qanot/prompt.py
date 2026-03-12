@@ -8,6 +8,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+MAX_FILE_CHARS = 20_000
+MAX_TOTAL_CHARS = 150_000
+
+_IDENTITY_LINE = "You are Qanot AI, a personal assistant."
+
+
+def _truncate_content(content: str, max_chars: int) -> str:
+    """Truncate content keeping 70% head and 20% tail with a marker."""
+    if len(content) <= max_chars:
+        return content
+    head_size = int(max_chars * 0.70)
+    tail_size = int(max_chars * 0.20)
+    kept_len = head_size + tail_size
+    removed = len(content) - kept_len
+    return (
+        content[:head_size]
+        + f"\n\n... [truncated {removed} chars] ...\n\n"
+        + content[-tail_size:]
+    )
+
 
 def build_system_prompt(
     workspace_dir: str = "/data/workspace",
@@ -17,10 +37,17 @@ def build_system_prompt(
     context_percent: float = 0.0,
     total_tokens: int = 0,
     skill_path: str | None = None,
+    mode: str = "full",
 ) -> str:
     """Build the full system prompt from workspace files.
 
-    Concatenation order:
+    Args:
+        mode: Prompt assembly mode.
+            ``"full"``    -- all sections (default).
+            ``"minimal"`` -- SOUL.md + TOOLS.md + session info only.
+            ``"none"``    -- identity line only.
+
+    Concatenation order (full mode):
     1. SOUL.md (identity, principles)
     2. SKILL.md (proactive agent behaviors)
     3. TOOLS.md (tool configurations)
@@ -30,57 +57,60 @@ def build_system_prompt(
     7. HEARTBEAT.md (if heartbeat trigger)
     8. SOUL_APPEND.md sections (plugin personality additions)
     """
+    if mode == "none":
+        return _IDENTITY_LINE
+
     ws = Path(workspace_dir)
     parts: list[str] = []
+    total_chars = 0
+
+    def _add(content: str) -> None:
+        """Append content to parts while tracking total char budget."""
+        nonlocal total_chars
+        if not content:
+            return
+        remaining = MAX_TOTAL_CHARS - total_chars
+        if remaining <= 0:
+            return
+        content = _truncate_content(content, min(MAX_FILE_CHARS, remaining))
+        parts.append(content)
+        total_chars += len(content)
 
     # 1. SOUL.md
-    soul = _read_file(ws / "SOUL.md")
-    if soul:
-        parts.append(soul)
+    _add(_read_file(ws / "SOUL.md"))
 
-    # 2. SKILL.md (proactive agent skill)
-    if skill_path:
-        skill = _read_file(Path(skill_path))
-        if skill:
-            parts.append(skill)
-    else:
-        # Try default location
-        skill = _read_file(ws / "SKILL.md")
-        if skill:
-            parts.append(skill)
+    if mode == "full":
+        # 2. SKILL.md (proactive agent skill)
+        if skill_path:
+            _add(_read_file(Path(skill_path)))
+        else:
+            _add(_read_file(ws / "SKILL.md"))
 
-    # 3. TOOLS.md
-    tools = _read_file(ws / "TOOLS.md")
-    if tools:
-        parts.append(tools)
+    # 3. TOOLS.md (included in both full and minimal)
+    _add(_read_file(ws / "TOOLS.md"))
 
-    # Check for plugin TOOLS files
-    for p in sorted(ws.glob("*_TOOLS.md")):
-        content = _read_file(p)
-        if content:
-            parts.append(content)
+    if mode == "full":
+        # Check for plugin TOOLS files
+        for p in sorted(ws.glob("*_TOOLS.md")):
+            _add(_read_file(p))
 
-    # 4. AGENTS.md
-    agents = _read_file(ws / "AGENTS.md")
-    if agents:
-        parts.append(agents)
+        # 4. AGENTS.md
+        _add(_read_file(ws / "AGENTS.md"))
 
-    # 5. SESSION-STATE.md
-    state = _read_file(ws / "SESSION-STATE.md")
-    if state:
-        parts.append(f"# Current Session State\n\n{state}")
+        # 5. SESSION-STATE.md
+        state = _read_file(ws / "SESSION-STATE.md")
+        if state:
+            _add(f"# Current Session State\n\n{state}")
 
-    # 6. USER.md
-    user = _read_file(ws / "USER.md")
-    if user:
-        parts.append(user)
+        # 6. USER.md
+        _add(_read_file(ws / "USER.md"))
 
-    # 7. ONBOARDING.md — only include a short reminder, not the full file
-    onboarding = _read_file(ws / "ONBOARDING.md")
-    if onboarding and "state: complete" not in onboarding.lower():
-        parts.append("# Onboarding\nUser onboarding is pending. Ask user about themselves naturally during conversation.")
+        # 7. ONBOARDING.md — only include a short reminder, not the full file
+        onboarding = _read_file(ws / "ONBOARDING.md")
+        if onboarding and "state: complete" not in onboarding.lower():
+            _add("# Onboarding\nUser onboarding is pending. Ask user about themselves naturally during conversation.")
 
-    # Session info
+    # Session info (included in both full and minimal)
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S UTC")
@@ -110,11 +140,18 @@ def build_system_prompt(
     return full
 
 
-def _read_file(path: Path) -> str:
-    """Read a file if it exists, return empty string otherwise."""
+def _read_file(path: Path, max_chars: int = MAX_FILE_CHARS) -> str:
+    """Read a file if it exists, return empty string otherwise.
+
+    Args:
+        path: File path to read.
+        max_chars: Maximum characters to keep. Content exceeding this
+            limit is truncated with 70% head / 20% tail.
+    """
     try:
         if path.exists():
-            return path.read_text(encoding="utf-8").strip()
+            content = path.read_text(encoding="utf-8").strip()
+            return _truncate_content(content, max_chars)
     except Exception as e:
         logger.warning("Failed to read %s: %s", path, e)
     return ""

@@ -102,6 +102,7 @@ class Agent:
         tool_registry: ToolRegistry,
         session: SessionWriter | None = None,
         context: ContextTracker | None = None,
+        prompt_mode: str = "full",
     ):
         self.config = config
         self.provider = provider
@@ -111,6 +112,7 @@ class Agent:
             max_tokens=config.max_context_tokens,
             workspace_dir=config.workspace_dir,
         )
+        self.prompt_mode = prompt_mode
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
         self._conversations: dict[str | None, list[dict]] = {}
@@ -131,6 +133,7 @@ class Agent:
             timezone_str=self.config.timezone,
             context_percent=self.context.get_context_percent(),
             total_tokens=self.context.total_tokens,
+            mode=self.prompt_mode,
         )
 
     async def run_turn(self, user_message: str, user_id: str | None = None) -> str:
@@ -505,6 +508,7 @@ async def spawn_isolated_agent(
         tool_registry=tool_registry,
         session=session,
         context=context,
+        prompt_mode="minimal",
     )
 
     result = await agent.run_turn(prompt)
