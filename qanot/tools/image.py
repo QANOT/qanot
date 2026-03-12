@@ -15,13 +15,13 @@ from qanot.agent import ToolRegistry
 logger = logging.getLogger(__name__)
 
 # Image generation model (Nano Banana 2 = Gemini 3.1 Flash Image)
-DEFAULT_IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation"
+DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview"
 
 # Supported models
 SUPPORTED_MODELS = {
-    "gemini-2.0-flash-exp-image-generation",  # Nano Banana (stable)
-    "gemini-3.1-flash-image-preview",  # Nano Banana 2 (latest)
-    "gemini-3-pro-image-preview",  # Nano Banana Pro (high quality)
+    "gemini-3-pro-image-preview",  # Nano Banana Pro (highest quality)
+    "gemini-3.1-flash-image-preview",  # Nano Banana 2 (fast)
+    "gemini-2.5-flash-image",  # Nano Banana (speed optimized)
 }
 
 

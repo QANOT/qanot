@@ -40,7 +40,7 @@
   "routing_model": "claude-haiku-4-5",
   "routing_threshold": 0.3,
   "image_api_key": "",
-  "image_model": "gemini-2.0-flash-exp-image-generation",
+  "image_model": "gemini-3-pro-image-preview",
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",

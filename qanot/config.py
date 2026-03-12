@@ -91,7 +91,7 @@ class Config:
     routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
     # Image generation (Nano Banana / Gemini)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
-    image_model: str = "gemini-2.0-flash-exp-image-generation"  # Nano Banana model
+    image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro (highest quality)
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
