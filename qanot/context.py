@@ -1,4 +1,4 @@
-"""Context management — token tracking, 60% detection, compaction recovery."""
+"""Context management — token tracking, compaction, overflow prevention."""
 
 from __future__ import annotations
 
@@ -7,6 +7,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Safety margin: actual tokens can exceed estimates by ~20%
+SAFETY_MARGIN = 1.2
+# Compact when context exceeds this fraction of max
+COMPACTION_THRESHOLD = 0.70
+# After compaction, target this fraction
+COMPACTION_TARGET = 0.40
+# Working buffer activation threshold
+BUFFER_THRESHOLD = 0.60
+# Max chars to keep per tool result
+MAX_TOOL_RESULT_CHARS = 8_000
+
+
+def truncate_tool_result(result: str, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
+    """Truncate oversized tool results to prevent context bloat.
+
+    Keeps first 70% and last 20% with a truncation marker.
+    """
+    if len(result) <= max_chars:
+        return result
+    head = int(max_chars * 0.70)
+    tail = int(max_chars * 0.20)
+    removed = len(result) - head - tail
+    return (
+        result[:head]
+        + f"\n\n... [truncated {removed} chars] ...\n\n"
+        + result[-tail:]
+    )
 
 
 class ContextTracker:
@@ -17,23 +45,90 @@ class ContextTracker:
         self.workspace_dir = Path(workspace_dir)
         self.total_input = 0
         self.total_output = 0
+        self.turn_count = 0
         self.buffer_active = False
         self._buffer_started: str | None = None
+        # Track the last prompt_tokens (what the API actually saw)
+        self.last_prompt_tokens = 0
 
     @property
     def total_tokens(self) -> int:
         return self.total_input + self.total_output
 
     def get_context_percent(self) -> float:
-        """Get current context usage as a percentage."""
+        """Get current context usage as a percentage.
+
+        Uses last_prompt_tokens (actual context window usage) if available,
+        otherwise estimates from cumulative input tokens.
+        """
         if self.max_tokens == 0:
             return 0.0
-        return (self.total_input / self.max_tokens) * 100.0
+        # Use actual prompt tokens from last API call — this is the real
+        # context window usage (includes all messages + system prompt)
+        tokens = self.last_prompt_tokens if self.last_prompt_tokens > 0 else self.total_input
+        return (tokens / self.max_tokens) * 100.0
 
     def add_usage(self, input_tokens: int, output_tokens: int) -> None:
         """Record token usage from a provider response."""
         self.total_input += input_tokens
         self.total_output += output_tokens
+        self.turn_count += 1
+        # input_tokens from the API IS the actual prompt size (all messages + system)
+        self.last_prompt_tokens = input_tokens
+
+    def needs_compaction(self) -> bool:
+        """Check if context needs proactive compaction before next API call.
+
+        Returns True if estimated next-turn context would exceed threshold.
+        """
+        if self.max_tokens == 0:
+            return False
+        # Estimate next turn: current prompt + avg output per turn
+        avg_output = self.total_output / max(self.turn_count, 1)
+        estimated_next = self.last_prompt_tokens + avg_output
+        # Apply safety margin for estimation error
+        return (estimated_next * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
+
+    def compact_messages(self, messages: list[dict]) -> list[dict]:
+        """Compact conversation history to reduce context usage.
+
+        Strategy: Keep system context (first 2 messages) and recent messages,
+        summarize the middle. This is a simple truncation-based approach —
+        a production system would use LLM-generated summaries.
+        """
+        if len(messages) <= 6:
+            return messages  # Too few to compact
+
+        # Calculate how many messages to keep
+        # Keep first 2 (initial context) + last 4 (recent context)
+        keep_recent = min(4, len(messages) // 2)
+        keep_start = 2
+
+        head = messages[:keep_start]
+        tail = messages[-keep_recent:]
+        removed_count = len(messages) - keep_start - keep_recent
+
+        # Build a summary marker
+        summary_msg = {
+            "role": "user",
+            "content": (
+                f"[CONTEXT COMPACTION: {removed_count} earlier messages were removed "
+                f"to free context space. Recent conversation preserved below. "
+                f"Check your workspace files (SESSION-STATE.md, memory/) for "
+                f"any important context from earlier in the conversation.]"
+            ),
+        }
+
+        compacted = head + [summary_msg] + tail
+        logger.info(
+            "Compacted conversation: %d → %d messages (removed %d)",
+            len(messages), len(compacted), removed_count,
+        )
+
+        # Reset prompt token estimate after compaction
+        self.last_prompt_tokens = int(self.last_prompt_tokens * COMPACTION_TARGET / COMPACTION_THRESHOLD)
+
+        return compacted
 
     def check_threshold(self) -> bool:
         """Check if we've crossed 60% context threshold.
@@ -41,7 +136,7 @@ class ContextTracker:
         Returns True if we just crossed the threshold (first time).
         """
         pct = self.get_context_percent()
-        if pct >= 60.0 and not self.buffer_active:
+        if pct >= (BUFFER_THRESHOLD * 100) and not self.buffer_active:
             self.buffer_active = True
             self._buffer_started = datetime.now(timezone.utc).isoformat()
             self._init_working_buffer()
@@ -103,7 +198,8 @@ class ContextTracker:
             lower = text.lower()
             if any(marker in lower for marker in [
                 "<summary>", "truncated", "context limits",
-                "where were we", "continue where", "what were we doing",
+                "context compaction", "where were we",
+                "continue where", "what were we doing",
             ]):
                 return True
 
@@ -152,4 +248,6 @@ class ContextTracker:
             "max_tokens": self.max_tokens,
             "buffer_active": self.buffer_active,
             "buffer_started": self._buffer_started,
+            "turn_count": self.turn_count,
+            "last_prompt_tokens": self.last_prompt_tokens,
         }

@@ -15,11 +15,25 @@ class PluginConfig:
 
 
 @dataclass
+class ProviderConfig:
+    """Configuration for a single LLM provider profile."""
+    name: str
+    provider: str  # "anthropic", "openai", "gemini", "groq"
+    model: str
+    api_key: str
+    base_url: str = ""
+
+
+@dataclass
 class Config:
     bot_token: str = ""
-    provider: str = "anthropic"  # "anthropic" or "openai"
-    model: str = "claude-sonnet-4-5-20250514"
+    # Legacy single-provider fields (still supported)
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-4-20250514"
     api_key: str = ""
+    # Multi-provider support
+    providers: list[ProviderConfig] = field(default_factory=list)
+    # Paths
     soul_path: str = "/data/workspace/SOUL.md"
     tools_path: str = "/data/workspace/TOOLS.md"
     plugins: list[PluginConfig] = field(default_factory=list)
@@ -42,10 +56,10 @@ class Config:
 
 
 def load_config(path: str | None = None) -> Config:
+    """Load configuration from JSON file."""
     if path is None:
         import os
         path = os.environ.get("QANOT_CONFIG", "/data/config.json")
-    """Load configuration from JSON file."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -63,11 +77,23 @@ def load_config(path: str | None = None) -> Config:
                 config=pl.get("config", {}),
             ))
 
+    # Parse multi-provider configs
+    provider_configs = []
+    for pc in raw.get("providers", []):
+        provider_configs.append(ProviderConfig(
+            name=pc.get("name", pc.get("provider", "default")),
+            provider=pc["provider"],
+            model=pc["model"],
+            api_key=pc["api_key"],
+            base_url=pc.get("base_url", ""),
+        ))
+
     return Config(
         bot_token=raw.get("bot_token", ""),
         provider=raw.get("provider", "anthropic"),
-        model=raw.get("model", "claude-sonnet-4-5-20250514"),
+        model=raw.get("model", "claude-sonnet-4-20250514"),
         api_key=raw.get("api_key", ""),
+        providers=provider_configs,
         soul_path=raw.get("soul_path", "/data/workspace/SOUL.md"),
         tools_path=raw.get("tools_path", "/data/workspace/TOOLS.md"),
         plugins=plugins,

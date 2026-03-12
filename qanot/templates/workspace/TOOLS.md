@@ -1,42 +1,40 @@
-# TOOLS.md - Tool Configuration & Notes
+# TOOLS.md - Local Notes
 
-> Document tool-specific configurations, gotchas, and credentials here.
-
----
-
-## Built-in Tools
-
-**Status:** All working
-
-### File Operations
-- `read_file` — Read a file from workspace
-- `write_file` — Write/create a file
-- `list_files` — List directory contents
-
-### System
-- `run_command` — Run sandboxed shell commands (python3, curl, ffmpeg, zip, git, pip)
-- `web_search` — Search the web via DuckDuckGo
-- `memory_search` — Search across memory files
-
-### Session
-- `session_status` — Check context usage, token count
-
-### Scheduling
-- `cron_create` — Create a scheduled job
-- `cron_list` — List all scheduled jobs
-- `cron_update` — Update a scheduled job
-- `cron_delete` — Delete a scheduled job
-
----
+Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
 
 ## What Goes Here
 
-- Tool configurations and settings
-- Credential locations (not the credentials themselves!)
-- Gotchas and workarounds discovered
-- Common commands and patterns
-- Integration notes
+Things like:
+
+- Camera names and locations
+- SSH hosts and aliases
+- Preferred voices for TTS
+- Speaker/room names
+- Device nicknames
+- Anything environment-specific
+
+## Examples
+
+```markdown
+### Cameras
+
+- living-room → Main area, 180° wide angle
+- front-door → Entrance, motion-triggered
+
+### SSH
+
+- home-server → 192.168.1.100, user: admin
+
+### TTS
+
+- Preferred voice: "Nova" (warm, slightly British)
+- Default speaker: Kitchen HomePod
+```
+
+## Why Separate?
+
+Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
 
 ---
 
-*Add whatever helps you do your job. This is your cheat sheet.*
+Add whatever helps you do your job. This is your cheat sheet.

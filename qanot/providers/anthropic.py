@@ -15,18 +15,34 @@ logger = logging.getLogger(__name__)
 
 # Pricing per million tokens (as of 2025)
 PRICING = {
-    "claude-sonnet-4-5-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
     "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
 
 
+def _is_oauth_token(api_key: str) -> bool:
+    """Check if the API key is an Anthropic OAuth token."""
+    return "sk-ant-oat" in api_key
+
+
 class AnthropicProvider(LLMProvider):
     """Claude provider using the Anthropic API."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-5-20250514"):
-        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+        self._is_oauth = _is_oauth_token(api_key)
+        client_kwargs: dict[str, Any] = {}
+        if self._is_oauth:
+            # OAuth tokens use Bearer auth (auth_token), not x-api-key
+            client_kwargs["auth_token"] = api_key
+            client_kwargs["default_headers"] = {
+                "anthropic-beta": "oauth-2025-04-20",
+            }
+            logger.info("Using Anthropic OAuth token — Bearer auth + beta headers enabled")
+        else:
+            client_kwargs["api_key"] = api_key
+        self.client = anthropic.AsyncAnthropic(**client_kwargs)
         self.model = model
 
     def _calc_cost(self, usage: dict) -> float:

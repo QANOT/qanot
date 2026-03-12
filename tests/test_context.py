@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from qanot.context import ContextTracker
+from qanot.context import ContextTracker, truncate_tool_result
 
 
 class TestContextTracker:
@@ -21,18 +21,30 @@ class TestContextTracker:
         assert ct.total_output == 500
         assert ct.total_tokens == 1500
 
-    def test_context_percent(self):
+    def test_context_percent_uses_last_prompt_tokens(self):
         ct = ContextTracker(max_tokens=100_000)
         ct.add_usage(60_000, 0)
+        # last_prompt_tokens = 60_000 (the last call's input)
         assert ct.get_context_percent() == 60.0
+
+    def test_context_percent_tracks_real_prompt_size(self):
+        """Each API call reports the ACTUAL prompt size, not cumulative."""
+        ct = ContextTracker(max_tokens=100_000)
+        ct.add_usage(10_000, 500)  # Turn 1: 10K prompt
+        assert ct.last_prompt_tokens == 10_000
+        ct.add_usage(15_000, 600)  # Turn 2: 15K prompt (includes history)
+        assert ct.last_prompt_tokens == 15_000
+        assert ct.get_context_percent() == 15.0  # Based on last prompt
 
     def test_threshold_activates_at_60(self, tmp_path):
         ct = ContextTracker(max_tokens=100_000, workspace_dir=str(tmp_path))
-        ct.add_usage(59_000, 0)
+        # Simulate growing prompt tokens (as conversation builds up)
+        ct.add_usage(50_000, 0)
         assert ct.check_threshold() is False
         assert ct.buffer_active is False
 
-        ct.add_usage(1_000, 0)
+        # Prompt now exceeds 60%
+        ct.add_usage(60_000, 0)
         assert ct.check_threshold() is True
         assert ct.buffer_active is True
 
@@ -70,6 +82,7 @@ class TestContextTracker:
         assert ct.detect_compaction([{"content": "hello"}]) is False
         assert ct.detect_compaction([{"content": "<summary>old context</summary>"}]) is True
         assert ct.detect_compaction([{"content": "where were we?"}]) is True
+        assert ct.detect_compaction([{"content": "CONTEXT COMPACTION: 5 messages removed"}]) is True
 
     def test_recover_from_compaction(self, tmp_path):
         ct = ContextTracker(workspace_dir=str(tmp_path))
@@ -87,7 +100,58 @@ class TestContextTracker:
         assert status["total_tokens"] == 60_000
         assert status["context_percent"] == 25.0
         assert status["buffer_active"] is False
+        assert status["turn_count"] == 1
+        assert status["last_prompt_tokens"] == 50_000
 
     def test_zero_max_tokens(self):
         ct = ContextTracker(max_tokens=0)
         assert ct.get_context_percent() == 0.0
+
+    def test_needs_compaction(self):
+        ct = ContextTracker(max_tokens=100_000)
+        ct.add_usage(10_000, 1_000)
+        assert ct.needs_compaction() is False
+
+        # Simulate high context usage
+        ct.add_usage(65_000, 5_000)
+        assert ct.needs_compaction() is True
+
+    def test_compact_messages(self):
+        ct = ContextTracker(max_tokens=100_000)
+        messages = [
+            {"role": "user", "content": f"msg {i}"}
+            for i in range(10)
+        ]
+        compacted = ct.compact_messages(messages)
+        # Should keep first 2 + summary + last 4 = 7
+        assert len(compacted) == 7
+        # First message preserved
+        assert compacted[0]["content"] == "msg 0"
+        # Summary marker in middle
+        assert "CONTEXT COMPACTION" in compacted[2]["content"]
+        # Last messages preserved
+        assert compacted[-1]["content"] == "msg 9"
+
+    def test_compact_messages_too_few(self):
+        ct = ContextTracker(max_tokens=100_000)
+        messages = [{"role": "user", "content": "hello"}] * 5
+        compacted = ct.compact_messages(messages)
+        assert len(compacted) == 5  # Not compacted
+
+
+class TestTruncateToolResult:
+    def test_short_result_unchanged(self):
+        result = "short result"
+        assert truncate_tool_result(result) == result
+
+    def test_long_result_truncated(self):
+        result = "x" * 20_000
+        truncated = truncate_tool_result(result, max_chars=1_000)
+        assert len(truncated) < 20_000
+        assert "truncated" in truncated
+
+    def test_preserves_head_and_tail(self):
+        result = "HEAD" * 100 + "MIDDLE" * 1000 + "TAIL" * 100
+        truncated = truncate_tool_result(result, max_chars=1_000)
+        assert truncated.startswith("HEAD")
+        assert "TAIL" in truncated  # tail portion preserved

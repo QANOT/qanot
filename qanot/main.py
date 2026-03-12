@@ -26,22 +26,48 @@ logger = logging.getLogger("qanot")
 
 
 def _create_provider(config):
-    """Create LLM provider based on config."""
-    provider = config.provider
-    if provider == "anthropic":
+    """Create LLM provider based on config.
+
+    Supports two config formats:
+    1. Single provider: { "provider": "anthropic", "model": "...", "api_key": "..." }
+    2. Multi-provider: { "providers": [{ "name": "main", "provider": "anthropic", ... }, ...] }
+
+    When multiple providers are configured, creates a FailoverProvider that
+    automatically switches between them on errors.
+    """
+    # Multi-provider mode
+    if config.providers:
+        from qanot.providers.failover import FailoverProvider, ProviderProfile
+        profiles = []
+        for pc in config.providers:
+            profiles.append(ProviderProfile(
+                name=pc.name,
+                provider_type=pc.provider,
+                api_key=pc.api_key,
+                model=pc.model,
+                base_url=pc.base_url or None,
+            ))
+        provider = FailoverProvider(profiles)
+        names = [p.name for p in profiles]
+        logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(names))
+        return provider
+
+    # Single provider mode (backward compatible)
+    ptype = config.provider
+    if ptype == "anthropic":
         from qanot.providers.anthropic import AnthropicProvider
         return AnthropicProvider(api_key=config.api_key, model=config.model)
-    elif provider == "openai":
+    elif ptype == "openai":
         from qanot.providers.openai import OpenAIProvider
         return OpenAIProvider(api_key=config.api_key, model=config.model)
-    elif provider == "groq":
+    elif ptype == "groq":
         from qanot.providers.groq import GroqProvider
         return GroqProvider(api_key=config.api_key, model=config.model)
-    elif provider == "gemini":
+    elif ptype == "gemini":
         from qanot.providers.gemini import GeminiProvider
         return GeminiProvider(api_key=config.api_key, model=config.model)
     else:
-        raise ValueError(f"Unknown provider: {provider}")
+        raise ValueError(f"Unknown provider: {ptype}")
 
 
 async def main() -> None:

@@ -49,13 +49,14 @@ def build_system_prompt(
 
     Concatenation order (full mode):
     1. SOUL.md (identity, principles)
-    2. SKILL.md (proactive agent behaviors)
-    3. TOOLS.md (tool configurations)
-    4. AGENTS.md (operating rules)
-    5. SESSION-STATE.md (active context)
-    6. USER.md excerpt (human context)
-    7. HEARTBEAT.md (if heartbeat trigger)
-    8. SOUL_APPEND.md sections (plugin personality additions)
+    2. IDENTITY.md (agent name, vibe, emoji)
+    3. SKILL.md (proactive agent behaviors)
+    4. TOOLS.md (tool configurations)
+    5. AGENTS.md (operating rules)
+    6. SESSION-STATE.md (active context)
+    7. USER.md excerpt (human context)
+    8. BOOTSTRAP.md (first-run ritual, if exists)
+    9. SOUL_APPEND.md sections (plugin personality additions)
     """
     if mode == "none":
         return _IDENTITY_LINE
@@ -80,13 +81,16 @@ def build_system_prompt(
     _add(_read_file(ws / "SOUL.md"))
 
     if mode == "full":
-        # 2. SKILL.md (proactive agent skill)
+        # 2. IDENTITY.md (agent name, vibe, emoji)
+        _add(_read_file(ws / "IDENTITY.md"))
+
+        # 3. SKILL.md (proactive agent skill)
         if skill_path:
             _add(_read_file(Path(skill_path)))
         else:
             _add(_read_file(ws / "SKILL.md"))
 
-    # 3. TOOLS.md (included in both full and minimal)
+    # 4. TOOLS.md (included in both full and minimal)
     _add(_read_file(ws / "TOOLS.md"))
 
     if mode == "full":
@@ -94,21 +98,32 @@ def build_system_prompt(
         for p in sorted(ws.glob("*_TOOLS.md")):
             _add(_read_file(p))
 
-        # 4. AGENTS.md
+        # 5. AGENTS.md
         _add(_read_file(ws / "AGENTS.md"))
 
-        # 5. SESSION-STATE.md
+        # 6. SESSION-STATE.md
         state = _read_file(ws / "SESSION-STATE.md")
         if state:
             _add(f"# Current Session State\n\n{state}")
 
-        # 6. USER.md
+        # 7. USER.md
         _add(_read_file(ws / "USER.md"))
 
-        # 7. ONBOARDING.md — only include a short reminder, not the full file
-        onboarding = _read_file(ws / "ONBOARDING.md")
-        if onboarding and "state: complete" not in onboarding.lower():
-            _add("# Onboarding\nUser onboarding is pending. Ask user about themselves naturally during conversation.")
+        # 8. BOOTSTRAP.md — first-run ritual (only if it exists)
+        bootstrap = _read_file(ws / "BOOTSTRAP.md")
+        if bootstrap:
+            _add(bootstrap)
+
+    # Hardcoded behavioral rules (not in templates — cannot be overwritten by agent)
+    parts.append(
+        "## Tool Call Style\n"
+        "Default: do not narrate routine tool calls (just call the tool silently).\n"
+        "Narrate only when it helps: multi-step work, complex problems, or when the user explicitly asks.\n"
+        "NEVER mention internal file names (USER.md, IDENTITY.md, SOUL.md, MEMORY.md, SESSION-STATE.md, etc.) to the user.\n"
+        "NEVER say things like 'I am updating USER.md' or 'Let me save to IDENTITY.md'. The user does not know or care about these files.\n"
+        "When a tool call fails, retry silently or work around it. Never show error details about file operations to the user.\n"
+        "All internal bookkeeping is invisible. The user should only see natural conversation."
+    )
 
     # Session info (included in both full and minimal)
     now = datetime.now(timezone.utc)
