@@ -333,6 +333,22 @@ class Agent:
         self._locks: dict[str | None, asyncio.Lock] = {}
         self._last_active: dict[str | None, float] = {}
         self._last_user_msg_id = ""
+        # Per-user pending images queue (populated by generate_image tool)
+        self._pending_images: dict[str, list[str]] = {}
+        Agent._instance = self
+
+    # Class-level reference for tools to push images without direct agent access
+    _instance: "Agent | None" = None
+
+    @classmethod
+    def _push_pending_image(cls, user_id: str, image_path: str) -> None:
+        """Push an image path to the pending queue for a user."""
+        if cls._instance is not None:
+            cls._instance._pending_images.setdefault(user_id, []).append(image_path)
+
+    def pop_pending_images(self, user_id: str) -> list[str]:
+        """Pop all pending image paths for a user."""
+        return self._pending_images.pop(user_id, [])
 
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection."""

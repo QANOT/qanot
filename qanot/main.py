@@ -27,6 +27,18 @@ logging.basicConfig(
 logger = logging.getLogger("qanot")
 
 
+def _find_gemini_key(config) -> str | None:
+    """Find a Gemini API key from config (multi-provider or dedicated field)."""
+    # Check multi-provider configs
+    for pc in config.providers:
+        if pc.provider == "gemini" and pc.api_key:
+            return pc.api_key
+    # Check dedicated image_api_key
+    if config.image_api_key:
+        return config.image_api_key
+    return None
+
+
 def _create_provider(config):
     """Create LLM provider based on config.
 
@@ -156,6 +168,9 @@ async def main() -> None:
         register_web_tools(tool_registry, config.brave_api_key)
         logger.info("Web search enabled (Brave API)")
 
+    # Find Gemini API key for image generation (registered after agent creation)
+    gemini_api_key = _find_gemini_key(config)
+
     # Create session writer
     session = SessionWriter(config.sessions_dir)
 
@@ -200,6 +215,16 @@ async def main() -> None:
             asyncio.create_task(rag_indexer.index_text(content, source=source))
 
         add_write_hook(_on_memory_write)
+
+    # Register image generation tool (needs agent reference for pending images)
+    if gemini_api_key:
+        from qanot.tools.image import register_image_tools
+        register_image_tools(
+            tool_registry, gemini_api_key, config.workspace_dir,
+            model=config.image_model,
+            get_user_id=lambda: agent.current_user_id,
+        )
+        logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
     # Update scheduler with main agent
     scheduler.main_agent = agent

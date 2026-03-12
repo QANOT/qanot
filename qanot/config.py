@@ -89,6 +89,9 @@ class Config:
     routing_enabled: bool = False  # Route simple messages to cheaper model
     routing_model: str = "claude-haiku-4-5"  # Cheap model for simple messages
     routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
+    # Image generation (Nano Banana / Gemini)
+    image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
+    image_model: str = "gemini-2.0-flash-exp-image-generation"  # Nano Banana model
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
