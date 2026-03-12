@@ -146,25 +146,39 @@ class TelegramAdapter:
         if not text:
             return
 
+        user_id = str(user_id)
+
         async with self._concurrent:
-            # Send typing indicator
-            try:
-                await self.bot.send_chat_action(
-                    chat_id=message.chat.id,
-                    action=ChatAction.TYPING,
-                )
-            except Exception:
-                pass
+            # Start periodic typing indicator
+            typing_task = asyncio.create_task(
+                self._typing_loop(message.chat.id)
+            )
 
             # Run agent
             try:
-                response = await self.agent.run_turn(text)
+                response = await self.agent.run_turn(text, user_id=user_id)
             except Exception as e:
                 logger.error("Agent error: %s", e)
                 response = "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            finally:
+                typing_task.cancel()
 
             # Send response
             await self._send_response(message.chat.id, response)
+
+    async def _typing_loop(self, chat_id: int) -> None:
+        """Send typing indicator every 4 seconds until cancelled."""
+        try:
+            while True:
+                await self.bot.send_chat_action(
+                    chat_id=chat_id,
+                    action=ChatAction.TYPING,
+                )
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     async def _send_response(self, chat_id: int, text: str) -> None:
         """Send a response, splitting long messages."""

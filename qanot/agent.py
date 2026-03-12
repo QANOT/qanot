@@ -81,8 +81,16 @@ class Agent:
             max_tokens=config.max_context_tokens,
             workspace_dir=config.workspace_dir,
         )
-        self.messages: list[dict] = []
+        # Per-user conversation histories keyed by user_id.
+        # None key is used for non-user contexts (cron jobs, etc.)
+        self._conversations: dict[str | None, list[dict]] = {}
         self._last_user_msg_id = ""
+
+    def _get_messages(self, user_id: str | None = None) -> list[dict]:
+        """Get or create conversation history for a user."""
+        if user_id not in self._conversations:
+            self._conversations[user_id] = []
+        return self._conversations[user_id]
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt from workspace files."""
@@ -95,11 +103,17 @@ class Agent:
             total_tokens=self.context.total_tokens,
         )
 
-    async def run_turn(self, user_message: str) -> str:
+    async def run_turn(self, user_message: str, user_id: str | None = None) -> str:
         """Process a user message through the agent loop.
+
+        Args:
+            user_message: The user's text input.
+            user_id: Unique user identifier for conversation isolation.
 
         Returns the final text response.
         """
+        messages = self._get_messages(user_id)
+
         # WAL Protocol: scan user message BEFORE generating response
         wal_entries = wal_scan(user_message)
         if wal_entries:
@@ -107,14 +121,14 @@ class Agent:
             logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
 
         # Check for compaction recovery
-        if self.context.detect_compaction(self.messages):
+        if self.context.detect_compaction(messages):
             recovery = self.context.recover_from_compaction()
             if recovery:
                 user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
                 logger.info("Compaction recovery injected")
 
         # Add user message to conversation
-        self.messages.append({
+        messages.append({
             "role": "user",
             "content": user_message,
         })
@@ -130,7 +144,7 @@ class Agent:
 
             # Call LLM
             response = await self.provider.chat(
-                messages=self.messages,
+                messages=messages,
                 tools=tool_defs if tool_defs else None,
                 system=system,
             )
@@ -159,7 +173,7 @@ class Agent:
                         "input": tc.input,
                     })
 
-                self.messages.append({
+                messages.append({
                     "role": "assistant",
                     "content": assistant_content,
                 })
@@ -186,7 +200,7 @@ class Agent:
                     })
 
                 # Add tool results as user message
-                self.messages.append({
+                messages.append({
                     "role": "user",
                     "content": tool_results,
                 })
@@ -195,7 +209,7 @@ class Agent:
                 final_text = response.content
 
                 # Add assistant response to messages
-                self.messages.append({
+                messages.append({
                     "role": "assistant",
                     "content": response.content,
                 })
@@ -223,7 +237,7 @@ class Agent:
             else:
                 # Unknown stop reason
                 final_text = response.content or "(No response)"
-                self.messages.append({
+                messages.append({
                     "role": "assistant",
                     "content": final_text,
                 })
@@ -234,9 +248,12 @@ class Agent:
 
         return final_text
 
-    def reset(self) -> None:
-        """Reset conversation state."""
-        self.messages.clear()
+    def reset(self, user_id: str | None = None) -> None:
+        """Reset conversation state for a user, or all if user_id is None."""
+        if user_id is not None:
+            self._conversations.pop(user_id, None)
+        else:
+            self._conversations.clear()
 
 
 async def spawn_isolated_agent(
