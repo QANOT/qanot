@@ -243,7 +243,7 @@ class Agent:
             mode=self.prompt_mode,
         )
 
-    async def _prepare_turn(self, user_message: str, messages: list[dict]) -> str:
+    async def _prepare_turn(self, user_message: str, messages: list[dict], *, images: list[dict] | None = None) -> str:
         """Shared turn setup: WAL scan, RAG context, compaction recovery, add user message.
 
         Returns the (possibly modified) user_message.
@@ -284,8 +284,13 @@ class Agent:
                 user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
                 logger.info("Compaction recovery injected")
 
-        # Add user message to conversation
-        messages.append({"role": "user", "content": user_message})
+        # Add user message to conversation (with images if present)
+        if images:
+            content: list[dict] = [{"type": "text", "text": user_message}]
+            content.extend(images)
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": user_message})
 
         # Log to session
         self._last_user_msg_id = self.session.log_user_message(user_message)
@@ -452,23 +457,24 @@ class Agent:
 
         raise last_error  # Should not reach here
 
-    async def run_turn(self, user_message: str, user_id: str | None = None) -> str:
+    async def run_turn(self, user_message: str, user_id: str | None = None, images: list[dict] | None = None) -> str:
         """Process a user message through the agent loop.
 
         Args:
             user_message: The user's text input.
             user_id: Unique user identifier for conversation isolation.
+            images: Optional list of Anthropic-style image blocks.
 
         Returns the final text response.
         """
         async with self._get_lock(user_id):
-            return await self._run_turn_impl(user_message, user_id)
+            return await self._run_turn_impl(user_message, user_id, images=images)
 
-    async def _run_turn_impl(self, user_message: str, user_id: str | None) -> str:
+    async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None) -> str:
         """Internal implementation of run_turn (called under lock)."""
         self._current_user_id = user_id or ""
         messages = self._get_messages(user_id)
-        user_message = await self._prepare_turn(user_message, messages)
+        user_message = await self._prepare_turn(user_message, messages, images=images)
 
         final_text = ""
         recent_fingerprints: list[str] = []
@@ -525,7 +531,7 @@ class Agent:
         return final_text
 
     async def run_turn_stream(
-        self, user_message: str, user_id: str | None = None
+        self, user_message: str, user_id: str | None = None, images: list[dict] | None = None
     ) -> AsyncIterator[StreamEvent]:
         """Process a user message with streaming.
 
@@ -535,16 +541,16 @@ class Agent:
         iteration are yielded as they arrive.
         """
         async with self._get_lock(user_id):
-            async for event in self._run_turn_stream_impl(user_message, user_id):
+            async for event in self._run_turn_stream_impl(user_message, user_id, images=images):
                 yield event
 
     async def _run_turn_stream_impl(
-        self, user_message: str, user_id: str | None
+        self, user_message: str, user_id: str | None, *, images: list[dict] | None = None
     ) -> AsyncIterator[StreamEvent]:
         """Internal streaming implementation (called under lock)."""
         self._current_user_id = user_id or ""
         messages = self._get_messages(user_id)
-        user_message = await self._prepare_turn(user_message, messages)
+        user_message = await self._prepare_turn(user_message, messages, images=images)
 
         recent_fingerprints: list[str] = []
 

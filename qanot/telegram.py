@@ -158,8 +158,14 @@ class TelegramAdapter:
                 )
                 return
 
+        # Photo → download, base64 encode for vision models
+        images: list[dict] = []
         if message.photo:
-            text = f"[Photo received] {text}".strip()
+            image_data = await self._download_photo(message)
+            if image_data:
+                images.append(image_data)
+                if not text:
+                    text = "Bu rasmni tahlil qiling."  # "Analyze this image"
 
         if message.document:
             fname = message.document.file_name or "file"
@@ -182,11 +188,11 @@ class TelegramAdapter:
             mode = self.config.response_mode
             try:
                 if mode == "stream":
-                    await self._respond_stream(message.chat.id, str(user_id), text)
+                    await self._respond_stream(message.chat.id, str(user_id), text, images=images)
                 elif mode == "partial":
-                    await self._respond_partial(message.chat.id, str(user_id), text)
+                    await self._respond_partial(message.chat.id, str(user_id), text, images=images)
                 else:
-                    await self._respond_blocked(message.chat.id, str(user_id), text)
+                    await self._respond_blocked(message.chat.id, str(user_id), text, images=images)
 
                 # Send TTS voice reply if configured
                 should_tts = (
@@ -210,6 +216,52 @@ class TelegramAdapter:
                         message.chat.id,
                         "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
                     )
+
+    # ── Image processing ────────────────────────────────────
+
+    async def _download_photo(self, message: Message) -> dict | None:
+        """Download photo from Telegram, return Anthropic-style image block."""
+        import base64
+        from io import BytesIO
+
+        try:
+            # Telegram provides multiple sizes, pick the largest
+            photo = message.photo[-1]
+            buf = BytesIO()
+            await self.bot.download(photo, destination=buf)
+            buf.seek(0)
+            raw = buf.read()
+
+            # Detect MIME type from magic bytes
+            if raw[:3] == b'\xff\xd8\xff':
+                media_type = "image/jpeg"
+            elif raw[:8] == b'\x89PNG\r\n\x1a\n':
+                media_type = "image/png"
+            elif raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
+                media_type = "image/webp"
+            elif raw[:3] == b'GIF':
+                media_type = "image/gif"
+            else:
+                media_type = "image/jpeg"
+
+            b64 = base64.b64encode(raw).decode("ascii")
+
+            logger.info(
+                "Photo downloaded: %d bytes, %s, %dx%d",
+                len(raw), media_type, photo.width, photo.height,
+            )
+
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": b64,
+                },
+            }
+        except Exception as e:
+            logger.error("Photo download failed: %s", e)
+            return None
 
     # ── Voice processing ────────────────────────────────────
 
@@ -352,7 +404,7 @@ class TelegramAdapter:
 
     # ── Response strategies ──────────────────────────────────
 
-    async def _respond_stream(self, chat_id: int, user_id: str, text: str) -> None:
+    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
         """Stream response via sendMessageDraft → sendMessage.
 
         Handles race conditions between draft updates and tool execution:
@@ -369,7 +421,7 @@ class TelegramAdapter:
         drafting_paused = False
 
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images):
                 if event.type == "text_delta" and not drafting_paused:
                     accumulated += event.text
                     now = asyncio.get_event_loop().time()
@@ -402,7 +454,7 @@ class TelegramAdapter:
         final_text = accumulated or "(No response)"
         await self._send_final(chat_id, final_text)
 
-    async def _respond_partial(self, chat_id: int, user_id: str, text: str) -> None:
+    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         accumulated = ""
@@ -410,7 +462,7 @@ class TelegramAdapter:
         interval = self.config.stream_flush_interval
         sent_msg_id: int | None = None
 
-        async for event in self.agent.run_turn_stream(text, user_id=user_id):
+        async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images):
             if event.type == "text_delta":
                 accumulated += event.text
                 now = asyncio.get_event_loop().time()
@@ -457,11 +509,11 @@ class TelegramAdapter:
         else:
             await self._send_final(chat_id, final_text)
 
-    async def _respond_blocked(self, chat_id: int, user_id: str, text: str) -> None:
+    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None) -> None:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
-            response = await self.agent.run_turn(text, user_id=user_id)
+            response = await self.agent.run_turn(text, user_id=user_id, images=images)
         finally:
             typing_task.cancel()
         await self._send_final(chat_id, response or "(No response)")

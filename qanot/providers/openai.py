@@ -51,11 +51,22 @@ def _convert_messages(messages: list[dict], system: str | None) -> list[dict]:
             if isinstance(content, str):
                 result.append({"role": "user", "content": content})
             elif isinstance(content, list):
-                parts = []
+                parts: list[dict | str] = []
+                has_images = False
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "text":
-                            parts.append(block["text"])
+                            parts.append(block)
+                        elif block.get("type") == "image":
+                            # Convert Anthropic image block → OpenAI image_url
+                            source = block.get("source", {})
+                            if source.get("type") == "base64":
+                                data_uri = f"data:{source['media_type']};base64,{source['data']}"
+                                parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                })
+                                has_images = True
                         elif block.get("type") == "tool_result":
                             result.append({
                                 "role": "tool",
@@ -64,7 +75,19 @@ def _convert_messages(messages: list[dict], system: str | None) -> list[dict]:
                             })
                             continue
                 if parts:
-                    result.append({"role": "user", "content": "\n".join(parts)})
+                    if has_images:
+                        # Multi-modal content: keep as list of content parts
+                        content_parts = []
+                        for p in parts:
+                            if isinstance(p, dict) and p.get("type") == "text":
+                                content_parts.append({"type": "text", "text": p["text"]})
+                            elif isinstance(p, dict):
+                                content_parts.append(p)
+                        result.append({"role": "user", "content": content_parts})
+                    else:
+                        # Text-only: join as string
+                        text_parts_str = [p["text"] for p in parts if isinstance(p, dict) and p.get("type") == "text"]
+                        result.append({"role": "user", "content": "\n".join(text_parts_str)})
 
         elif role == "assistant":
             if isinstance(content, str):
