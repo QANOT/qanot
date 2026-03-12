@@ -35,6 +35,23 @@ HEARTBEAT_PROMPT = (
     "- Keep reports concise — what you found, what you fixed, recommendations.\n"
 )
 
+# Daily briefing prompt
+BRIEFING_PROMPT = (
+    "DAILY BRIEFING: Create a concise morning summary for the owner.\n\n"
+    "Steps:\n"
+    "1. Read yesterday's and today's daily notes in memory/\n"
+    "2. Read SESSION-STATE.md for active context\n"
+    "3. Read MEMORY.md for important long-term facts\n"
+    "4. Check if any cron jobs ran overnight (list_files in the sessions dir)\n\n"
+    "Write a briefing to proactive-outbox.md with:\n"
+    "- **Pending tasks** from yesterday that weren't completed\n"
+    "- **Key events** — what happened in recent conversations\n"
+    "- **Reminders** — upcoming scheduled items or deadlines mentioned\n"
+    "- **Suggestions** — one actionable recommendation based on patterns\n\n"
+    "Keep it SHORT (under 500 chars). Use bullet points.\n"
+    "If there's truly nothing to report (no notes, no tasks), respond with: HEARTBEAT_OK\n"
+)
+
 
 class CronScheduler:
     """Manages scheduled cron jobs using APScheduler with self-healing."""
@@ -80,18 +97,31 @@ class CronScheduler:
                 return []
         return []
 
-    def _ensure_heartbeat(self, jobs: list[dict]) -> list[dict]:
-        """Ensure heartbeat job exists in the job list."""
+    def _ensure_builtin_jobs(self, jobs: list[dict]) -> list[dict]:
+        """Ensure heartbeat and briefing jobs exist in the job list."""
+        changed = False
+
         if not any(j["name"] == "heartbeat" for j in jobs):
-            heartbeat_job = {
+            jobs.append({
                 "name": "heartbeat",
                 "schedule": self.config.heartbeat_interval,
                 "mode": "isolated",
                 "prompt": HEARTBEAT_PROMPT,
                 "enabled": self.config.heartbeat_enabled,
-            }
-            jobs.append(heartbeat_job)
-            # Save back
+            })
+            changed = True
+
+        if not any(j["name"] == "briefing" for j in jobs):
+            jobs.append({
+                "name": "briefing",
+                "schedule": self.config.briefing_schedule,
+                "mode": "isolated",
+                "prompt": BRIEFING_PROMPT,
+                "enabled": self.config.briefing_enabled,
+            })
+            changed = True
+
+        if changed:
             self._jobs_path.parent.mkdir(parents=True, exist_ok=True)
             self._jobs_path.write_text(
                 json.dumps(jobs, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -101,7 +131,7 @@ class CronScheduler:
     def start(self) -> None:
         """Load jobs and start the scheduler."""
         jobs = self._load_jobs()
-        jobs = self._ensure_heartbeat(jobs)
+        jobs = self._ensure_builtin_jobs(jobs)
 
         for job in jobs:
             if not job.get("enabled", True):
@@ -178,8 +208,8 @@ class CronScheduler:
 
     async def _run_isolated(self, job_name: str, prompt: str, delete_after_run: bool = False) -> None:
         """Run an isolated agent for a cron job."""
-        # Skip heartbeat if user is currently active (avoid wasting tokens)
-        if job_name == "heartbeat" and not self._is_user_idle():
+        # Skip heartbeat/briefing if user is currently active (avoid wasting tokens)
+        if job_name in ("heartbeat", "briefing") and not self._is_user_idle():
             logger.info("Heartbeat skipped — user is active")
             return
 
@@ -255,7 +285,7 @@ class CronScheduler:
 
         # Re-add from file
         jobs = self._load_jobs()
-        jobs = self._ensure_heartbeat(jobs)
+        jobs = self._ensure_builtin_jobs(jobs)
         for job in jobs:
             if not job.get("enabled", True):
                 continue

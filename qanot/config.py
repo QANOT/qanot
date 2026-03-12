@@ -72,6 +72,9 @@ class Config:
     # Self-healing / heartbeat
     heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
     heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule
+    # Daily briefing
+    briefing_enabled: bool = True  # Enable/disable daily morning briefing
+    briefing_schedule: str = "0 8 * * *"  # Default: 8:00 AM daily
     # Memory injection budget
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
 

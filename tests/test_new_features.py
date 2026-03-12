@@ -1032,28 +1032,32 @@ class TestCronSchedulerJobs:
         jobs = sched._load_jobs()
         assert jobs == []
 
-    def test_ensure_heartbeat_adds_if_missing(self, tmp_path):
+    def test_ensure_builtin_jobs_adds_if_missing(self, tmp_path):
         config = make_config(tmp_path)
         cron_dir = tmp_path / "cron"
         cron_dir.mkdir(parents=True)
         (cron_dir / "jobs.json").write_text("[]")
 
         sched = CronScheduler(config=config, provider=MagicMock(), tool_registry=MagicMock())
-        jobs = sched._ensure_heartbeat([])
+        jobs = sched._ensure_builtin_jobs([])
         assert any(j["name"] == "heartbeat" for j in jobs)
+        assert any(j["name"] == "briefing" for j in jobs)
 
-    def test_ensure_heartbeat_no_duplicate(self, tmp_path):
+    def test_ensure_builtin_jobs_no_duplicate(self, tmp_path):
         config = make_config(tmp_path)
         cron_dir = tmp_path / "cron"
         cron_dir.mkdir(parents=True)
 
-        existing = [{"name": "heartbeat", "schedule": "*/30 * * * *", "mode": "isolated", "prompt": "test", "enabled": True}]
+        existing = [
+            {"name": "heartbeat", "schedule": "*/30 * * * *", "mode": "isolated", "prompt": "test", "enabled": True},
+            {"name": "briefing", "schedule": "0 8 * * *", "mode": "isolated", "prompt": "test", "enabled": True},
+        ]
         (cron_dir / "jobs.json").write_text(json.dumps(existing))
 
         sched = CronScheduler(config=config, provider=MagicMock(), tool_registry=MagicMock())
-        jobs = sched._ensure_heartbeat(existing)
-        heartbeats = [j for j in jobs if j["name"] == "heartbeat"]
-        assert len(heartbeats) == 1
+        jobs = sched._ensure_builtin_jobs(existing)
+        assert len([j for j in jobs if j["name"] == "heartbeat"]) == 1
+        assert len([j for j in jobs if j["name"] == "briefing"]) == 1
 
 
 # ── 9. Proactive Outbox ─────────────────────────────────────
