@@ -58,10 +58,16 @@ class Config:
     rag_mode: str = "auto"  # "auto" | "agentic" | "always"
     # Voice (Muxlisa.uz / KotibAI)
     voice_provider: str = "muxlisa"  # "muxlisa" | "kotib"
-    voice_api_key: str = ""
+    voice_api_key: str = ""  # Default API key (used if per-provider key not set)
+    voice_api_keys: dict[str, str] = field(default_factory=dict)  # Per-provider: {"muxlisa": "...", "kotib": "..."}
     voice_mode: str = "inbound"  # "off" | "inbound" | "always"
     voice_name: str = ""  # Voice name (maftuna/asomiddin for muxlisa, aziza/sherzod for kotib)
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
+
+    def get_voice_api_key(self, provider: str | None = None) -> str:
+        """Get API key for the given voice provider, with fallback to default."""
+        p = provider or self.voice_provider
+        return self.voice_api_keys.get(p, self.voice_api_key)
 
 
 def load_config(path: str | None = None) -> Config:
@@ -126,6 +132,7 @@ def load_config(path: str | None = None) -> Config:
         rag_mode=raw.get("rag_mode", "auto"),
         voice_provider=raw.get("voice_provider", "muxlisa"),
         voice_api_key=raw.get("voice_api_key", ""),
+        voice_api_keys=raw.get("voice_api_keys", {}),
         voice_mode=raw.get("voice_mode", "inbound"),
         voice_name=raw.get("voice_name", ""),
         voice_language=raw.get("voice_language", ""),

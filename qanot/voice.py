@@ -239,7 +239,7 @@ async def kotib_transcribe(
 
     data = aiohttp.FormData()
     data.add_field(
-        "audio",
+        "file",
         open(audio_path, "rb"),
         filename=os.path.basename(audio_path),
     )
@@ -259,7 +259,11 @@ async def kotib_transcribe(
                 raise RuntimeError(f"KotibAI STT error: {error}")
             if result.get("status") != "success":
                 raise RuntimeError(f"KotibAI STT failed: {result}")
-            return TranscriptionResult(text=result.get("text", ""), language=language)
+            text = result.get("text", "")
+            # Strip "Speaker N:" prefixes from diarization output
+            import re
+            text = re.sub(r"Speaker \d+:\s*", "", text).strip()
+            return TranscriptionResult(text=text, language=language)
 
 
 async def kotib_tts(

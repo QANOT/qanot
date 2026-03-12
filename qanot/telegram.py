@@ -145,8 +145,12 @@ class TelegramAdapter:
         text = message.text or message.caption or ""
         voice_request = False
 
-        # Voice message or video note → transcribe via KotibAI
+        # Voice message or video note → transcribe
         if is_voice and (message.voice or message.video_note):
+            # Show action immediately so user knows bot is processing
+            await self.bot.send_chat_action(
+                chat_id=message.chat.id, action=ChatAction.TYPING,
+            )
             transcript = await self._transcribe_voice(message)
             if transcript:
                 text = f"{transcript} {text}".strip()
@@ -199,7 +203,7 @@ class TelegramAdapter:
                     self.config.voice_mode == "always"
                     or (self.config.voice_mode == "inbound" and voice_request)
                 )
-                if should_tts and self.config.voice_api_key:
+                if should_tts and self.config.get_voice_api_key():
                     await self._send_voice_reply(message.chat.id, str(user_id))
 
             except Exception as e:
@@ -219,6 +223,55 @@ class TelegramAdapter:
 
     # ── Image processing ────────────────────────────────────
 
+    @staticmethod
+    def _downscale_image(raw: bytes, max_size: int = 4_000_000, max_dim: int = 1200) -> tuple[bytes, str]:
+        """Always downscale images to save vision tokens.
+
+        Claude charges ~1600 tokens for 1080x1080. Downscaling to 1200px max
+        keeps quality good enough for analysis while saving context.
+        Returns (image_bytes, media_type).
+        """
+        from PIL import Image
+        from io import BytesIO
+
+        img = Image.open(BytesIO(raw))
+        w, h = img.size
+
+        # Always resize if above max_dim (saves vision tokens)
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            new_w, new_h = int(w * ratio), int(h * ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            logger.info("Image downscaled: %dx%d → %dx%d", w, h, new_w, new_h)
+        elif len(raw) <= max_size:
+            # Small image, no resize needed — detect MIME and return as-is
+            if raw[:3] == b'\xff\xd8\xff':
+                return raw, "image/jpeg"
+            elif raw[:8] == b'\x89PNG\r\n\x1a\n':
+                return raw, "image/png"
+            elif raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
+                return raw, "image/webp"
+            elif raw[:3] == b'GIF':
+                return raw, "image/gif"
+            return raw, "image/jpeg"
+
+        # Convert to JPEG (smallest size, vision models don't need PNG fidelity)
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        out = BytesIO()
+        quality = 85
+        img.save(out, format="JPEG", quality=quality)
+
+        # If still too large, reduce quality
+        while out.tell() > max_size and quality > 30:
+            quality -= 15
+            out = BytesIO()
+            img.save(out, format="JPEG", quality=quality)
+
+        result = out.getvalue()
+        logger.info("Image compressed: %d → %d bytes (q=%d)", len(raw), len(result), quality)
+        return result, "image/jpeg"
+
     async def _download_photo(self, message: Message) -> dict | None:
         """Download photo from Telegram, return Anthropic-style image block."""
         import base64
@@ -232,17 +285,8 @@ class TelegramAdapter:
             buf.seek(0)
             raw = buf.read()
 
-            # Detect MIME type from magic bytes
-            if raw[:3] == b'\xff\xd8\xff':
-                media_type = "image/jpeg"
-            elif raw[:8] == b'\x89PNG\r\n\x1a\n':
-                media_type = "image/png"
-            elif raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
-                media_type = "image/webp"
-            elif raw[:3] == b'GIF':
-                media_type = "image/gif"
-            else:
-                media_type = "image/jpeg"
+            # Downscale if needed (handles oversized images safely)
+            raw, media_type = self._downscale_image(raw)
 
             b64 = base64.b64encode(raw).decode("ascii")
 
@@ -267,7 +311,7 @@ class TelegramAdapter:
 
     async def _transcribe_voice(self, message: Message) -> str | None:
         """Download and transcribe a voice message or video note."""
-        if not self.config.voice_api_key:
+        if not self.config.get_voice_api_key():
             logger.warning("Voice received but voice_api_key not configured")
             return None
 
@@ -311,7 +355,7 @@ class TelegramAdapter:
 
             result = await transcribe(
                 audio_path,
-                api_key=self.config.voice_api_key,
+                api_key=self.config.get_voice_api_key(),
                 provider=provider,
                 language=self.config.voice_language or None,
             )
@@ -356,12 +400,15 @@ class TelegramAdapter:
         if not last_text or len(last_text) > 5000:
             return
 
+        # Show "recording voice" action for better UX
+        voice_typing = asyncio.create_task(self._voice_action_loop(chat_id))
+
         provider = self.config.voice_provider
         cleanup_paths: list[str] = []
         try:
             result = await text_to_speech(
                 last_text,
-                api_key=self.config.voice_api_key,
+                api_key=self.config.get_voice_api_key(),
                 provider=provider,
                 language=self.config.voice_language or "uz",
                 voice=self.config.voice_name or None,
@@ -395,6 +442,7 @@ class TelegramAdapter:
         except Exception as e:
             logger.warning("TTS reply failed: %s", e)
         finally:
+            voice_typing.cancel()
             for path in cleanup_paths:
                 if path and os.path.exists(path):
                     try:
@@ -559,6 +607,19 @@ class TelegramAdapter:
             while True:
                 await self.bot.send_chat_action(
                     chat_id=chat_id, action=ChatAction.TYPING,
+                )
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _voice_action_loop(self, chat_id: int) -> None:
+        """Send 'recording voice' indicator every 4 seconds until cancelled."""
+        try:
+            while True:
+                await self.bot.send_chat_action(
+                    chat_id=chat_id, action=ChatAction.RECORD_VOICE,
                 )
                 await asyncio.sleep(4)
         except asyncio.CancelledError:

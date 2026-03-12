@@ -18,6 +18,10 @@
   "rag_enabled": true,
   "voice_provider": "muxlisa",
   "voice_api_key": "",
+  "voice_api_keys": {
+    "muxlisa": "",
+    "kotib": ""
+  },
   "voice_mode": "inbound",
   "voice_name": "",
   "voice_language": "",
