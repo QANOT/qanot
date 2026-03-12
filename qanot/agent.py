@@ -198,6 +198,8 @@ class ToolRegistry:
         handler: Callable[[dict], Awaitable[str]],
     ) -> None:
         """Register a tool with its handler."""
+        if name in self._tools:
+            logger.warning("Tool '%s' already registered — overriding", name)
         self._tools[name] = {
             "name": name,
             "description": description,
@@ -210,10 +212,21 @@ class ToolRegistry:
         return list(self._tools.values())
 
     async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
-        """Execute a tool by name with timeout protection."""
+        """Execute a tool by name with parameter validation and timeout protection."""
         handler = self._handlers.get(name)
         if not handler:
             return json.dumps({"error": f"Unknown tool: {name}"})
+
+        # Validate parameters against schema before execution
+        tool_def = self._tools.get(name, {})
+        schema = tool_def.get("input_schema", {})
+        if schema:
+            from qanot.plugins.base import validate_tool_params
+            errors = validate_tool_params(input_data, schema)
+            if errors:
+                logger.warning("Tool %s param validation: %s", name, errors)
+                return json.dumps({"error": f"Invalid parameters: {'; '.join(errors)}"})
+
         try:
             result = await asyncio.wait_for(handler(input_data), timeout=timeout)
             # Truncate oversized results

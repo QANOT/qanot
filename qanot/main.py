@@ -15,7 +15,7 @@ from qanot.telegram import TelegramAdapter
 from qanot.tools.builtin import register_builtin_tools
 from qanot.tools.cron import register_cron_tools
 from qanot.tools.workspace import init_workspace
-from qanot.plugins.loader import load_plugins
+from qanot.plugins.loader import load_plugins, shutdown_plugins
 
 logging.basicConfig(
     level=logging.INFO,
@@ -167,7 +167,12 @@ async def main() -> None:
         scheduler=scheduler,
     )
 
-    await telegram.start()
+    try:
+        await telegram.start()
+    finally:
+        await shutdown_plugins()
+        scheduler.stop()
+        logger.info("Qanot AI shut down")
 
 
 if __name__ == "__main__":
