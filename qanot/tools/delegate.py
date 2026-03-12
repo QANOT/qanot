@@ -197,6 +197,33 @@ def get_activity_log(user_id: str, limit: int = 20) -> list[dict]:
 _group_bot_cache: dict[str, object] = {}  # bot_token → aiogram.Bot
 
 
+def _get_agent_bot_token(config: "Config", agent_id: str) -> str:
+    """Get the bot token for an agent. Falls back to main bot token."""
+    for ad in config.agents:
+        if ad.id == agent_id and ad.bot_token:
+            return ad.bot_token
+    return config.bot_token
+
+
+def _get_agent_name(config: "Config", agent_id: str) -> str:
+    """Get human-readable name for an agent."""
+    if not agent_id or agent_id == "main":
+        return config.bot_name or "Main Bot"
+    for ad in config.agents:
+        if ad.id == agent_id:
+            return ad.name or ad.id
+    return agent_id
+
+
+async def _get_group_bot(config: "Config", agent_id: str):
+    """Get or create an aiogram Bot for posting to group as a specific agent."""
+    bot_token = _get_agent_bot_token(config, agent_id)
+    if bot_token not in _group_bot_cache:
+        from aiogram import Bot
+        _group_bot_cache[bot_token] = Bot(token=bot_token)
+    return _group_bot_cache[bot_token]
+
+
 async def _mirror_to_group(
     config: "Config",
     from_agent: str,
@@ -207,31 +234,29 @@ async def _mirror_to_group(
 ) -> None:
     """Mirror an agent interaction message to the monitoring group.
 
-    Uses the from_agent's own bot token if available, else the main bot token.
+    Posts as the from_agent's own bot (if it has a token), making it look
+    like a real chat between bots in the group.
     """
     monitor_group = getattr(config, "monitor_group_id", 0)
     if not monitor_group:
         return
 
-    # Find from_agent's bot token (for posting as that agent's bot)
-    bot_token = ""
-    for ad in config.agents:
-        if ad.id == from_agent and ad.bot_token:
-            bot_token = ad.bot_token
-            break
-    if not bot_token:
-        bot_token = config.bot_token
-
     try:
-        from aiogram import Bot
+        bot = await _get_group_bot(config, from_agent)
 
-        if bot_token not in _group_bot_cache:
-            _group_bot_cache[bot_token] = Bot(token=bot_token)
-        bot = _group_bot_cache[bot_token]
-
-        # Format message
-        agent_label = from_agent or "Main"
-        msg = f"<b>[{agent_label}]</b> → {to_agent}\n{text[:1500]}"
+        # Natural chat format — no ugly prefixes, just the message
+        # Only add a light header for delegate/converse start events
+        if direction == "delegate":
+            msg = f"📋 <i>{_get_agent_name(config, to_agent)}</i> ga vazifa:\n\n{text[:3000]}"
+        elif direction == "converse":
+            msg = f"💬 <i>{_get_agent_name(config, to_agent)}</i> bilan suhbat boshladim:\n\n{text[:3000]}"
+        elif direction == "result":
+            msg = text[:3500]
+        elif direction == "turn":
+            # Natural conversation turn — just the message content, no prefix
+            msg = text[:3500]
+        else:
+            msg = text[:3500]
 
         await bot.send_message(
             chat_id=monitor_group,
@@ -688,10 +713,10 @@ def register_delegate_tools(
         start = time.monotonic()
         logger.info("Delegating to '%s' (depth=%d) for user %s: %s", agent_id, depth, user_id, task[:80])
 
-        # Mirror to monitoring group if configured
+        # Mirror task to monitoring group — posted by requester's bot
         await _mirror_to_group(
             config, caller_agent_id or "main", agent_id,
-            f"📋 Task: {task[:300]}", direction="delegate",
+            task[:3000], direction="delegate",
         )
 
         try:
@@ -718,10 +743,10 @@ def register_delegate_tools(
                 detail=f"{elapsed:.1f}s, {len(result)} chars",
             )
 
-            # Mirror result to monitoring group
+            # Mirror result to monitoring group — posted by the AGENT's bot
             await _mirror_to_group(
                 config, agent_id, caller_agent_id or "main",
-                f"✅ Result: {result[:500]}", direction="result",
+                result[:3000], direction="result",
             )
 
             logger.info("Delegation to '%s' completed in %.1fs", agent_id, elapsed)
@@ -827,10 +852,10 @@ def register_delegate_tools(
             agent_id, max_turns, user_id,
         )
 
-        # Mirror to monitoring group
+        # Mirror first message to group — posted by the REQUESTER bot
         await _mirror_to_group(
             config, caller_agent_id or "main", agent_id,
-            f"💬 Conversation started: {message[:300]}", direction="converse",
+            message[:3000], direction="converse",
         )
 
         # Turn 1: send initial message to agent
@@ -888,10 +913,12 @@ def register_delegate_tools(
                     task=message, detail=f"{turn}/{max_turns}",
                 )
 
-                # Mirror turn to group
+                # Mirror agent's response to group — posted by the AGENT's bot
+                # This makes it look like a real chat: Bot A writes, Bot B responds
+                await asyncio.sleep(0.5)  # Small delay for natural feel
                 await _mirror_to_group(
                     config, agent_id, caller_agent_id or "main",
-                    f"🔁 Turn {turn}: {result[:400]}", direction="turn",
+                    result[:3000], direction="turn",
                 )
 
                 logger.debug("Ping-pong turn %d/%d with '%s'", turn, max_turns, agent_id)
@@ -901,10 +928,11 @@ def register_delegate_tools(
                     break
 
                 # For next turn, the result becomes the context
-                # (the calling agent would normally respond, but in our model
-                # we let the LLM continue the conversation naturally)
                 if turn < max_turns:
                     current_message = result
+                    # Mirror the requester's next message (which is the agent's
+                    # previous response being relayed back) — skip this to avoid
+                    # duplicate messages in group since the agent already posted
 
             elapsed = time.monotonic() - start
 
