@@ -1,4 +1,11 @@
-"""Voice processing — KotibAI STT/TTS integration for Telegram voice messages."""
+"""Voice processing — Muxlisa.uz and KotibAI STT/TTS for Telegram voice messages.
+
+Supports two providers:
+  - muxlisa (default): Native OGG support, no ffmpeg needed for STT, Uzbek dialects
+  - kotib: 6 TTS voices, auto language detection
+
+Provider is selected via config.voice_provider ("muxlisa" | "kotib").
+"""
 
 from __future__ import annotations
 
@@ -12,6 +19,8 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+MUXLISA_BASE_URL = "https://service.muxlisa.uz/api/v2"
+MUXLISA_ASYNC_URL = "https://service.muxlisa.uz/api/v1/async"
 KOTIB_BASE_URL = "https://developer.kotib.ai/api/v1"
 
 
@@ -27,7 +36,8 @@ class TranscriptionResult:
 class TTSResult:
     """Result from text-to-speech."""
 
-    audio_url: str
+    audio_data: bytes | None = None  # Raw audio bytes (Muxlisa returns WAV directly)
+    audio_url: str = ""  # Audio URL (KotibAI returns URL)
     character_count: int = 0
 
 
@@ -71,24 +81,160 @@ async def convert_video_to_mp3(video_path: str) -> str:
     return mp3_path
 
 
-# ── KotibAI STT ──────────────────────────────────────────
+async def convert_video_to_ogg(video_path: str) -> str:
+    """Extract audio from video note (MP4) to OGG for Muxlisa."""
+    ogg_path = video_path.rsplit(".", 1)[0] + ".ogg"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-i", video_path,
+        "-vn",
+        "-codec:a", "libopus",
+        "-b:a", "32k",
+        ogg_path,
+        "-y",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg extraction failed: {stderr.decode()[:200]}")
+    return ogg_path
 
 
-async def transcribe(
+async def convert_wav_to_ogg(wav_path: str) -> str:
+    """Convert WAV to OGG Opus for Telegram voice messages."""
+    ogg_path = wav_path.rsplit(".", 1)[0] + ".ogg"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-i", wav_path,
+        "-codec:a", "libopus",
+        "-b:a", "32k",
+        ogg_path,
+        "-y",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg WAV→OGG failed: {stderr.decode()[:200]}")
+    return ogg_path
+
+
+# ══════════════════════════════════════════════════════════
+# Muxlisa.uz Provider (default)
+# ══════════════════════════════════════════════════════════
+
+
+async def muxlisa_transcribe(
+    audio_path: str,
+    api_key: str,
+) -> TranscriptionResult:
+    """Transcribe audio using Muxlisa.uz STT API.
+
+    Supports OGG natively — no conversion needed for Telegram voice messages.
+    Also supports: WAV, MP3, FLAC, M4A, AAC, MP4, WebM, AMR.
+    """
+    headers = {"x-api-key": api_key}
+
+    data = aiohttp.FormData()
+    data.add_field(
+        "audio",
+        open(audio_path, "rb"),
+        filename=os.path.basename(audio_path),
+    )
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{MUXLISA_BASE_URL}/stt",
+            headers=headers,
+            data=data,
+        ) as resp:
+            if resp.status == 402:
+                raise RuntimeError("Muxlisa STT: balance depleted (402)")
+            if resp.status == 429:
+                raise RuntimeError("Muxlisa STT: rate limit exceeded (40 req/min)")
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Muxlisa STT error: HTTP {resp.status} — {body[:200]}")
+
+            result = await resp.json()
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            return TranscriptionResult(text=text)
+
+
+# Muxlisa TTS voices
+MUXLISA_VOICES = {
+    "maftuna": 0,  # Female, Uzbek
+    "asomiddin": 1,  # Male, Uzbek
+}
+
+
+async def muxlisa_tts(
+    text: str,
+    api_key: str,
+    voice: str | None = None,
+) -> TTSResult:
+    """Convert text to speech using Muxlisa.uz TTS API.
+
+    Returns WAV audio bytes directly (no URL to download).
+    """
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    # Resolve speaker ID (0=female, 1=male)
+    speaker = 0
+    if voice:
+        speaker = MUXLISA_VOICES.get(voice.lower(), 0)
+        if isinstance(voice, str) and voice.isdigit():
+            speaker = int(voice)
+
+    payload = {
+        "text": text[:5000],
+        "speaker": speaker,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{MUXLISA_BASE_URL}/tts",
+            headers=headers,
+            json=payload,
+        ) as resp:
+            if resp.status == 402:
+                raise RuntimeError("Muxlisa TTS: balance depleted (402)")
+            if resp.status == 429:
+                raise RuntimeError("Muxlisa TTS: rate limit exceeded (60 req/min)")
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Muxlisa TTS error: HTTP {resp.status} — {body[:200]}")
+
+            # Muxlisa returns WAV binary directly
+            audio_data = await resp.read()
+            return TTSResult(
+                audio_data=audio_data,
+                character_count=len(text),
+            )
+
+
+# ══════════════════════════════════════════════════════════
+# KotibAI Provider (alternative)
+# ══════════════════════════════════════════════════════════
+
+KOTIB_VOICES = {
+    "aziza": "DAwWafAKHO9QX6qcLggZ",       # Female, Uzbek (default)
+    "nargiza": "RNmQxero1wyOi8SD9iMV",      # Female, Uzbek
+    "soliha": "XDuXlUPQeAboPqoc7PJM",       # Female, Uzbek
+    "sherzod": "wLCDHBSlf2alLqS7YPqK",      # Male, Uzbek
+    "rachel": "21m00Tcm4TlvDq8ikWAM",       # Female, Russian/English
+    "arnold": "VR6AewLTigWG4xSOukaG",       # Male, Russian/English
+}
+
+
+async def kotib_transcribe(
     audio_path: str,
     api_key: str,
     language: str | None = None,
 ) -> TranscriptionResult:
-    """Transcribe audio file using KotibAI STT API.
-
-    Args:
-        audio_path: Path to MP3/WAV/M4A audio file.
-        api_key: KotibAI API key.
-        language: Optional language code (uz/ru/en). Auto-detected if None.
-
-    Returns:
-        TranscriptionResult with transcribed text.
-    """
+    """Transcribe audio using KotibAI STT API. Requires MP3/WAV/M4A (no OGG)."""
     headers = {"Authorization": f"Bearer {api_key}"}
 
     data = aiohttp.FormData()
@@ -108,71 +254,33 @@ async def transcribe(
             data=data,
         ) as resp:
             result = await resp.json()
-
             if resp.status != 200:
                 error = result.get("error", f"HTTP {resp.status}")
                 raise RuntimeError(f"KotibAI STT error: {error}")
-
             if result.get("status") != "success":
                 raise RuntimeError(f"KotibAI STT failed: {result}")
-
-            return TranscriptionResult(
-                text=result.get("text", ""),
-                language=language,
-            )
+            return TranscriptionResult(text=result.get("text", ""), language=language)
 
 
-# ── KotibAI TTS ──────────────────────────────────────────
-
-# Available Uzbek voices
-VOICES = {
-    "aziza": "DAwWafAKHO9QX6qcLggZ",       # Female, Uzbek (default)
-    "nargiza": "RNmQxero1wyOi8SD9iMV",      # Female, Uzbek
-    "soliha": "XDuXlUPQeAboPqoc7PJM",       # Female, Uzbek
-    "sherzod": "wLCDHBSlf2alLqS7YPqK",      # Male, Uzbek
-    "rachel": "21m00Tcm4TlvDq8ikWAM",       # Female, Russian/English
-    "arnold": "VR6AewLTigWG4xSOukaG",       # Male, Russian/English
-}
-
-DEFAULT_VOICE = "aziza"
-
-
-async def text_to_speech(
+async def kotib_tts(
     text: str,
     api_key: str,
     language: str = "uz",
     voice: str | None = None,
 ) -> TTSResult:
-    """Convert text to speech using KotibAI TTS API.
-
-    Args:
-        text: Text to convert (max 5000 chars).
-        api_key: KotibAI API key.
-        language: Language code (uz/ru/en).
-        voice: Voice name or ID. Defaults based on language.
-
-    Returns:
-        TTSResult with audio URL.
-    """
+    """Convert text to speech using KotibAI TTS API. Returns audio URL."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    # Resolve voice ID
     voice_id = None
     if voice:
-        voice_id = VOICES.get(voice.lower(), voice)
+        voice_id = KOTIB_VOICES.get(voice.lower(), voice)
     if not voice_id:
-        # Pick default by language
-        if language in ("ru", "en"):
-            voice_id = VOICES["rachel"]
-        else:
-            voice_id = VOICES[DEFAULT_VOICE]
+        voice_id = KOTIB_VOICES["rachel"] if language in ("ru", "en") else KOTIB_VOICES["aziza"]
 
-    # Text >500 chars requires blocking=false per API docs
     blocking = len(text) <= 500
-
     payload = {
         "text": text[:5000],
         "lang": language,
@@ -187,10 +295,8 @@ async def text_to_speech(
             json=payload,
         ) as resp:
             result = await resp.json()
-
             if resp.status != 200:
-                error = result.get("error", f"HTTP {resp.status}")
-                raise RuntimeError(f"KotibAI TTS error: {error}")
+                raise RuntimeError(f"KotibAI TTS error: {result.get('error', resp.status)}")
 
             if blocking:
                 if result.get("status") != "success":
@@ -200,54 +306,73 @@ async def text_to_speech(
                     character_count=result.get("character_count", 0),
                 )
 
-            # Async mode — poll for result
             task_id = result.get("id", "")
             if not task_id:
-                raise RuntimeError(f"KotibAI TTS: no task_id returned: {result}")
+                raise RuntimeError(f"KotibAI TTS: no task_id: {result}")
+            return await _kotib_poll_task(task_id, api_key, session)
 
-            return await _poll_task(task_id, api_key, session)
 
-
-async def _poll_task(
-    task_id: str,
-    api_key: str,
-    session: aiohttp.ClientSession,
-    max_wait: float = 30.0,
+async def _kotib_poll_task(
+    task_id: str, api_key: str, session: aiohttp.ClientSession, max_wait: float = 30.0,
 ) -> TTSResult:
-    """Poll KotibAI get-status endpoint until task completes."""
+    """Poll KotibAI get-status endpoint."""
     headers = {"Authorization": f"Bearer {api_key}"}
     elapsed = 0.0
     interval = 1.0
-
     while elapsed < max_wait:
         await asyncio.sleep(interval)
         elapsed += interval
-
         async with session.get(
-            f"{KOTIB_BASE_URL}/get-status",
-            headers=headers,
-            params={"task_id": task_id},
+            f"{KOTIB_BASE_URL}/get-status", headers=headers, params={"task_id": task_id},
         ) as resp:
             result = await resp.json()
             status = result.get("status", "")
-
             if status == "completed":
                 audio_url = result.get("audio_url", "")
-                # For TTS, audio_url might be in result dict
                 if not audio_url and isinstance(result.get("result"), dict):
                     audio_url = result["result"].get("audio_url", "")
                 return TTSResult(audio_url=audio_url)
-
             if status in ("failed", "error"):
                 raise RuntimeError(f"KotibAI TTS task failed: {result}")
-
-        # Increase interval slightly for longer texts
         interval = min(interval * 1.2, 3.0)
+    raise RuntimeError(f"KotibAI TTS timed out after {max_wait}s")
 
-    raise RuntimeError(f"KotibAI TTS task timed out after {max_wait}s")
+
+# ══════════════════════════════════════════════════════════
+# Unified interface (used by telegram.py)
+# ══════════════════════════════════════════════════════════
 
 
-# ── Download helper ───────────────────────────────────────
+async def transcribe(
+    audio_path: str,
+    api_key: str,
+    provider: str = "muxlisa",
+    language: str | None = None,
+) -> TranscriptionResult:
+    """Transcribe audio using the configured provider.
+
+    Args:
+        audio_path: Path to audio file.
+        api_key: Provider API key.
+        provider: "muxlisa" or "kotib".
+        language: Language hint (uz/ru/en). Muxlisa auto-detects, KotibAI uses hint.
+    """
+    if provider == "kotib":
+        return await kotib_transcribe(audio_path, api_key, language)
+    return await muxlisa_transcribe(audio_path, api_key)
+
+
+async def text_to_speech(
+    text: str,
+    api_key: str,
+    provider: str = "muxlisa",
+    language: str = "uz",
+    voice: str | None = None,
+) -> TTSResult:
+    """Convert text to speech using the configured provider."""
+    if provider == "kotib":
+        return await kotib_tts(text, api_key, language, voice)
+    return await muxlisa_tts(text, api_key, voice)
 
 
 async def download_audio(url: str) -> str:

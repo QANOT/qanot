@@ -193,7 +193,7 @@ class TelegramAdapter:
                     self.config.voice_mode == "always"
                     or (self.config.voice_mode == "inbound" and voice_request)
                 )
-                if should_tts and self.config.kotib_api_key:
+                if should_tts and self.config.voice_api_key:
                     await self._send_voice_reply(message.chat.id, str(user_id))
 
             except Exception as e:
@@ -214,45 +214,63 @@ class TelegramAdapter:
     # ── Voice processing ────────────────────────────────────
 
     async def _transcribe_voice(self, message: Message) -> str | None:
-        """Download and transcribe a voice message or video note via KotibAI."""
-        if not self.config.kotib_api_key:
-            logger.warning("Voice received but kotib_api_key not configured")
+        """Download and transcribe a voice message or video note."""
+        if not self.config.voice_api_key:
+            logger.warning("Voice received but voice_api_key not configured")
             return None
 
         import tempfile
         import os
-        from qanot.voice import convert_ogg_to_mp3, convert_video_to_mp3, transcribe
+        from qanot.voice import (
+            convert_ogg_to_mp3, convert_video_to_mp3, convert_video_to_ogg, transcribe,
+        )
 
-        ogg_path = ""
-        mp3_path = ""
+        provider = self.config.voice_provider
+        audio_path = ""
+        cleanup_paths: list[str] = []
         try:
             if message.voice:
                 ogg_path = tempfile.mktemp(suffix=".ogg")
                 await self.bot.download(message.voice, destination=ogg_path)
-                mp3_path = await convert_ogg_to_mp3(ogg_path)
-                logger.info("Voice downloaded: %ds, converting OGG→MP3", message.voice.duration)
+                cleanup_paths.append(ogg_path)
+                logger.info("Voice downloaded: %ds", message.voice.duration)
+
+                if provider == "muxlisa":
+                    # Muxlisa accepts OGG natively — no conversion needed!
+                    audio_path = ogg_path
+                else:
+                    # KotibAI needs MP3
+                    audio_path = await convert_ogg_to_mp3(ogg_path)
+                    cleanup_paths.append(audio_path)
+
             elif message.video_note:
                 mp4_path = tempfile.mktemp(suffix=".mp4")
                 await self.bot.download(message.video_note, destination=mp4_path)
-                mp3_path = await convert_video_to_mp3(mp4_path)
-                ogg_path = mp4_path  # reuse for cleanup
-                logger.info("Video note downloaded: %ds, extracting audio", message.video_note.duration)
+                cleanup_paths.append(mp4_path)
+                logger.info("Video note downloaded: %ds", message.video_note.duration)
+
+                if provider == "muxlisa":
+                    audio_path = await convert_video_to_ogg(mp4_path)
+                else:
+                    audio_path = await convert_video_to_mp3(mp4_path)
+                cleanup_paths.append(audio_path)
             else:
                 return None
 
             result = await transcribe(
-                mp3_path,
-                api_key=self.config.kotib_api_key,
+                audio_path,
+                api_key=self.config.voice_api_key,
+                provider=provider,
                 language=self.config.voice_language or None,
             )
-            logger.info("Transcribed: %s", result.text[:100])
+            logger.info("Transcribed (%s): %s", provider, result.text[:100])
             return result.text
 
         except Exception as e:
             logger.error("Voice transcription failed: %s", e)
             return None
         finally:
-            for path in (ogg_path, mp3_path):
+            for path in cleanup_paths:
                 if path and os.path.exists(path):
                     try:
                         os.unlink(path)
@@ -261,7 +279,7 @@ class TelegramAdapter:
 
     async def _send_voice_reply(self, chat_id: int, user_id: str) -> None:
         """Send the last agent response as a TTS voice message."""
-        from qanot.voice import text_to_speech, download_audio
+        from qanot.voice import text_to_speech, download_audio, convert_wav_to_ogg
         import os
 
         # Get the last assistant response from conversation
@@ -286,32 +304,51 @@ class TelegramAdapter:
         if not last_text or len(last_text) > 5000:
             return
 
-        audio_path = ""
+        provider = self.config.voice_provider
+        cleanup_paths: list[str] = []
         try:
             result = await text_to_speech(
                 last_text,
-                api_key=self.config.kotib_api_key,
+                api_key=self.config.voice_api_key,
+                provider=provider,
                 language=self.config.voice_language or "uz",
                 voice=self.config.voice_name or None,
             )
-            if not result.audio_url:
+
+            voice_path = ""
+            if result.audio_data:
+                # Muxlisa returns WAV bytes → save to temp → convert to OGG for Telegram
+                import tempfile
+                wav_path = tempfile.mktemp(suffix=".wav")
+                with open(wav_path, "wb") as f:
+                    f.write(result.audio_data)
+                cleanup_paths.append(wav_path)
+
+                voice_path = await convert_wav_to_ogg(wav_path)
+                cleanup_paths.append(voice_path)
+
+            elif result.audio_url:
+                # KotibAI returns URL → download
+                voice_path = await download_audio(result.audio_url)
+                cleanup_paths.append(voice_path)
+
+            if not voice_path:
                 return
 
-            audio_path = await download_audio(result.audio_url)
-
             from aiogram.types import FSInputFile
-            voice_file = FSInputFile(audio_path)
+            voice_file = FSInputFile(voice_path)
             await self.bot.send_voice(chat_id=chat_id, voice=voice_file)
-            logger.info("TTS voice reply sent (%d chars)", len(last_text))
+            logger.info("TTS voice reply sent (%s, %d chars)", provider, len(last_text))
 
         except Exception as e:
             logger.warning("TTS reply failed: %s", e)
         finally:
-            if audio_path and os.path.exists(audio_path):
-                try:
-                    os.unlink(audio_path)
-                except OSError:
-                    pass
+            for path in cleanup_paths:
+                if path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
 
     # ── Response strategies ──────────────────────────────────
 

@@ -56,10 +56,11 @@ class Config:
     # RAG
     rag_enabled: bool = True
     rag_mode: str = "auto"  # "auto" | "agentic" | "always"
-    # Voice (KotibAI)
-    kotib_api_key: str = ""
+    # Voice (Muxlisa.uz / KotibAI)
+    voice_provider: str = "muxlisa"  # "muxlisa" | "kotib"
+    voice_api_key: str = ""
     voice_mode: str = "inbound"  # "off" | "inbound" | "always"
-    voice_name: str = ""  # KotibAI voice name (aziza/sherzod/etc), auto by language if empty
+    voice_name: str = ""  # Voice name (maftuna/asomiddin for muxlisa, aziza/sherzod for kotib)
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
 
 
@@ -123,7 +124,8 @@ def load_config(path: str | None = None) -> Config:
         webhook_port=raw.get("webhook_port", 8443),
         rag_enabled=raw.get("rag_enabled", True),
         rag_mode=raw.get("rag_mode", "auto"),
-        kotib_api_key=raw.get("kotib_api_key", ""),
+        voice_provider=raw.get("voice_provider", "muxlisa"),
+        voice_api_key=raw.get("voice_api_key", ""),
         voice_mode=raw.get("voice_mode", "inbound"),
         voice_name=raw.get("voice_name", ""),
         voice_language=raw.get("voice_language", ""),
