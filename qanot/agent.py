@@ -510,50 +510,61 @@ class Agent:
             logger.warning("Memory flush failed (non-fatal): %s", e)
 
     async def _summarize_for_compaction(self, messages: list[dict]) -> str | None:
-        """Use the LLM to summarize messages that will be compacted.
+        """Use multi-stage LLM summarization for compaction (OpenClaw-style).
 
         Returns summary text, or None if summarization fails (falls back to truncation).
         """
+        from qanot.compaction import summarize_in_stages, estimate_messages_tokens
+
         if self.config.compaction_mode == "truncate":
             return None
-
-        text_to_summarize = self.context.extract_compaction_text(messages)
-        if not text_to_summarize or len(text_to_summarize) < 100:
-            return None  # Too little content to summarize
 
         # Pre-compaction backup: save full context before it's dropped
         try:
             from pathlib import Path
-            backup_dir = Path(self.config.workspace_dir) / "memory"
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            backup_path = backup_dir / f"pre-compact-{int(time.time())}.md"
-            backup_path.write_text(
-                f"# Pre-Compaction Backup\n\n{text_to_summarize}",
-                encoding="utf-8",
-            )
-            logger.info("Pre-compaction backup saved: %s", backup_path.name)
+            text_to_summarize = self.context.extract_compaction_text(messages)
+            if text_to_summarize and len(text_to_summarize) > 100:
+                backup_dir = Path(self.config.workspace_dir) / "memory"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = backup_dir / f"pre-compact-{int(time.time())}.md"
+                backup_path.write_text(
+                    f"# Pre-Compaction Backup\n\n{text_to_summarize}",
+                    encoding="utf-8",
+                )
+                logger.info("Pre-compaction backup saved: %s", backup_path.name)
         except Exception as e:
             logger.warning("Failed to save pre-compaction backup: %s", e)
 
-        # Truncate to avoid the summarization itself overflowing
-        if len(text_to_summarize) > 12_000:
-            text_to_summarize = text_to_summarize[:12_000] + "\n\n[... truncated for summarization]"
+        # Extract messages to summarize (middle section)
+        if len(messages) <= 6:
+            return None
+
+        keep_recent = min(4, len(messages) // 2)
+        middle = messages[2:-keep_recent]
+        if not middle:
+            return None
+
+        total_tokens = estimate_messages_tokens(middle)
+        logger.info(
+            "Multi-stage compaction: %d messages (~%d tokens)",
+            len(middle), total_tokens,
+        )
+
+        # Determine number of parts based on size
+        parts = 2 if total_tokens < 50_000 else 3
 
         try:
-            response = await self.provider.chat(
-                messages=[{
-                    "role": "user",
-                    "content": COMPACTION_SUMMARY_PROMPT + text_to_summarize,
-                }],
-                tools=None,
-                system="You are a concise summarizer. Output only the summary, nothing else.",
+            summary = await summarize_in_stages(
+                provider=self.provider,
+                messages=middle,
+                context_window=self.config.max_context_tokens,
+                parts=parts,
             )
-            summary = response.content.strip()
             if summary and len(summary) > 20:
-                logger.info("LLM compaction summary generated (%d chars)", len(summary))
+                logger.info("Multi-stage compaction summary: %d chars", len(summary))
                 return summary
         except Exception as e:
-            logger.warning("LLM summarization failed, falling back to truncation: %s", e)
+            logger.warning("Multi-stage compaction failed, falling back to truncation: %s", e)
 
         return None
 
