@@ -35,9 +35,10 @@ def _create_provider(config):
     When multiple providers are configured, creates a FailoverProvider that
     automatically switches between them on errors.
     """
+    from qanot.providers.failover import FailoverProvider, ProviderProfile, _create_single_provider
+
     # Multi-provider mode
     if config.providers:
-        from qanot.providers.failover import FailoverProvider, ProviderProfile
         profiles = []
         for pc in config.providers:
             profiles.append(ProviderProfile(
@@ -52,22 +53,14 @@ def _create_provider(config):
         logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(names))
         return provider
 
-    # Single provider mode (backward compatible)
-    ptype = config.provider
-    if ptype == "anthropic":
-        from qanot.providers.anthropic import AnthropicProvider
-        return AnthropicProvider(api_key=config.api_key, model=config.model)
-    elif ptype == "openai":
-        from qanot.providers.openai import OpenAIProvider
-        return OpenAIProvider(api_key=config.api_key, model=config.model)
-    elif ptype == "groq":
-        from qanot.providers.groq import GroqProvider
-        return GroqProvider(api_key=config.api_key, model=config.model)
-    elif ptype == "gemini":
-        from qanot.providers.gemini import GeminiProvider
-        return GeminiProvider(api_key=config.api_key, model=config.model)
-    else:
-        raise ValueError(f"Unknown provider: {ptype}")
+    # Single provider mode — reuse the same factory
+    profile = ProviderProfile(
+        name="default",
+        provider_type=config.provider,
+        api_key=config.api_key,
+        model=config.model,
+    )
+    return _create_single_provider(profile)
 
 
 async def main() -> None:

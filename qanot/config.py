@@ -29,7 +29,7 @@ class Config:
     bot_token: str = ""
     # Legacy single-provider fields (still supported)
     provider: str = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-4-6"
     api_key: str = ""
     # Multi-provider support
     providers: list[ProviderConfig] = field(default_factory=list)
@@ -91,7 +91,7 @@ def load_config(path: str | None = None) -> Config:
     return Config(
         bot_token=raw.get("bot_token", ""),
         provider=raw.get("provider", "anthropic"),
-        model=raw.get("model", "claude-sonnet-4-20250514"),
+        model=raw.get("model", "claude-sonnet-4-6"),
         api_key=raw.get("api_key", ""),
         providers=provider_configs,
         soul_path=raw.get("soul_path", "/data/workspace/SOUL.md"),

@@ -59,7 +59,7 @@ class TestConfig:
             "bot_token": "t",
             "api_key": "sk-test",
             "providers": [
-                {"name": "main", "provider": "anthropic", "model": "claude-sonnet-4-20250514", "api_key": "sk-1"},
+                {"name": "main", "provider": "anthropic", "model": "claude-sonnet-4-6", "api_key": "sk-1"},
                 {"name": "backup", "provider": "gemini", "model": "gemini-2.5-flash", "api_key": "ai-2", "base_url": "https://custom.api"},
             ],
         }
@@ -78,5 +78,5 @@ class TestConfigDataclass:
     def test_default_values(self):
         config = Config()
         assert config.provider == "anthropic"
-        assert config.model == "claude-sonnet-4-20250514"
+        assert config.model == "claude-sonnet-4-6"
         assert config.max_context_tokens == 200000

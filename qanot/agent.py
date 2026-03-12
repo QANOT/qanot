@@ -14,6 +14,14 @@ from qanot.context import ContextTracker, truncate_tool_result
 from qanot.memory import wal_scan, wal_write, write_daily_note
 from qanot.prompt import build_system_prompt
 from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage
+from qanot.providers.errors import (
+    classify_error,
+    PERMANENT_FAILURES,
+    TRANSIENT_FAILURES,
+    ERROR_AUTH,
+    ERROR_BILLING,
+    ERROR_RATE_LIMIT,
+)
 from qanot.session import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -33,12 +41,6 @@ DETERMINISTIC_ERRORS = (
     "invalid input",
 )
 
-# HTTP status codes that indicate specific failure types
-_RETRIABLE_STATUS_CODES = {429, 503, 529, 408, 504, 500, 502}
-_AUTH_STATUS_CODES = {401, 403}
-_BILLING_STATUS_CODES = {402}
-
-
 def _tool_call_fingerprint(name: str, input_data: dict) -> str:
     """Hash a tool call for duplicate detection."""
     raw = f"{name}:{json.dumps(input_data, sort_keys=True)}"
@@ -53,40 +55,6 @@ def _is_deterministic_error(result: str) -> bool:
         return any(marker in error for marker in DETERMINISTIC_ERRORS)
     except (json.JSONDecodeError, AttributeError):
         return False
-
-
-def _classify_api_error(error: Exception) -> str:
-    """Classify an API error by HTTP status code or message.
-
-    Returns: "rate_limit", "auth", "billing", "overloaded", "timeout", or "unknown"
-    """
-    # Extract HTTP status code if available
-    status = getattr(error, "status_code", None) or getattr(error, "status", None)
-    if status:
-        if status in _RETRIABLE_STATUS_CODES:
-            if status == 429:
-                return "rate_limit"
-            if status in {503, 529}:
-                return "overloaded"
-            return "timeout"
-        if status in _AUTH_STATUS_CODES:
-            return "auth"
-        if status in _BILLING_STATUS_CODES:
-            return "billing"
-
-    # Fallback: check error message
-    msg = str(error).lower()
-    if "rate" in msg and "limit" in msg or "429" in msg:
-        return "rate_limit"
-    if "overloaded" in msg or "503" in msg or "529" in msg:
-        return "overloaded"
-    if "unauthorized" in msg or "forbidden" in msg or "401" in msg or "403" in msg:
-        return "auth"
-    if "billing" in msg or "402" in msg or "quota" in msg:
-        return "billing"
-    if "timeout" in msg or "timed out" in msg:
-        return "timeout"
-    return "unknown"
 
 
 def _is_loop_detected(recent_fingerprints: list[str], new_key: str) -> bool:
@@ -273,18 +241,18 @@ class Agent:
                 )
             except Exception as e:
                 last_error = e
-                error_type = _classify_api_error(e)
+                error_type = classify_error(e)
                 logger.warning(
                     "Provider error (attempt %d/%d): %s [%s]",
                     attempt + 1, max_retries + 1, e, error_type,
                 )
 
                 # Don't retry permanent errors
-                if error_type in ("auth", "billing"):
+                if error_type in PERMANENT_FAILURES:
                     raise
 
                 # Retry transient errors with backoff
-                if attempt < max_retries and error_type in ("rate_limit", "overloaded", "timeout", "unknown"):
+                if attempt < max_retries and error_type in TRANSIENT_FAILURES:
                     backoff = min(2 ** attempt * 2, 30)  # 2s, 4s, max 30s
                     logger.info("Retrying in %ds...", backoff)
                     await asyncio.sleep(backoff)
@@ -361,13 +329,13 @@ class Agent:
                     system=system,
                 )
             except Exception as e:
-                error_type = _classify_api_error(e)
+                error_type = classify_error(e)
                 logger.error("Provider failed after retries: %s [%s]", e, error_type)
-                if error_type == "rate_limit":
+                if error_type == ERROR_RATE_LIMIT:
                     return "Limitga yetdik, biroz kutib qaytadan urinib ko'ring."
-                elif error_type == "auth":
+                elif error_type == ERROR_AUTH:
                     return "API kalitda xatolik. Administrator bilan bog'laning."
-                elif error_type == "billing":
+                elif error_type == ERROR_BILLING:
                     return "API hisob muammosi. Administrator bilan bog'laning."
                 return f"Xatolik yuz berdi, qaytadan urinib ko'ring."
 
@@ -568,11 +536,11 @@ class Agent:
                     elif event.type == "done":
                         response = event.response
             except Exception as e:
-                error_type = _classify_api_error(e)
+                error_type = classify_error(e)
                 logger.error("Stream error: %s [%s]", e, error_type)
 
                 # Try non-streaming retry for transient errors
-                if error_type in ("rate_limit", "overloaded", "timeout"):
+                if error_type in TRANSIENT_FAILURES:
                     backoff = 3
                     logger.info("Stream failed, retrying non-stream in %ds...", backoff)
                     await asyncio.sleep(backoff)
@@ -595,8 +563,6 @@ class Agent:
                         return
                 else:
                     error_msg = "Xatolik yuz berdi, qaytadan urinib ko'ring."
-                    if error_type == "rate_limit":
-                        error_msg = "Limitga yetdik, biroz kutib qaytadan urinib ko'ring."
                     yield StreamEvent(
                         type="done",
                         response=ProviderResponse(content=error_msg),

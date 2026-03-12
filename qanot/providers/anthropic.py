@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 
 # Pricing per million tokens (as of 2025)
 PRICING = {
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
-    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
-    "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
+    "claude-opus-4-20250514": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
+    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
 
@@ -30,7 +31,7 @@ def _is_oauth_token(api_key: str) -> bool:
 class AnthropicProvider(LLMProvider):
     """Claude provider using the Anthropic API."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
         self._is_oauth = _is_oauth_token(api_key)
         client_kwargs: dict[str, Any] = {}
         if self._is_oauth:
@@ -44,6 +45,16 @@ class AnthropicProvider(LLMProvider):
             client_kwargs["api_key"] = api_key
         self.client = anthropic.AsyncAnthropic(**client_kwargs)
         self.model = model
+
+    @staticmethod
+    def _extract_usage_dict(u) -> dict:
+        """Extract usage dict from Anthropic response usage object."""
+        return {
+            "input_tokens": u.input_tokens,
+            "output_tokens": u.output_tokens,
+            "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+            "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+        }
 
     def _calc_cost(self, usage: dict) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
@@ -103,13 +114,7 @@ class AnthropicProvider(LLMProvider):
                 ))
 
         # Extract usage
-        u = response.usage
-        usage_dict = {
-            "input_tokens": u.input_tokens,
-            "output_tokens": u.output_tokens,
-            "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
-            "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
-        }
+        usage_dict = self._extract_usage_dict(response.usage)
 
         usage = Usage(
             input_tokens=usage_dict["input_tokens"],
@@ -199,13 +204,7 @@ class AnthropicProvider(LLMProvider):
             logger.error("Anthropic streaming error: %s", e)
             raise
 
-        u = final.usage
-        usage_dict = {
-            "input_tokens": u.input_tokens,
-            "output_tokens": u.output_tokens,
-            "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
-            "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
-        }
+        usage_dict = self._extract_usage_dict(final.usage)
 
         response = ProviderResponse(
             content="".join(text_parts),
