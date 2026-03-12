@@ -273,5 +273,5 @@ RAG behavior is controlled by config and source constants:
 - **Embedding providers:** Only Gemini and OpenAI support embeddings. Anthropic and Groq do not.
 - **sqlite-vec required:** Without `pip install sqlite-vec`, vector search is disabled. The metadata table still works, but similarity search returns empty results.
 - **In-memory BM25:** The BM25 index is rebuilt from scratch on startup and after source deletion. It does not persist to disk.
-- **No PDF parsing:** The `.pdf` extension is listed as supported but the current implementation reads files as UTF-8 text. Binary PDF files will fail to read.
+- **PDF requires PyMuPDF:** PDF parsing uses PyMuPDF (`pip install PyMuPDF`), included in `pip install qanot[rag]`. Without it, PDF indexing returns an error with install instructions.
 - **Single-user scope:** Results are filtered by user_id, but the vector store is shared across all users. In multi-user setups, all users' documents share the same embedding space.

@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-rag = ["sqlite-vec>=0.1.6"]
+rag = ["sqlite-vec>=0.1.6", "PyMuPDF>=1.24"]
 
 [project.scripts]
 qanot = "qanot.cli:main"

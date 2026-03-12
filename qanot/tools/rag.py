@@ -17,6 +17,20 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".pdf"}
 
 
+def _extract_pdf_text(path: Path) -> str:
+    """Extract text from a PDF file using PyMuPDF."""
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(str(path))
+    pages = []
+    for page in doc:
+        text = page.get_text()
+        if text.strip():
+            pages.append(text)
+    doc.close()
+    return "\n\n".join(pages)
+
+
 def register_rag_tools(
     registry: ToolRegistry,
     engine: "RAGEngine",
@@ -57,7 +71,14 @@ def register_rag_tools(
             })
 
         try:
-            content = full_path.read_text(encoding="utf-8")
+            if suffix == ".pdf":
+                content = _extract_pdf_text(full_path)
+            else:
+                content = full_path.read_text(encoding="utf-8")
+        except ImportError:
+            return json.dumps({
+                "error": "PDF support requires PyMuPDF: pip install PyMuPDF"
+            })
         except UnicodeDecodeError:
             return json.dumps({"error": f"Cannot read file as text: {path_str}"})
         except OSError as e:
