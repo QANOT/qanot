@@ -46,7 +46,7 @@ Qanot automatically selects the best available embedding provider from your exis
 
 | Priority | Provider | Model | Dimensions | Cost |
 |----------|----------|-------|------------|------|
-| 1 | Gemini | `text-embedding-004` | 768 | Free tier |
+| 1 | Gemini | `gemini-embedding-001` | 768 | Free tier |
 | 2 | OpenAI | `text-embedding-3-small` | 1536 | $0.02/MTok |
 
 The embedder checks both multi-provider configs and single-provider config. If you have a Gemini provider for failover, its API key will be reused for embeddings.

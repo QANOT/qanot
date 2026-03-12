@@ -31,9 +31,9 @@ class Embedder(ABC):
 
 
 class GeminiEmbedder(Embedder):
-    """Google Gemini text-embedding-004 (768 dims, generous free tier)."""
+    """Google Gemini embedding via OpenAI-compatible endpoint (free tier)."""
 
-    def __init__(self, api_key: str, model: str = "text-embedding-004", base_url: str | None = None):
+    def __init__(self, api_key: str, model: str = "gemini-embedding-001", base_url: str | None = None):
         import openai
 
         self.client = openai.AsyncOpenAI(
@@ -51,6 +51,7 @@ class GeminiEmbedder(Embedder):
             response = await self.client.embeddings.create(
                 input=batch,
                 model=self.model,
+                dimensions=self.dimensions,
             )
             all_embeddings.extend([d.embedding for d in response.data])
             logger.debug("Gemini embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))
@@ -114,7 +115,7 @@ def create_embedder(config) -> Embedder | None:
     # Priority 1: Gemini (free embedding tier)
     if "gemini" in providers:
         info = providers["gemini"]
-        logger.info("RAG embedder: using Gemini text-embedding-004 (free tier)")
+        logger.info("RAG embedder: using Gemini gemini-embedding-001 (free tier)")
         return GeminiEmbedder(
             api_key=info["api_key"],
             base_url=info.get("base_url") or None,
