@@ -27,19 +27,29 @@ def _notify_hooks(content: str, source: str) -> None:
         except Exception as e:
             logger.warning("Memory write hook failed: %s", e)
 
-# WAL trigger patterns
+# WAL trigger patterns (English + Uzbek)
 WAL_PATTERNS = [
-    # Corrections
+    # Corrections (EN + UZ)
     (r"(?:it'?s|actually|no,?\s*i\s*meant|not\s+\w+,?\s+(?:but|it'?s))", "correction"),
+    (r"(?:yo'q|aslida|men\s+aytmoqchi|to'g'ri\s+emas)", "correction"),
     # Proper nouns (capitalized words after common intros)
     (r"(?:my\s+name\s+is|i'?m|call\s+me|this\s+is)\s+([A-Z][a-z]+)", "proper_noun"),
-    # Preferences
+    (r"(?:mening?\s+ismim|men\s+)\s*([A-Z][a-z]+)", "proper_noun"),
+    (r"(?:sen(?:i|ing)?\s+(?:isming|nom))\s+(\w+)", "proper_noun"),
+    # Preferences (EN + UZ)
     (r"(?:i\s+(?:like|prefer|want|don'?t\s+like|hate|love))", "preference"),
-    # Decisions
+    (r"(?:men\s+(?:yoqtiraman|xohlayman|istardim|yomon\s+ko'raman))", "preference"),
+    # Decisions (EN + UZ)
     (r"(?:let'?s\s+(?:do|go|use|try)|go\s+with|use\s+)", "decision"),
+    (r"(?:qani|keling|ishlataylik|sinab\s+ko'raylik)", "decision"),
     # Specific values
     (r"(?:\d{4}[-/]\d{2}[-/]\d{2}|https?://\S+|\b\d{5,}\b)", "specific_value"),
+    # Remember commands (EN + UZ)
+    (r"(?:remember\s+(?:this|that)|don'?t\s+forget|eslab\s+qol|unutma|yodda\s+tut)", "remember"),
 ]
+
+# Patterns that should also be saved to MEMORY.md (durable facts)
+DURABLE_CATEGORIES = {"proper_noun", "preference", "remember"}
 
 
 class WALEntry:
@@ -75,7 +85,7 @@ def wal_scan(user_message: str) -> list[WALEntry]:
 
 
 def wal_write(entries: list[WALEntry], workspace_dir: str = "/data/workspace") -> None:
-    """Write WAL entries to SESSION-STATE.md."""
+    """Write WAL entries to SESSION-STATE.md and durable facts to MEMORY.md."""
     if not entries:
         return
 
@@ -95,9 +105,51 @@ def wal_write(entries: list[WALEntry], workspace_dir: str = "/data/workspace") -
 
     logger.debug("WAL wrote %d entries to SESSION-STATE.md", len(entries))
 
+    # Save durable facts to MEMORY.md (names, preferences, explicit "remember" requests)
+    durable = [e for e in entries if e.category in DURABLE_CATEGORIES]
+    if durable:
+        _append_to_memory(durable, workspace_dir)
+
     # Notify hooks with combined content
     combined = "".join(lines)
     _notify_hooks(combined, "SESSION-STATE.md")
+
+
+def _append_to_memory(entries: list[WALEntry], workspace_dir: str) -> None:
+    """Append durable facts to MEMORY.md, avoiding duplicates."""
+    memory_path = Path(workspace_dir) / "MEMORY.md"
+
+    # Read existing content to check for duplicates
+    existing = ""
+    if memory_path.exists():
+        existing = memory_path.read_text(encoding="utf-8")
+
+    new_lines: list[str] = []
+    for entry in entries:
+        # Simple dedup: skip if the detail text is already in MEMORY.md
+        if entry.detail[:80].lower() in existing.lower():
+            logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
+            continue
+        new_lines.append(f"- **{entry.category}**: {entry.detail}\n")
+
+    if not new_lines:
+        return
+
+    # Ensure header exists
+    if not existing.strip():
+        existing = "# MEMORY.md - Long-Term Memory\n\n"
+
+    # Append under "## Auto-captured" section
+    section_header = "## Auto-captured\n"
+    if section_header not in existing:
+        existing = existing.rstrip() + f"\n\n{section_header}\n"
+
+    with open(memory_path, "w", encoding="utf-8") as f:
+        f.write(existing.rstrip() + "\n")
+        f.writelines(new_lines)
+
+    logger.info("Saved %d durable facts to MEMORY.md", len(new_lines))
+    _notify_hooks("".join(new_lines), "MEMORY.md")
 
 
 def write_daily_note(content: str, workspace_dir: str = "/data/workspace") -> None:

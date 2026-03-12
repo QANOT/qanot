@@ -50,6 +50,28 @@ COMPACTION_SUMMARY_PROMPT = (
     "Conversation to summarize:\n\n"
 )
 
+MEMORY_FLUSH_PROMPT = (
+    "Pre-compaction memory flush. Context is about to be compacted and older messages will be lost.\n\n"
+    "Save any durable memories to files using write_file tool:\n"
+    "- Save to `memory/{date}.md` (append, don't overwrite) for daily logs\n"
+    "- Save to `MEMORY.md` for long-term curated facts\n\n"
+    "What to save:\n"
+    "- User's name, preferences, important personal info\n"
+    "- Decisions made during this conversation\n"
+    "- Project context, URLs, IDs, paths that might be needed later\n"
+    "- Lessons learned, mistakes to avoid\n"
+    "- Things the user explicitly asked to remember\n\n"
+    "What NOT to save:\n"
+    "- Routine greetings or small talk\n"
+    "- Information already in MEMORY.md or USER.md\n"
+    "- Temporary debugging details\n\n"
+    "If nothing worth saving, reply with just: NO_SAVE\n"
+    "Be concise. Append to existing files, never overwrite."
+)
+
+# Only allow read/write tools during memory flush (no shell, no web)
+MEMORY_FLUSH_TOOL_NAMES = {"read_file", "write_file", "list_files", "memory_search"}
+
 # Errors that should NOT be retried (deterministic failures)
 DETERMINISTIC_ERRORS = (
     "unknown tool",
@@ -418,6 +440,75 @@ class Agent:
         )
         return user_message
 
+    async def _memory_flush(self, messages: list[dict]) -> None:
+        """Run a hidden LLM turn to save durable memories before compaction.
+
+        Like OpenClaw's pre-compaction flush: gives the agent a chance to
+        write important facts to memory files before context is lost.
+        Only read/write tools are available during flush.
+        """
+        if len(messages) < 4:
+            return  # Too little context to flush
+
+        # Build a condensed view of the conversation for the flush prompt
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        flush_prompt = MEMORY_FLUSH_PROMPT.replace("{date}", today)
+
+        # Filter tools to only safe ones (read/write)
+        flush_tools = [
+            t for t in self.tools.get_definitions()
+            if t.get("name") in MEMORY_FLUSH_TOOL_NAMES
+        ]
+
+        if not flush_tools:
+            logger.warning("No flush tools available, skipping memory flush")
+            return
+
+        try:
+            # Run up to 5 iterations (read existing → write new)
+            flush_messages: list[dict] = list(messages)  # Copy current conversation
+            flush_messages.append({"role": "user", "content": flush_prompt})
+
+            for _ in range(5):
+                response = await self.provider.chat(
+                    messages=flush_messages,
+                    tools=flush_tools,
+                    system=self._build_system_prompt(),
+                )
+
+                if response.stop_reason == "tool_use" and response.tool_calls:
+                    # Execute only allowed tools
+                    flush_messages.append(
+                        self._build_assistant_tool_message(response.content, response.tool_calls)
+                    )
+                    tool_results: list[dict] = []
+                    for tc in response.tool_calls:
+                        if tc.name in MEMORY_FLUSH_TOOL_NAMES:
+                            result = await self.tools.execute(tc.name, tc.input)
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tc.id,
+                                "content": result,
+                            })
+                        else:
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tc.id,
+                                "content": "Tool not available during memory flush.",
+                            })
+                    flush_messages.append({"role": "user", "content": tool_results})
+                else:
+                    # end_turn or NO_SAVE — done
+                    if response.content and "NO_SAVE" not in response.content:
+                        logger.info("Memory flush completed with text response")
+                    break
+
+            logger.info("Pre-compaction memory flush completed")
+
+        except Exception as e:
+            logger.warning("Memory flush failed (non-fatal): %s", e)
+
     async def _summarize_for_compaction(self, messages: list[dict]) -> str | None:
         """Use the LLM to summarize messages that will be compacted.
 
@@ -479,6 +570,8 @@ class Agent:
         Returns (messages, system_prompt, tool_defs).
         """
         if self.context.needs_compaction() and len(messages) > 6:
+            # Memory flush: save durable memories BEFORE context is lost
+            await self._memory_flush(messages)
             summary = await self._summarize_for_compaction(messages)
             compacted = self.context.compact_messages(messages, summary_text=summary)
             self._conversations[user_id] = compacted
@@ -501,6 +594,7 @@ class Agent:
         Called reactively when the API returns a context_overflow error.
         """
         logger.warning("Context overflow detected — forcing compaction")
+        await self._memory_flush(messages)
         summary = await self._summarize_for_compaction(messages)
         compacted = self.context.compact_messages(messages, summary_text=summary)
         self._conversations[user_id] = compacted
