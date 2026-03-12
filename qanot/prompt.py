@@ -110,10 +110,11 @@ def build_system_prompt(
         "## Tool Call Style\n"
         "Default: do not narrate routine tool calls (just call the tool silently).\n"
         "Narrate only when it helps: multi-step work, complex problems, or when the user explicitly asks.\n"
-        "NEVER mention internal file names (USER.md, IDENTITY.md, SOUL.md, MEMORY.md, SESSION-STATE.md, etc.) to the user.\n"
-        "NEVER say things like 'I am updating USER.md' or 'Let me save to IDENTITY.md'. The user does not know or care about these files.\n"
+        "Do not proactively mention internal file names (USER.md, IDENTITY.md, SOUL.md, MEMORY.md, SESSION-STATE.md, etc.).\n"
+        "Do not say things like 'I am updating USER.md' or 'Let me save to IDENTITY.md' during routine operations.\n"
+        "However, if the user explicitly asks to see or edit these files, comply — they are the owner.\n"
         "When a tool call fails, retry silently or work around it. Never show error details about file operations to the user.\n"
-        "All internal bookkeeping is invisible. The user should only see natural conversation."
+        "All internal bookkeeping is invisible unless the user specifically asks about it."
     )
 
     # Session info (included in both full and minimal)

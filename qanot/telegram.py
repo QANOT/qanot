@@ -220,6 +220,25 @@ class TelegramAdapter:
                 logger.error("File download failed: %s", e)
                 text = f"[Document: {fname} — yuklab bo'lmadi] {text}".strip()
 
+        # Reply-to-message context (message quoting)
+        if message.reply_to_message:
+            quoted = message.reply_to_message
+            quoted_text = quoted.text or quoted.caption or ""
+            if quoted_text:
+                # Truncate long quotes
+                if len(quoted_text) > 500:
+                    quoted_text = quoted_text[:500] + "…"
+                quoted_from = ""
+                if quoted.from_user:
+                    if quoted.from_user.is_bot:
+                        quoted_from = "your previous message"
+                    else:
+                        name = quoted.from_user.full_name or str(quoted.from_user.id)
+                        quoted_from = f"a message from {name}"
+                else:
+                    quoted_from = "a message"
+                text = f"[Replying to {quoted_from}: \"{quoted_text}\"]\n\n{text}"
+
         if not text:
             return
 

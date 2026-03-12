@@ -460,6 +460,421 @@ def cmd_start(args: list[str]) -> None:
     asyncio.run(run_main())
 
 
+def cmd_doctor(args: list[str]) -> None:
+    """Run health checks on a Qanot installation."""
+    fix_mode = "--fix" in args or "--repair" in args
+    remaining = [a for a in args if a not in ("--fix", "--repair")]
+
+    # Find config
+    config_path = _find_config(remaining)
+    if not config_path:
+        print(_red("✗ No config.json found."))
+        print("  Run 'qanot init' first, or pass the path.")
+        sys.exit(1)
+
+    print(LOGO)
+    print(_bold("Qanot Doctor"))
+    if fix_mode:
+        print(_yellow("  Mode: --fix (will auto-repair issues)"))
+    print()
+
+    passed = 0
+    warned = 0
+    failed = 0
+
+    def _ok(msg: str) -> None:
+        nonlocal passed
+        passed += 1
+        print(f"  {_green('✓')} {msg}")
+
+    def _warn(msg: str, hint: str = "") -> None:
+        nonlocal warned
+        warned += 1
+        print(f"  {_yellow('!')} {msg}")
+        if hint:
+            print(f"    {_dim(hint)}")
+
+    def _fail(msg: str, hint: str = "") -> None:
+        nonlocal failed
+        failed += 1
+        print(f"  {_red('✗')} {msg}")
+        if hint:
+            print(f"    {_dim(hint)}")
+
+    def _fix(msg: str) -> None:
+        print(f"  {_cyan('⚡')} {msg}")
+
+    # ── 1. Config validation ──────────────────────────────
+    print(_bold("Config"))
+    try:
+        raw_text = config_path.read_text(encoding="utf-8")
+        raw = json.loads(raw_text)
+        _ok(f"Valid JSON: {config_path}")
+    except json.JSONDecodeError as e:
+        _fail(f"Invalid JSON: {e}")
+        print()
+        print(_red(f"Cannot continue — fix {config_path} first."))
+        sys.exit(1)
+
+    # Required fields
+    required_fields = ["bot_token", "api_key"]
+    for field in required_fields:
+        if raw.get(field) and raw[field] != f"YOUR_{field.upper()}":
+            _ok(f"{field} is set")
+        else:
+            _fail(f"{field} is missing or placeholder", f"Set it in {config_path}")
+
+    # Warn on empty optional fields
+    if not raw.get("owner_name"):
+        _warn("owner_name is empty", "Bot won't know your name")
+    if not raw.get("bot_name"):
+        _warn("bot_name is empty", "Bot won't have a persona name")
+    if not raw.get("allowed_users"):
+        _warn("allowed_users is empty — bot is PUBLIC", "Add your Telegram user ID for security")
+
+    # Validate provider
+    provider = raw.get("provider", "anthropic")
+    valid_providers = {"anthropic", "openai", "gemini", "groq"}
+    if provider in valid_providers:
+        _ok(f"Provider: {provider}")
+    else:
+        _fail(f"Unknown provider: {provider}", f"Valid: {', '.join(valid_providers)}")
+
+    print()
+
+    # ── 2. Bot token health ───────────────────────────────
+    print(_bold("Telegram"))
+    bot_token = raw.get("bot_token", "")
+    if bot_token and bot_token != "YOUR_TELEGRAM_BOT_TOKEN":
+        try:
+            import urllib.request
+            url = f"https://api.telegram.org/bot{bot_token}/getMe"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                if data.get("ok"):
+                    bot_info = data["result"]
+                    _ok(f"Bot connected: @{bot_info.get('username', '?')} ({bot_info.get('first_name', '?')})")
+                else:
+                    _fail("Bot token invalid — getMe returned not ok")
+        except Exception as e:
+            _fail(f"Bot token check failed: {e}")
+    else:
+        _fail("Bot token not configured")
+
+    print()
+
+    # ── 3. Workspace integrity ────────────────────────────
+    print(_bold("Workspace"))
+    ws_dir = Path(raw.get("workspace_dir", "/data/workspace"))
+    if ws_dir.exists():
+        _ok(f"Workspace exists: {ws_dir}")
+    else:
+        if fix_mode:
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            _fix(f"Created workspace: {ws_dir}")
+        else:
+            _warn(f"Workspace missing: {ws_dir}", "Run 'qanot start' to auto-create, or use --fix")
+
+    # Check critical files
+    critical_files = ["SOUL.md", "TOOLS.md", "IDENTITY.md"]
+    for fname in critical_files:
+        fpath = ws_dir / fname
+        if fpath.exists():
+            size = fpath.stat().st_size
+            if size > 0:
+                _ok(f"{fname} ({size:,} bytes)")
+            else:
+                _warn(f"{fname} is empty")
+        else:
+            _warn(f"{fname} missing", "Will be created on first start")
+
+    # Check memory dir
+    mem_dir = ws_dir / "memory"
+    if mem_dir.exists():
+        note_count = len(list(mem_dir.glob("*.md")))
+        _ok(f"memory/ ({note_count} notes)")
+    else:
+        if fix_mode:
+            mem_dir.mkdir(parents=True, exist_ok=True)
+            _fix("Created memory/ directory")
+        else:
+            _warn("memory/ directory missing")
+
+    # Check directories
+    for dir_key in ["sessions_dir", "cron_dir"]:
+        dir_path = Path(raw.get(dir_key, ""))
+        if dir_path.exists():
+            _ok(f"{dir_key}: {dir_path}")
+        else:
+            if fix_mode:
+                dir_path.mkdir(parents=True, exist_ok=True)
+                _fix(f"Created {dir_key}: {dir_path}")
+            else:
+                _warn(f"{dir_key} missing: {dir_path}", "Will be created on first start")
+
+    print()
+
+    # ── 4. Plugin health ──────────────────────────────────
+    print(_bold("Plugins"))
+    plugins = raw.get("plugins", [])
+    if not plugins:
+        _ok("No plugins configured")
+    else:
+        from qanot.plugins.loader import _find_plugin_dir
+        plugins_dir = raw.get("plugins_dir", "/data/plugins")
+        for pl in plugins:
+            pname = pl if isinstance(pl, str) else pl.get("name", "?")
+            enabled = pl.get("enabled", True) if isinstance(pl, dict) else True
+            if not enabled:
+                print(f"  {_dim('–')} {pname} {_dim('(disabled)')}")
+                continue
+
+            plugin_dir = _find_plugin_dir(pname, plugins_dir)
+            if plugin_dir:
+                plugin_py = plugin_dir / "plugin.py"
+                manifest = plugin_dir / "plugin.json"
+                if plugin_py.exists():
+                    if manifest.exists():
+                        from qanot.plugins.base import PluginManifest
+                        m = PluginManifest.from_file(manifest)
+                        _ok(f"{pname} v{m.version}")
+
+                        # Check required config
+                        pl_config = pl.get("config", {}) if isinstance(pl, dict) else {}
+                        missing = [k for k in m.required_config if not pl_config.get(k)]
+                        if missing:
+                            _warn(f"  {pname} missing config: {', '.join(missing)}")
+                    else:
+                        _ok(f"{pname} (no manifest)")
+                else:
+                    _fail(f"{pname}: plugin.py not found in {plugin_dir}")
+            else:
+                _fail(f"{pname}: directory not found")
+
+    print()
+
+    # ── 5. Cron / heartbeat ───────────────────────────────
+    print(_bold("Cron & Heartbeat"))
+    cron_dir = Path(raw.get("cron_dir", "/data/cron"))
+    jobs_file = cron_dir / "jobs.json"
+    if jobs_file.exists():
+        try:
+            jobs = json.loads(jobs_file.read_text(encoding="utf-8"))
+            _ok(f"{len(jobs)} cron job(s)")
+            has_heartbeat = any(j.get("name") == "heartbeat" for j in jobs)
+            if has_heartbeat:
+                _ok("Heartbeat job configured")
+            else:
+                _warn("No heartbeat job — self-healing disabled", "Will be auto-created on start")
+        except json.JSONDecodeError:
+            _fail("jobs.json is invalid JSON")
+            if fix_mode:
+                jobs_file.write_text("[]", encoding="utf-8")
+                _fix("Reset jobs.json to empty array")
+    else:
+        _ok("No cron jobs yet (heartbeat will auto-create on start)")
+
+    heartbeat_md = ws_dir / "HEARTBEAT.md"
+    if heartbeat_md.exists():
+        lines = [l for l in heartbeat_md.read_text(encoding="utf-8").splitlines()
+                 if l.strip() and not l.strip().startswith("#")]
+        if lines:
+            _ok(f"HEARTBEAT.md has {len(lines)} check items")
+        else:
+            _warn("HEARTBEAT.md is empty — heartbeat will skip API calls")
+    else:
+        _warn("HEARTBEAT.md not found", "Will be created on first start")
+
+    print()
+
+    # ── 6. Session cleanup ────────────────────────────────
+    print(_bold("Sessions"))
+    sessions_dir = Path(raw.get("sessions_dir", "/data/sessions"))
+    if sessions_dir.exists():
+        session_files = list(sessions_dir.glob("*.jsonl"))
+        total_size = sum(f.stat().st_size for f in session_files)
+        _ok(f"{len(session_files)} session file(s), {total_size / 1024 / 1024:.1f} MB total")
+
+        if total_size > 100 * 1024 * 1024:  # > 100MB
+            _warn(f"Sessions using {total_size / 1024 / 1024:.0f} MB", "Consider 'qanot backup' and cleanup")
+
+        # Check for stale sessions (> 30 days old)
+        import time
+        now = time.time()
+        stale = [f for f in session_files if now - f.stat().st_mtime > 30 * 86400]
+        if stale:
+            _warn(f"{len(stale)} session(s) older than 30 days")
+            if fix_mode:
+                archive_dir = sessions_dir / "archive"
+                archive_dir.mkdir(exist_ok=True)
+                for f in stale:
+                    f.rename(archive_dir / f.name)
+                _fix(f"Archived {len(stale)} stale sessions to archive/")
+    else:
+        _ok("No sessions directory yet")
+
+    print()
+
+    # ── 7. Voice config ───────────────────────────────────
+    print(_bold("Voice"))
+    voice_mode = raw.get("voice_mode", "off")
+    voice_provider = raw.get("voice_provider", "muxlisa")
+    if voice_mode == "off":
+        _ok("Voice is off")
+    else:
+        _ok(f"Voice mode: {voice_mode}, provider: {voice_provider}")
+        # Check API key
+        voice_keys = raw.get("voice_api_keys", {})
+        key = voice_keys.get(voice_provider, raw.get("voice_api_key", ""))
+        if key:
+            _ok(f"{voice_provider} API key is set")
+        else:
+            _fail(f"{voice_provider} API key missing — voice won't work")
+
+    print()
+
+    # ── 8. Dependencies ───────────────────────────────────
+    print(_bold("Dependencies"))
+    deps_check = {
+        "aiogram": "Telegram adapter",
+        "aiohttp": "HTTP client",
+        "apscheduler": "Cron scheduler",
+    }
+    optional_deps = {
+        "PIL": ("Pillow", "Image processing (stickers, photos)"),
+        "anthropic": ("anthropic", "Anthropic provider"),
+    }
+    for module, label in deps_check.items():
+        try:
+            __import__(module)
+            _ok(f"{module} — {label}")
+        except ImportError:
+            _fail(f"{module} missing — {label}", f"pip install {module}")
+
+    for module, (pkg, label) in optional_deps.items():
+        try:
+            __import__(module)
+            _ok(f"{pkg} — {label}")
+        except ImportError:
+            _warn(f"{pkg} not installed — {label}", f"pip install {pkg}")
+
+    print()
+
+    # ── Summary ───────────────────────────────────────────
+    print(_bold("Summary"))
+    total = passed + warned + failed
+    print(f"  {_green(f'{passed} passed')}, {_yellow(f'{warned} warnings')}, {_red(f'{failed} errors')} ({total} checks)")
+    if failed == 0 and warned == 0:
+        print(f"\n  {_green('All good! Your bot is healthy.')}")
+    elif failed == 0:
+        print(f"\n  {_yellow('Bot should work, but review the warnings above.')}")
+    else:
+        print(f"\n  {_red('Fix the errors above before starting the bot.')}")
+        if not fix_mode:
+            print(f"  {_dim('Try: qanot doctor --fix')}")
+    print()
+
+
+def _find_config(args: list[str]) -> Path | None:
+    """Find config.json from args or defaults."""
+    if args:
+        path = Path(args[0])
+        if path.is_dir():
+            path = path / "config.json"
+        return path if path.exists() else None
+
+    env_path = os.environ.get("QANOT_CONFIG")
+    if env_path and Path(env_path).exists():
+        return Path(env_path)
+    if Path("config.json").exists():
+        return Path("config.json")
+    if Path("/data/config.json").exists():
+        return Path("/data/config.json")
+    return None
+
+
+def cmd_backup(args: list[str]) -> None:
+    """Export workspace + sessions + cron to a timestamped .tar.gz archive."""
+    import tarfile
+    from datetime import datetime
+
+    # Find config
+    remaining = [a for a in args if not a.startswith("--")]
+    config_path = _find_config(remaining)
+    if not config_path:
+        print(_red("✗ No config.json found."))
+        print("  Run 'qanot init' first, or pass the path.")
+        sys.exit(1)
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    project_dir = config_path.parent
+
+    # Determine output path
+    output_arg = None
+    for a in args:
+        if a.startswith("--output="):
+            output_arg = a.split("=", 1)[1]
+    if not output_arg:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        bot_name = raw.get("bot_name", "qanot").replace(" ", "_").lower()
+        output_arg = str(project_dir / f"{bot_name}_backup_{timestamp}.tar.gz")
+
+    output_path = Path(output_arg)
+
+    print(LOGO)
+    print(_bold("Qanot Backup"))
+    print()
+
+    # Collect directories to back up
+    dirs_to_backup: list[tuple[Path, str]] = []
+
+    ws_dir = Path(raw.get("workspace_dir", project_dir / "workspace"))
+    if ws_dir.exists():
+        dirs_to_backup.append((ws_dir, "workspace"))
+
+    sessions_dir = Path(raw.get("sessions_dir", project_dir / "sessions"))
+    if sessions_dir.exists():
+        dirs_to_backup.append((sessions_dir, "sessions"))
+
+    cron_dir = Path(raw.get("cron_dir", project_dir / "cron"))
+    if cron_dir.exists():
+        dirs_to_backup.append((cron_dir, "cron"))
+
+    plugins_dir = Path(raw.get("plugins_dir", project_dir / "plugins"))
+    if plugins_dir.exists():
+        dirs_to_backup.append((plugins_dir, "plugins"))
+
+    # Always include config.json
+    if not dirs_to_backup and not config_path.exists():
+        print(_red("✗ Nothing to back up."))
+        sys.exit(1)
+
+    # Create archive
+    file_count = 0
+    with tarfile.open(output_path, "w:gz") as tar:
+        # Add config
+        tar.add(config_path, arcname="config.json")
+        file_count += 1
+        print(f"  {_green('+')} config.json")
+
+        for dir_path, arcname_prefix in dirs_to_backup:
+            count = 0
+            for fpath in dir_path.rglob("*"):
+                if fpath.is_file():
+                    rel = fpath.relative_to(dir_path)
+                    tar.add(fpath, arcname=f"{arcname_prefix}/{rel}")
+                    count += 1
+            file_count += count
+            print(f"  {_green('+')} {arcname_prefix}/ ({count} files)")
+
+    size_mb = output_path.stat().st_size / 1024 / 1024
+    print()
+    print(f"  {_green('✓')} Backup saved: {output_path}")
+    print(f"  {_dim(f'{file_count} files, {size_mb:.1f} MB')}")
+    print()
+
+
 def cmd_version() -> None:
     from qanot import __version__
     print(f"qanot {__version__}")
@@ -470,15 +885,19 @@ def cmd_help() -> None:
     print("Usage: qanot <command> [args]")
     print()
     print("Commands:")
-    print("  init [dir]       Interactive setup wizard (creates config.json)")
-    print("  start [path]     Start agent (path to config.json or directory)")
-    print("  version          Show version")
-    print("  help             Show this help")
+    print("  init [dir]         Interactive setup wizard (creates config.json)")
+    print("  start [path]       Start agent (path to config.json or directory)")
+    print("  doctor [path]      Health checks (--fix to auto-repair)")
+    print("  backup [path]      Export workspace + sessions to .tar.gz")
+    print("  version            Show version")
+    print("  help               Show this help")
     print()
     print("Examples:")
-    print("  pip install qanot")
     print("  qanot init mybot")
     print("  qanot start mybot")
+    print("  qanot doctor mybot")
+    print("  qanot doctor --fix")
+    print("  qanot backup mybot")
     print()
 
 
@@ -491,6 +910,10 @@ def main() -> None:
         cmd_init(args[1:])
     elif args[0] == "start":
         cmd_start(args[1:])
+    elif args[0] == "doctor":
+        cmd_doctor(args[1:])
+    elif args[0] == "backup":
+        cmd_backup(args[1:])
     elif args[0] == "version" or args[0] == "--version":
         cmd_version()
     else:
