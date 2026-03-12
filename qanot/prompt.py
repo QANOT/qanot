@@ -16,17 +16,8 @@ _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
 
 def _truncate_content(content: str, max_chars: int) -> str:
     """Truncate content keeping 70% head and 20% tail with a marker."""
-    if len(content) <= max_chars:
-        return content
-    head_size = int(max_chars * 0.70)
-    tail_size = int(max_chars * 0.20)
-    kept_len = head_size + tail_size
-    removed = len(content) - kept_len
-    return (
-        content[:head_size]
-        + f"\n\n... [truncated {removed} chars] ...\n\n"
-        + content[-tail_size:]
-    )
+    from qanot.utils import truncate_with_marker
+    return truncate_with_marker(content, max_chars)
 
 
 def build_system_prompt(

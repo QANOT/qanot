@@ -141,18 +141,16 @@ async def main() -> None:
     if rag_engine is not None and rag_indexer is not None:
         from qanot.tools.rag import register_rag_tools
         from qanot.memory import add_write_hook
-        import asyncio as _asyncio
 
-        # Give agent the RAG indexer for auto-context injection
-        agent._rag_indexer = rag_indexer
+        agent.attach_rag(rag_indexer)
 
         register_rag_tools(
             tool_registry, rag_engine, config.workspace_dir,
-            get_user_id=lambda: agent._current_user_id,
+            get_user_id=lambda: agent.current_user_id,
         )
 
         def _on_memory_write(content: str, source: str) -> None:
-            _asyncio.create_task(rag_indexer.index_text(content, source=source))
+            asyncio.create_task(rag_indexer.index_text(content, source=source))
 
         add_write_hook(_on_memory_write)
 

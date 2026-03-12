@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -117,22 +118,37 @@ def register_builtin_tools(
     )
 
     # ── run_command ──
+    # Shell metacharacters that indicate injection attempts
+    _SHELL_METACHARS = set("|;&`$(){}><\n")
+
     async def run_command(params: dict) -> str:
         command = params.get("command", "").strip()
         if not command:
             return json.dumps({"error": "command is required"})
 
-        # Security: check first word against allowlist
-        parts = command.split()
-        exe = parts[0] if parts else ""
+        # Security: reject shell metacharacters to prevent injection
+        if any(c in command for c in _SHELL_METACHARS):
+            return json.dumps({"error": "Shell operators (|, ;, &, $, `, etc.) are not allowed. Use separate commands."})
+
+        # Parse command safely
+        try:
+            args = shlex.split(command)
+        except ValueError as e:
+            return json.dumps({"error": f"Invalid command syntax: {e}"})
+
+        if not args:
+            return json.dumps({"error": "command is required"})
+
+        # Security: check executable against allowlist
+        exe = args[0]
         if exe not in ALLOWED_COMMANDS:
             return json.dumps({"error": f"Command '{exe}' is not allowed. Allowed: {', '.join(sorted(ALLOWED_COMMANDS))}"})
 
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
-                command,
-                shell=True,
+                args,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=30,

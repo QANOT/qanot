@@ -21,20 +21,9 @@ MAX_TOOL_RESULT_CHARS = 8_000
 
 
 def truncate_tool_result(result: str, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
-    """Truncate oversized tool results to prevent context bloat.
-
-    Keeps first 70% and last 20% with a truncation marker.
-    """
-    if len(result) <= max_chars:
-        return result
-    head = int(max_chars * 0.70)
-    tail = int(max_chars * 0.20)
-    removed = len(result) - head - tail
-    return (
-        result[:head]
-        + f"\n\n... [truncated {removed} chars] ...\n\n"
-        + result[-tail:]
-    )
+    """Truncate oversized tool results to prevent context bloat."""
+    from qanot.utils import truncate_with_marker
+    return truncate_with_marker(result, max_chars)
 
 
 class ContextTracker:

@@ -103,37 +103,19 @@ def load_config(path: str | None = None) -> Config:
             base_url=pc.get("base_url", ""),
         ))
 
+    # Auto-map simple fields (str, int, float, bool, list, dict) from JSON to dataclass.
+    # Only nested types (plugins, providers) need manual parsing.
+    import dataclasses
+    _NESTED_FIELDS = {"plugins", "providers"}
+    simple = {}
+    for f in dataclasses.fields(Config):
+        if f.name in _NESTED_FIELDS:
+            continue
+        if f.name in raw:
+            simple[f.name] = raw[f.name]
+
     return Config(
-        bot_token=raw.get("bot_token", ""),
-        provider=raw.get("provider", "anthropic"),
-        model=raw.get("model", "claude-sonnet-4-6"),
-        api_key=raw.get("api_key", ""),
-        providers=provider_configs,
-        soul_path=raw.get("soul_path", "/data/workspace/SOUL.md"),
-        tools_path=raw.get("tools_path", "/data/workspace/TOOLS.md"),
+        **simple,
         plugins=plugins,
-        owner_name=raw.get("owner_name", ""),
-        bot_name=raw.get("bot_name", ""),
-        timezone=raw.get("timezone", "Asia/Tashkent"),
-        max_concurrent=raw.get("max_concurrent", 4),
-        compaction_mode=raw.get("compaction_mode", "safeguard"),
-        workspace_dir=raw.get("workspace_dir", "/data/workspace"),
-        sessions_dir=raw.get("sessions_dir", "/data/sessions"),
-        cron_dir=raw.get("cron_dir", "/data/cron"),
-        plugins_dir=raw.get("plugins_dir", "/data/plugins"),
-        max_context_tokens=raw.get("max_context_tokens", 200000),
-        allowed_users=raw.get("allowed_users", []),
-        response_mode=raw.get("response_mode", "stream"),
-        stream_flush_interval=raw.get("stream_flush_interval", 0.8),
-        telegram_mode=raw.get("telegram_mode", "polling"),
-        webhook_url=raw.get("webhook_url", ""),
-        webhook_port=raw.get("webhook_port", 8443),
-        rag_enabled=raw.get("rag_enabled", True),
-        rag_mode=raw.get("rag_mode", "auto"),
-        voice_provider=raw.get("voice_provider", "muxlisa"),
-        voice_api_key=raw.get("voice_api_key", ""),
-        voice_api_keys=raw.get("voice_api_keys", {}),
-        voice_mode=raw.get("voice_mode", "inbound"),
-        voice_name=raw.get("voice_name", ""),
-        voice_language=raw.get("voice_language", ""),
+        providers=provider_configs,
     )

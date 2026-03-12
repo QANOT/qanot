@@ -260,6 +260,15 @@ class Agent:
         self._last_active: dict[str | None, float] = {}
         self._last_user_msg_id = ""
 
+    def attach_rag(self, rag_indexer) -> None:
+        """Attach RAG indexer for auto-context injection."""
+        self._rag_indexer = rag_indexer
+
+    @property
+    def current_user_id(self) -> str:
+        """Current user ID being processed (for RAG user-scoped queries)."""
+        return self._current_user_id
+
     def _get_lock(self, user_id: str | None) -> asyncio.Lock:
         """Get or create a per-user lock for write safety."""
         if user_id not in self._locks:
