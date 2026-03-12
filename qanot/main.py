@@ -109,7 +109,7 @@ async def main() -> None:
     # Register built-in tools
     register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)
 
-    # Register web search tools (if Brave API key configured)
+    # Register web search tools (only if Brave API key is configured)
     if config.brave_api_key:
         from qanot.tools.web import register_web_tools
         register_web_tools(tool_registry, config.brave_api_key)

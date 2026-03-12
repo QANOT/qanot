@@ -178,48 +178,8 @@ def register_builtin_tools(
         handler=run_command,
     )
 
-    # ── web_search ──
-    async def web_search(params: dict) -> str:
-        query = params.get("query", "").strip()
-        if not query:
-            return json.dumps({"error": "query is required"})
-
-        try:
-            # Use DuckDuckGo instant answer API
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://api.duckduckgo.com/",
-                    params={"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    data = await resp.json(content_type=None)
-                    results = []
-                    if data.get("AbstractText"):
-                        results.append({"type": "abstract", "text": data["AbstractText"], "source": data.get("AbstractSource", "")})
-                    if data.get("Answer"):
-                        results.append({"type": "answer", "text": data["Answer"]})
-                    for topic in data.get("RelatedTopics", [])[:5]:
-                        if isinstance(topic, dict) and topic.get("Text"):
-                            results.append({"type": "related", "text": topic["Text"], "url": topic.get("FirstURL", "")})
-                    if not results:
-                        return json.dumps({"message": "Natija topilmadi", "query": query})
-                    return json.dumps(results, ensure_ascii=False, indent=2)
-        except Exception as e:
-            return json.dumps({"error": f"Web search failed: {e}"})
-
-    registry.register(
-        name="web_search",
-        description="Internetdan qidirish (DuckDuckGo).",
-        parameters={
-            "type": "object",
-            "required": ["query"],
-            "properties": {
-                "query": {"type": "string", "description": "Qidiruv so'rovi"},
-            },
-        },
-        handler=web_search,
-    )
+    # ── web_search — registered separately in tools/web.py (Brave API) ──
+    # Falls back to DuckDuckGo if brave_api_key is not configured (registered in main.py)
 
     # ── memory_search ──
     async def mem_search(params: dict) -> str:
