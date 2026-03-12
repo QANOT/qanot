@@ -148,7 +148,15 @@ class RoutingProvider(LLMProvider):
         self.stats = RoutingStats()
 
     def _select_model(self, messages: list[dict]) -> str:
-        """Pick model based on the last user message complexity."""
+        """Pick model based on message complexity AND conversation context.
+
+        Only routes to cheap model when BOTH conditions are true:
+        1. The last user message is simple (greeting/acknowledgment)
+        2. The conversation context is simple (no tool use, short history)
+
+        This prevents routing "ha" (yes) to Haiku when the user is approving
+        a complex task that the agent proposed.
+        """
         # Find the last user message
         user_text = ""
         for msg in reversed(messages):
@@ -157,7 +165,6 @@ class RoutingProvider(LLMProvider):
                 if isinstance(content, str):
                     user_text = content
                 elif isinstance(content, list):
-                    # Extract text from content blocks
                     user_text = " ".join(
                         block.get("text", "")
                         for block in content
@@ -166,22 +173,85 @@ class RoutingProvider(LLMProvider):
                 break
 
         score = classify_complexity(user_text)
+        context_score = self._assess_context(messages)
+
+        # Use the higher of message score and context score
+        effective_score = max(score, context_score)
+
         self.stats.total += 1
 
-        if score < self._threshold:
+        if effective_score < self._threshold:
             self.stats.routed_cheap += 1
             logger.info(
-                "Routing → %s (score=%.2f < threshold=%.2f)",
-                self._cheap_model, score, self._threshold,
+                "Routing → %s (msg=%.2f, ctx=%.2f, effective=%.2f < %.2f)",
+                self._cheap_model, score, context_score, effective_score, self._threshold,
             )
             return self._cheap_model
         else:
             self.stats.routed_primary += 1
             logger.info(
-                "Routing → %s (score=%.2f >= threshold=%.2f)",
-                self._primary_model, score, self._threshold,
+                "Routing → %s (msg=%.2f, ctx=%.2f, effective=%.2f >= %.2f)",
+                self._primary_model, score, context_score, effective_score, self._threshold,
             )
             return self._primary_model
+
+    @staticmethod
+    def _assess_context(messages: list[dict]) -> float:
+        """Score conversation context complexity (0.0 = fresh/simple, 1.0 = deep/complex).
+
+        Checks:
+        - Conversation depth (many turns = complex context)
+        - Tool use in recent assistant messages (tool_use = complex task)
+        - Previous assistant response length (long response = complex topic)
+        """
+        if len(messages) <= 2:
+            # Fresh conversation (just user message, maybe one prior exchange)
+            return 0.0
+
+        score = 0.0
+
+        # Conversation depth: more turns = more likely complex context
+        turn_count = sum(1 for m in messages if m.get("role") == "user")
+        if turn_count > 5:
+            score += 0.4
+        elif turn_count > 2:
+            score += 0.2
+
+        # Check last assistant message for tool use or long response
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                # Tool use in content blocks → complex task in progress
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            score += 0.5  # Strong signal: agent was using tools
+                            break
+                    # Long assistant response → complex topic
+                    text_len = sum(
+                        len(b.get("text", ""))
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                    if text_len > 500:
+                        score += 0.2
+                elif isinstance(content, str) and len(content) > 500:
+                    score += 0.3
+                break
+
+        # Check for tool_result messages (means tools were executed recently)
+        for msg in reversed(messages[-6:]):  # Check last 6 messages
+            if msg.get("role") == "tool":
+                score += 0.5
+                break
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        score += 0.5
+                        break
+
+        return min(score, 1.0)
 
     def _swap_model(self, model: str) -> str:
         """Swap the underlying provider's model, return the previous model."""

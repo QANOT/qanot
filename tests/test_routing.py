@@ -276,6 +276,99 @@ class TestRoutingProvider:
         assert fake.last_model_used == "claude-sonnet-4-6"
 
 
+class TestContextAwareRouting:
+    """Test that conversation context prevents misrouting simple replies."""
+
+    @pytest.mark.asyncio
+    async def test_ha_after_tool_use_stays_primary(self):
+        """'ha' reply after agent used tools → must stay on primary model."""
+        fake = FakeProvider(model="claude-sonnet-4-6")
+        router = RoutingProvider(fake, threshold=0.3)
+
+        messages = [
+            {"role": "user", "content": "implement database migration"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "I'll run the migration now."},
+                {"type": "tool_use", "id": "t1", "name": "run_command", "input": {"cmd": "migrate"}},
+            ]},
+            {"role": "tool", "content": "Migration completed", "tool_use_id": "t1"},
+            {"role": "assistant", "content": "Migration done. Should I proceed?"},
+            {"role": "user", "content": "ha"},
+        ]
+        await router.chat(messages)
+        assert fake.last_model_used == "claude-sonnet-4-6"
+
+    @pytest.mark.asyncio
+    async def test_salom_in_fresh_conversation_uses_cheap(self):
+        """'salom' as first message → cheap model is fine."""
+        fake = FakeProvider(model="claude-sonnet-4-6")
+        router = RoutingProvider(fake, threshold=0.3)
+
+        messages = [{"role": "user", "content": "salom"}]
+        await router.chat(messages)
+        assert fake.last_model_used == "claude-haiku-4-5"
+
+    @pytest.mark.asyncio
+    async def test_ok_after_long_assistant_response_stays_primary(self):
+        """'ok' after a long assistant response → complex context."""
+        fake = FakeProvider(model="claude-sonnet-4-6")
+        router = RoutingProvider(fake, threshold=0.3)
+
+        messages = [
+            {"role": "user", "content": "explain authentication"},
+            {"role": "assistant", "content": "x" * 600},  # Long explanation
+            {"role": "user", "content": "ok"},
+        ]
+        await router.chat(messages)
+        assert fake.last_model_used == "claude-sonnet-4-6"
+
+    @pytest.mark.asyncio
+    async def test_thanks_in_deep_conversation_stays_primary(self):
+        """'rahmat' in a conversation with many turns → primary."""
+        fake = FakeProvider(model="claude-sonnet-4-6")
+        router = RoutingProvider(fake, threshold=0.3)
+
+        messages = []
+        for i in range(6):
+            messages.append({"role": "user", "content": f"question {i}"})
+            messages.append({"role": "assistant", "content": f"answer {i}"})
+        messages.append({"role": "user", "content": "rahmat"})
+
+        await router.chat(messages)
+        assert fake.last_model_used == "claude-sonnet-4-6"
+
+    @pytest.mark.asyncio
+    async def test_simple_exchange_uses_cheap(self):
+        """Simple greeting exchange → cheap model is fine."""
+        fake = FakeProvider(model="claude-sonnet-4-6")
+        router = RoutingProvider(fake, threshold=0.3)
+
+        messages = [
+            {"role": "user", "content": "salom"},
+            {"role": "assistant", "content": "Salom! Qanday yordam bera olaman?"},
+            {"role": "user", "content": "rahmat"},
+        ]
+        await router.chat(messages)
+        assert fake.last_model_used == "claude-haiku-4-5"
+
+    def test_assess_context_empty(self):
+        assert RoutingProvider._assess_context([]) == 0.0
+
+    def test_assess_context_single_message(self):
+        assert RoutingProvider._assess_context([{"role": "user", "content": "hi"}]) == 0.0
+
+    def test_assess_context_with_tool_result(self):
+        messages = [
+            {"role": "user", "content": "run tests"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "cmd", "input": {}}]},
+            {"role": "tool", "content": "ok", "tool_use_id": "t1"},
+            {"role": "assistant", "content": "Done"},
+            {"role": "user", "content": "ha"},
+        ]
+        score = RoutingProvider._assess_context(messages)
+        assert score >= 0.5
+
+
 class TestRoutingStats:
     def test_savings_pct_zero_total(self):
         stats = RoutingStats()
