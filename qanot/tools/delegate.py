@@ -224,6 +224,18 @@ async def _get_group_bot(config: "Config", agent_id: str):
     return _group_bot_cache[bot_token]
 
 
+async def _send_typing_to_group(config: "Config", agent_id: str) -> None:
+    """Send typing indicator in the monitoring group as the agent's bot."""
+    monitor_group = getattr(config, "monitor_group_id", 0)
+    if not monitor_group:
+        return
+    try:
+        bot = await _get_group_bot(config, agent_id)
+        await bot.send_chat_action(chat_id=monitor_group, action="typing")
+    except Exception:
+        pass  # Non-fatal
+
+
 async def _mirror_to_group(
     config: "Config",
     from_agent: str,
@@ -720,6 +732,9 @@ def register_delegate_tools(
         )
 
         try:
+            # Send typing indicator in monitoring group
+            await _send_typing_to_group(config, agent_id)
+
             result = await _create_delegate_agent(
                 config, delegate_provider, child_registry, prompt, agent_id, timeout,
             )
@@ -863,6 +878,9 @@ def register_delegate_tools(
 
         try:
             for turn in range(1, max_turns + 1):
+                # Send typing indicator in monitoring group
+                await _send_typing_to_group(config, agent_id)
+
                 # Build prompt with conversation history
                 turn_prompt_parts = [
                     agent_prompt,
