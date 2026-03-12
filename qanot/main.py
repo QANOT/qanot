@@ -254,7 +254,14 @@ async def main() -> None:
         tool_registry, config, provider, tool_registry,
         get_user_id=lambda: agent.current_user_id,
     )
-    logger.info("Agent delegation tools registered (sub-agent + delegate)")
+
+    # Register dynamic agent management tools (create/update/delete agents at runtime)
+    from qanot.tools.agent_manager import register_agent_manager_tools
+    register_agent_manager_tools(
+        tool_registry, config, provider, tool_registry,
+        get_user_id=lambda: agent.current_user_id,
+    )
+    logger.info("Agent tools registered (delegation + management + sub-agent)")
 
     # Start per-agent Telegram bots (each with their own bot_token)
     from qanot.agent_bot import start_agent_bots
