@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -162,8 +163,27 @@ class TelegramAdapter:
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self.config.allowed_users:
+            # Auto-owner: first user to message becomes the owner
+            self.config.allowed_users = [user_id]
+            self._save_owner(user_id)
+            logger.info("Auto-owner: user %d is now the owner", user_id)
             return True
         return user_id in self.config.allowed_users
+
+    def _save_owner(self, user_id: int) -> None:
+        """Persist the auto-owner to config.json."""
+        try:
+            import json
+            config_path = Path(os.environ.get("QANOT_CONFIG", "config.json"))
+            if config_path.exists():
+                raw = json.loads(config_path.read_text(encoding="utf-8"))
+                raw["allowed_users"] = [user_id]
+                config_path.write_text(
+                    json.dumps(raw, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+        except Exception as e:
+            logger.warning("Failed to save auto-owner: %s", e)
 
     async def _get_bot_username(self) -> str:
         """Get and cache the bot's username."""

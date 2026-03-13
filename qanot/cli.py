@@ -373,19 +373,10 @@ def cmd_init(args: list[str]) -> None:
 
     # ── Step 4: Access Control ──
     print(f"\n{_bold('  Step 4: Access Control')}")
-    print(f"  {_dim('Your Telegram user ID restricts who can use the bot.')}")
-    print(f"  {_dim('Find it: message @userinfobot on Telegram.')}")
-    owner_id_str = _prompt("Your Telegram user ID", "")
+    print(f"  {_cyan('ℹ')} The first person to message the bot becomes the owner.")
+    print(f"  {_dim('To restrict access later, add your Telegram user ID to allowed_users in config.json')}")
     allowed_users: list[int] = []
     owner_name = ""
-    if owner_id_str:
-        try:
-            allowed_users = [int(owner_id_str.strip())]
-            print(_green(f"  ✓ Bot restricted to user {allowed_users[0]}"))
-        except ValueError:
-            print(_yellow("  ! Invalid ID, bot will be public (add allowed_users to config.json later)"))
-    else:
-        print(_yellow("  ! No ID set — bot is PUBLIC. Anyone can use it."))
 
     owner_name_input = _prompt("Your name (optional)", "")
     if owner_name_input:
