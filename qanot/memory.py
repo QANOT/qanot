@@ -125,12 +125,28 @@ def _append_to_memory(entries: list[WALEntry], workspace_dir: str) -> None:
         existing = memory_path.read_text(encoding="utf-8")
 
     new_lines: list[str] = []
+    existing_lines = [line.lower().strip() for line in existing.splitlines() if line.strip()]
     for entry in entries:
-        # Simple dedup: skip if the detail text is already in MEMORY.md
-        if entry.detail[:80].lower() in existing.lower():
+        # Dedup: skip if a sufficiently similar line already exists
+        detail_lower = entry.detail[:80].lower()
+        is_dup = False
+        for eline in existing_lines:
+            if len(detail_lower) < 10:
+                # Short details: require exact line match to avoid false positives
+                if detail_lower in eline and len(detail_lower) >= len(eline) * 0.3:
+                    is_dup = True
+                    break
+            else:
+                if detail_lower in eline:
+                    is_dup = True
+                    break
+        if is_dup:
             logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
             continue
-        new_lines.append(f"- **{entry.category}**: {entry.detail}\n")
+        new_line = f"- **{entry.category}**: {entry.detail}\n"
+        new_lines.append(new_line)
+        # Add to existing_lines so subsequent entries in this batch also dedup
+        existing_lines.append(new_line.lower().strip())
 
     if not new_lines:
         return
