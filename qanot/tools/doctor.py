@@ -173,10 +173,10 @@ def _check_context(context: "ContextTracker") -> dict:
     status_data = context.session_status()
     pct = status_data["context_percent"]
     status = "ok"
-    if pct > 80:
-        status = "warning"
-    elif pct > 95:
+    if pct > 95:
         status = "error"
+    elif pct > 80:
+        status = "warning"
 
     details = (
         f"usage: {pct}%; "
