@@ -28,11 +28,18 @@ _UNSUPPORTED_SCHEMA_KEYS = frozenset({"patternProperties", "additionalProperties
 def _strip_unsupported_keys(obj: Any) -> Any:
     """Recursively remove unsupported JSON Schema keywords from a structure."""
     if isinstance(obj, dict):
-        return {
-            k: _strip_unsupported_keys(v)
-            for k, v in obj.items()
-            if k not in _UNSUPPORTED_SCHEMA_KEYS
-        }
+        has_unsupported = any(k in _UNSUPPORTED_SCHEMA_KEYS for k in obj)
+        if has_unsupported:
+            return {
+                k: _strip_unsupported_keys(v)
+                for k, v in obj.items()
+                if k not in _UNSUPPORTED_SCHEMA_KEYS
+            }
+        # No keys to strip; only recurse into values if needed
+        needs_recursion = any(isinstance(v, (dict, list)) for v in obj.values())
+        if not needs_recursion:
+            return obj
+        return {k: _strip_unsupported_keys(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_strip_unsupported_keys(item) for item in obj]
     return obj
