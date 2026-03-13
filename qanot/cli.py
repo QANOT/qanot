@@ -151,8 +151,13 @@ def _prompt_yn(text: str, default: bool = False) -> bool:
 
 def _validate_bot_token(token: str) -> tuple[bool, str, str]:
     """Validate Telegram bot token via getMe. Returns (ok, bot_name, username)."""
+    import re
     import urllib.request
     import urllib.error
+    # Bot tokens must match digits:alphanumeric pattern; reject anything else
+    # to prevent URL injection / header injection via crafted tokens
+    if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+', token):
+        return False, "", ""
     try:
         url = f"https://api.telegram.org/bot{token}/getMe"
         req = urllib.request.Request(url, method="GET")
