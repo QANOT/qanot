@@ -707,7 +707,9 @@ def cmd_doctor(args: list[str]) -> None:
     sessions_dir = Path(raw.get("sessions_dir", "/data/sessions"))
     if sessions_dir.exists():
         session_files = list(sessions_dir.glob("*.jsonl"))
-        total_size = sum(f.stat().st_size for f in session_files)
+        # Cache stat results to avoid double stat() calls
+        file_stats = [(f, f.stat()) for f in session_files]
+        total_size = sum(st.st_size for _, st in file_stats)
         _ok(f"{len(session_files)} session file(s), {total_size / 1024 / 1024:.1f} MB total")
 
         if total_size > 100 * 1024 * 1024:  # > 100MB
@@ -716,7 +718,7 @@ def cmd_doctor(args: list[str]) -> None:
         # Check for stale sessions (> 30 days old)
         import time
         now = time.time()
-        stale = [f for f in session_files if now - f.stat().st_mtime > 30 * 86400]
+        stale = [f for f, st in file_stats if now - st.st_mtime > 30 * 86400]
         if stale:
             _warn(f"{len(stale)} session(s) older than 30 days")
             if fix_mode:
