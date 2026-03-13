@@ -295,7 +295,12 @@ class ContextTracker:
         parts = []
         for path, heading in sources:
             if path.exists():
-                content = path.read_text(encoding="utf-8")
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning("Failed to read recovery file %s: %s", path, exc)
+                    parts.append(f"## {heading}\n[Error reading file: {exc}]")
+                    continue
                 if content.strip():
                     parts.append(f"## {heading}\n{content}")
 
