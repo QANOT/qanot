@@ -1125,20 +1125,31 @@ def cmd_help() -> None:
 def main() -> None:
     args = sys.argv[1:]
 
-    if not args or args[0] == "help" or args[0] == "--help":
+    # Commands that take remaining args
+    _COMMANDS = {
+        "init": cmd_init,
+        "start": cmd_start,
+        "doctor": cmd_doctor,
+        "backup": cmd_backup,
+        "plugin": cmd_plugin,
+    }
+    # Commands with no args
+    _NO_ARG_COMMANDS = {
+        "help": cmd_help,
+        "--help": cmd_help,
+        "version": cmd_version,
+        "--version": cmd_version,
+    }
+
+    if not args:
         cmd_help()
-    elif args[0] == "init":
-        cmd_init(args[1:])
-    elif args[0] == "start":
-        cmd_start(args[1:])
-    elif args[0] == "doctor":
-        cmd_doctor(args[1:])
-    elif args[0] == "backup":
-        cmd_backup(args[1:])
-    elif args[0] == "plugin":
-        cmd_plugin(args[1:])
-    elif args[0] == "version" or args[0] == "--version":
-        cmd_version()
+        return
+
+    cmd = args[0]
+    if cmd in _NO_ARG_COMMANDS:
+        _NO_ARG_COMMANDS[cmd]()
+    elif cmd in _COMMANDS:
+        _COMMANDS[cmd](args[1:])
     else:
         # Default: treat as start
         cmd_start(args)
