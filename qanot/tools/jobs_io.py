@@ -10,8 +10,9 @@ def load_jobs(jobs_path: Path) -> list[dict]:
     """Load jobs from JSON file."""
     if jobs_path.exists():
         try:
-            return json.loads(jobs_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+            with jobs_path.open(encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
             return []
     return []
 
