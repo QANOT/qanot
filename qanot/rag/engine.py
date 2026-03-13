@@ -229,6 +229,8 @@ class RAGEngine:
         )
         return chunk_ids
 
+    _MAX_TOP_K = 1000
+
     async def query(
         self,
         query: str,
@@ -244,6 +246,19 @@ class RAGEngine:
 
         If no embedder is available, falls back to keyword-only search.
         """
+        query = self._validate_str(query, "query", self._MAX_QUERY_LEN)
+        if not query:
+            return RAGResult(results=[], query=query, sources_used=[])
+        if not isinstance(top_k, int) or top_k < 1:
+            raise ValueError(f"top_k must be a positive integer, got {top_k!r}")
+        if top_k > self._MAX_TOP_K:
+            raise ValueError(
+                f"top_k exceeds maximum ({top_k} > {self._MAX_TOP_K})"
+            )
+        if user_id is not None:
+            user_id = self._validate_str(user_id, "user_id", self._MAX_USER_ID_LEN)
+        if source is not None:
+            source = self._validate_str(source, "source", self._MAX_SOURCE_LEN)
         vec_results: list[SearchResult] = []
         fused_scores: dict[str, float] = {}
         result_map: dict[str, SearchResult] = {}
