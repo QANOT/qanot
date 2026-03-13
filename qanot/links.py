@@ -93,11 +93,12 @@ def _should_skip_url(url: str) -> bool:
     url_lower = url.lower()
 
     # Check file extensions
-    # Strip query string before checking extension
+    # Strip query string/fragment before checking extension
     path_part = url_lower.split("?")[0].split("#")[0]
-    for ext in _SKIP_EXTENSIONS:
-        if path_part.endswith(ext):
-            return True
+    # Find the last dot to extract the extension for O(1) set lookup
+    dot_idx = path_part.rfind(".")
+    if dot_idx != -1 and path_part[dot_idx:] in _SKIP_EXTENSIONS:
+        return True
 
     # Check URL patterns
     if _SKIP_URL_PATTERNS.search(url_lower):
