@@ -206,8 +206,8 @@ class RAGEngine:
                 metadatas=metadatas,
             )
         else:
-            # FTS-only mode: store with zero embeddings
-            zero_embs = [[0.0] * 4 for _ in chunks]  # Minimal placeholder
+            # FTS-only mode: store with zero embeddings matching store dimensions
+            zero_embs = [[0.0] * self.store.dimensions for _ in chunks]
             chunk_ids = await self.store.async_add(
                 chunks,
                 zero_embs,
