@@ -18,14 +18,13 @@
 
 ## Why Qanot?
 
-Most agent frameworks give you building blocks and say "good luck." Qanot gives you a **flying agent** in 3 commands:
+Most agent frameworks give you building blocks and say "good luck." Qanot gives you a **flying agent** in one command:
 
 ```bash
-pip install qanot
-qanot init
+curl -fsSL https://raw.githubusercontent.com/QANOT/qanotai/main/install.sh | bash
 ```
 
-That's it. The wizard sets up your bot and starts it automatically. Live on Telegram with tool-use, memory, multi-agent delegation, and streaming responses.
+Then just run `qanot init` — the wizard sets up your bot and starts it automatically.
 
 ---
 
@@ -160,13 +159,20 @@ Heartbeat (every 4h) → Self-healing checks → Silent fixes → Report
 
 ## Quick Start
 
-### Install
+### One-line install
 
 ```bash
-pip install qanot
+curl -fsSL https://raw.githubusercontent.com/QANOT/qanotai/main/install.sh | bash
 ```
 
-### Initialize
+Or with pip/pipx:
+
+```bash
+pipx install qanot    # macOS recommended
+pip install qanot      # Linux / venv
+```
+
+### Start
 
 ```bash
 qanot init
