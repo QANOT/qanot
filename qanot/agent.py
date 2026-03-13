@@ -289,6 +289,11 @@ class ToolRegistry:
         # Validate input types to prevent type confusion attacks
         if not isinstance(name, str) or not name.strip():
             return json.dumps({"error": "Invalid tool name"})
+        # Sanitize tool name: must be alphanumeric/underscore, max 64 chars
+        name = name.strip()
+        if len(name) > 64 or not all(c.isalnum() or c == '_' for c in name):
+            logger.warning("Rejected invalid tool name: %r", name[:80])
+            return json.dumps({"error": "Invalid tool name: must be alphanumeric/underscore, max 64 chars"})
         if not isinstance(input_data, dict):
             logger.warning("Tool %s received non-dict input: %s", name, type(input_data).__name__)
             return json.dumps({"error": "Tool input must be a JSON object"})
