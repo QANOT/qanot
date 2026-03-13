@@ -26,12 +26,10 @@ COMMAND_TIMEOUT = 120
 
 _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # --- Destructive filesystem operations ---
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/(\s|$|\*|\"|')"), "recursive delete of root (/)"),
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+/(\s|$|\*|\"|')"), "recursive delete of root (/)"),
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~(/|\s|$)"), "recursive delete of home directory"),
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+~(/|\s|$)"), "recursive delete of home directory"),
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\*\s*$"), "recursive delete of all files (rm -rf *)"),
-    (re.compile(r"\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+\*\s*$"), "recursive delete of all files (rm -rf *)"),
+    # Matches both -rf and -fr flag orderings in a single pattern
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*(?:r[a-zA-Z]*f|f[a-zA-Z]*r)[a-zA-Z]*\s+/(\s|$|\*|\"|')"), "recursive delete of root (/)"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*(?:r[a-zA-Z]*f|f[a-zA-Z]*r)[a-zA-Z]*\s+~(/|\s|$)"), "recursive delete of home directory"),
+    (re.compile(r"\brm\s+.*-[a-zA-Z]*(?:r[a-zA-Z]*f|f[a-zA-Z]*r)[a-zA-Z]*\s+\*\s*$"), "recursive delete of all files (rm -rf *)"),
     (re.compile(r"\bmkfs\b"), "filesystem format (mkfs)"),
     (re.compile(r"\bdd\s+if="), "raw disk write (dd)"),
     (re.compile(r"\bshred\b"), "secure file destruction (shred)"),
