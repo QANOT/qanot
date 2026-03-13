@@ -258,6 +258,7 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, dict] = {}
         self._handlers: dict[str, Callable[[dict], Awaitable[str]]] = {}
+        self._cached_definitions: list[dict] | None = None
 
     def register(
         self,
@@ -275,10 +276,13 @@ class ToolRegistry:
             "input_schema": parameters,
         }
         self._handlers[name] = handler
+        self._cached_definitions = None  # Invalidate cache on registration
 
     def get_definitions(self) -> list[dict]:
-        """Get tool definitions for the LLM."""
-        return list(self._tools.values())
+        """Get tool definitions for the LLM (cached until next register)."""
+        if self._cached_definitions is None:
+            self._cached_definitions = list(self._tools.values())
+        return self._cached_definitions
 
     async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
         """Execute a tool by name with parameter validation and timeout protection."""
