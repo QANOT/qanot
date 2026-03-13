@@ -60,7 +60,9 @@ class GeminiEmbedder(Embedder):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using Gemini's OpenAI-compatible endpoint."""
-        all_embeddings: list[list[float]] = []
+        if not texts:
+            return []
+        all_embeddings: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
         for i in range(0, len(texts), 100):
             batch = texts[i : i + 100]
             response = await self.client.embeddings.create(
@@ -68,7 +70,9 @@ class GeminiEmbedder(Embedder):
                 model=self.model,
                 dimensions=self.dimensions,
             )
-            all_embeddings.extend([d.embedding for d in response.data])
+            # Sort by index to guarantee order matches input
+            for d in sorted(response.data, key=lambda d: d.index):
+                all_embeddings[i + d.index] = d.embedding
             logger.debug("Gemini embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))
         return all_embeddings
 
