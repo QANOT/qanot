@@ -1084,6 +1084,7 @@ class Agent:
             if stop_reason == "tool_use" and tool_calls:
                 loop_msg = self._check_loop(tool_calls, recent_fingerprints)
                 if loop_msg:
+                    messages.append({"role": "assistant", "content": loop_msg})
                     yield StreamEvent(
                         type="done",
                         response=ProviderResponse(content=loop_msg),
