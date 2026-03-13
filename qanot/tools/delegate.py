@@ -1171,21 +1171,43 @@ def register_delegate_tools(
         if not group_id:
             return json.dumps({"error": "group_id is required (negative number for groups)"})
 
-        config.monitor_group_id = int(group_id)
+        try:
+            group_id_int = int(group_id)
+        except (ValueError, TypeError):
+            return json.dumps({"error": f"group_id must be an integer, got: {type(group_id).__name__}"})
+
+        if group_id_int == 0:
+            return json.dumps({"error": "group_id cannot be zero"})
+
+        if group_id_int > 0:
+            logger.warning("set_monitor_group called with positive group_id=%d; Telegram group IDs are typically negative", group_id_int)
+
+        config.monitor_group_id = group_id_int
 
         # Persist to config.json
         config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
         p = Path(config_path)
-        if p.exists():
-            raw = json.loads(p.read_text(encoding="utf-8"))
-            raw["monitor_group_id"] = config.monitor_group_id
-            p.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+        try:
+            if p.exists():
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                raw["monitor_group_id"] = config.monitor_group_id
+                # Write to temp file first, then rename for atomicity
+                tmp_path = p.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+                tmp_path.replace(p)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error("Failed to persist monitor_group_id to config: %s", e)
+            return json.dumps({
+                "status": "partial",
+                "monitor_group_id": config.monitor_group_id,
+                "warning": f"Group set in memory but failed to persist to config file: {e}",
+            })
 
         return json.dumps({
             "status": "configured",
             "monitor_group_id": config.monitor_group_id,
             "message": (
-                f"Monitoring group set to {group_id}. "
+                f"Monitoring group set to {group_id_int}. "
                 "All agent-to-agent interactions will be mirrored there. "
                 "Make sure all agent bots are added to this group."
             ),
