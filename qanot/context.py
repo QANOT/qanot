@@ -262,29 +262,19 @@ class ContextTracker:
 
         Returns recovery context string to inject into the session.
         """
-        parts = []
-
-        # Read working buffer
-        buffer_path = self.workspace_dir / "memory" / "working-buffer.md"
-        if buffer_path.exists():
-            content = buffer_path.read_text(encoding="utf-8")
-            if content.strip():
-                parts.append(f"## Working Buffer Recovery\n{content}")
-
-        # Read SESSION-STATE.md
-        state_path = self.workspace_dir / "SESSION-STATE.md"
-        if state_path.exists():
-            content = state_path.read_text(encoding="utf-8")
-            if content.strip():
-                parts.append(f"## Session State\n{content}")
-
-        # Read today's daily note
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        daily_path = self.workspace_dir / "memory" / f"{today}.md"
-        if daily_path.exists():
-            content = daily_path.read_text(encoding="utf-8")
-            if content.strip():
-                parts.append(f"## Today's Notes\n{content}")
+        sources = [
+            (self.workspace_dir / "memory" / "working-buffer.md", "Working Buffer Recovery"),
+            (self.workspace_dir / "SESSION-STATE.md", "Session State"),
+            (self.workspace_dir / "memory" / f"{today}.md", "Today's Notes"),
+        ]
+
+        parts = []
+        for path, heading in sources:
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                if content.strip():
+                    parts.append(f"## {heading}\n{content}")
 
         if parts:
             return "\n\n---\n\n".join(parts)
