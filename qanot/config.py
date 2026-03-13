@@ -142,34 +142,32 @@ def load_config(path: str | None = None) -> Config:
                 config=pl.get("config", {}),
             ))
 
+    def _dict_to_dataclass(cls, data: dict):
+        """Map a dict to a dataclass using field names and defaults."""
+        import dataclasses
+        kwargs = {}
+        for f in dataclasses.fields(cls):
+            if f.name in data:
+                kwargs[f.name] = data[f.name]
+            elif f.default is not dataclasses.MISSING:
+                kwargs[f.name] = f.default
+            elif f.default_factory is not dataclasses.MISSING:
+                kwargs[f.name] = f.default_factory()
+        return cls(**kwargs)
+
     # Parse multi-provider configs
     provider_configs = []
     for pc in raw.get("providers", []):
-        provider_configs.append(ProviderConfig(
-            name=pc.get("name", pc.get("provider", "default")),
-            provider=pc["provider"],
-            model=pc["model"],
-            api_key=pc["api_key"],
-            base_url=pc.get("base_url", ""),
-        ))
+        # Special case: "name" falls back to provider name
+        if "name" not in pc:
+            pc = {**pc, "name": pc.get("provider", "default")}
+        provider_configs.append(_dict_to_dataclass(ProviderConfig, pc))
 
     # Parse agent definitions
-    agent_defs = []
-    for ad in raw.get("agents", []):
-        agent_defs.append(AgentDefinition(
-            id=ad["id"],
-            name=ad.get("name", ""),
-            prompt=ad.get("prompt", ""),
-            model=ad.get("model", ""),
-            provider=ad.get("provider", ""),
-            api_key=ad.get("api_key", ""),
-            bot_token=ad.get("bot_token", ""),
-            tools_allow=ad.get("tools_allow", []),
-            tools_deny=ad.get("tools_deny", []),
-            delegate_allow=ad.get("delegate_allow", []),
-            max_iterations=ad.get("max_iterations", 15),
-            timeout=ad.get("timeout", 120),
-        ))
+    agent_defs = [
+        _dict_to_dataclass(AgentDefinition, ad)
+        for ad in raw.get("agents", [])
+    ]
 
     # Auto-map simple fields (str, int, float, bool, list, dict) from JSON to dataclass.
     # Only nested types (plugins, providers, agents) need manual parsing.
