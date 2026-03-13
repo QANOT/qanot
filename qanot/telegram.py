@@ -376,10 +376,11 @@ class TelegramAdapter:
             async with self._concurrent:
                 await self._process_turn(msg, coalesce_key, text, images, voice_req, coalesced=coalesced)
 
-        # Clean up lock if no more pending messages for this key
-        # (avoids unbounded growth of _user_locks dict over time)
-        if coalesce_key not in self._pending_messages:
-            self._user_locks.pop(coalesce_key, None)
+        # Note: we intentionally do NOT clean up _user_locks entries.
+        # Removing a lock after release creates a race where another coroutine
+        # already holds a reference to this lock, but a new coroutine creates
+        # a different lock for the same key — breaking mutual exclusion.
+        # Lock objects are tiny; one per conversation key is acceptable.
 
     async def _process_turn(
         self,
