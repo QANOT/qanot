@@ -295,16 +295,27 @@ class ContextTracker:
             (self.workspace_dir / "memory" / f"{today}.md", "Today's Notes"),
         ]
 
+        MAX_RECOVERY_FILE_CHARS = 20_000  # Limit per file to prevent context bloat
+
         parts = []
         for path, heading in sources:
             if path.exists():
                 try:
+                    # Check file size before reading to avoid loading huge files
+                    file_size = path.stat().st_size
+                    if file_size > MAX_RECOVERY_FILE_CHARS * 4:  # rough UTF-8 estimate
+                        logger.warning(
+                            "Recovery file %s is too large (%d bytes), truncating",
+                            path, file_size,
+                        )
                     content = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.warning("Failed to read recovery file %s: %s", path, exc)
                     parts.append(f"## {heading}\n[Error reading file: {exc}]")
                     continue
                 if content.strip():
+                    if len(content) > MAX_RECOVERY_FILE_CHARS:
+                        content = content[:MAX_RECOVERY_FILE_CHARS] + "\n[truncated]\n"
                     parts.append(f"## {heading}\n{content}")
 
         if parts:
