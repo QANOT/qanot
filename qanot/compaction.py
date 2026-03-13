@@ -222,8 +222,38 @@ def split_messages_by_token_share(
     if parts <= 1:
         return [messages]
 
-    total_tokens = _precomputed_total if _precomputed_total is not None else estimate_messages_tokens(messages)
+    # Precompute per-message token counts to avoid double estimation
+    msg_token_cache: dict[int, int] = {}
+    if _precomputed_total is not None:
+        total_tokens = _precomputed_total
+    else:
+        total_tokens = 0
+        for i, msg in enumerate(messages):
+            t = estimate_message_tokens(msg)
+            msg_token_cache[id(msg)] = t
+            total_tokens += t
+
     target_tokens = total_tokens / parts
+
+    # Use cached token counts in chunking if available
+    if msg_token_cache:
+        chunks: list[list[dict]] = []
+        current: list[dict] = []
+        current_tokens = 0
+
+        for msg in messages:
+            msg_tokens = msg_token_cache.get(id(msg), estimate_message_tokens(msg))
+            can_split = len(chunks) < parts - 1
+            if can_split and current and current_tokens + msg_tokens > target_tokens:
+                chunks.append(current)
+                current = []
+                current_tokens = 0
+            current.append(msg)
+            current_tokens += msg_tokens
+
+        if current:
+            chunks.append(current)
+        return chunks
 
     return _chunk_messages(
         messages,
