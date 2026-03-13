@@ -32,8 +32,14 @@ class GroqProvider(OpenAIProvider):
         model: str = "llama-3.3-70b-versatile",
         base_url: str = "https://api.groq.com/openai/v1",
     ):
+        if not api_key or not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("GroqProvider requires a non-empty api_key")
+        if not isinstance(base_url, str) or not base_url.startswith("https://"):
+            raise ValueError(
+                f"GroqProvider base_url must use HTTPS to protect API credentials, got: {base_url!r}"
+            )
         import openai
-        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.client = openai.AsyncOpenAI(api_key=api_key.strip(), base_url=base_url)
         self.model = model
 
     def _calc_cost(self, inp: int, out: int) -> float:
