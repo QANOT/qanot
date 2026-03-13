@@ -839,7 +839,10 @@ class Agent:
 
                 raise
 
-        raise last_error  # Should not reach here
+        # Should not reach here, but defend against it
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Provider call failed with no captured error")
 
     async def run_turn(
         self,
