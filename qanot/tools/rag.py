@@ -139,8 +139,13 @@ def register_rag_tools(
         if not query:
             return json.dumps({"error": "query is required"})
 
+        if len(query) > 10000:
+            return json.dumps({"error": "query too long (max 10000 characters)"})
+
         if not isinstance(top_k, int) or top_k < 1:
             top_k = 5
+        elif top_k > 100:
+            top_k = 100
 
         user_id = get_user_id()
 
