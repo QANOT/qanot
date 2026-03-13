@@ -122,20 +122,45 @@ def register_image_tools(
 
     images_dir = Path(workspace_dir) / "generated"
 
+    def _validate_params(params: dict, prompt_error: str) -> tuple[str | None, str | None, str | None]:
+        """Validate prompt and model. Returns (prompt, img_model, error_json)."""
+        prompt = params.get("prompt", "").strip()
+        if not prompt:
+            return None, None, json.dumps({"error": prompt_error})
+        img_model = params.get("model", model)
+        if img_model not in SUPPORTED_MODELS:
+            return None, None, json.dumps({
+                "error": f"Unsupported model: {img_model}",
+                "supported": list(SUPPORTED_MODELS),
+            })
+        return prompt, img_model, None
+
+    def _build_success(image_data, prompt, img_model, prefix, fail_msg):
+        """Process response image data: save, queue, return JSON result."""
+        image_data_bytes, response_text = _extract_image_from_response(image_data)
+        if not image_data_bytes:
+            return json.dumps({
+                "error": fail_msg,
+                "model_response": response_text or "(no text response)",
+            })
+        image_path, size_bytes = _save_and_queue(
+            image_data_bytes, images_dir, get_user_id, prefix=prefix,
+        )
+        return json.dumps({
+            "status": "ok",
+            "image_path": image_path,
+            "model": img_model,
+            "description": response_text or prompt,
+            "size_bytes": size_bytes,
+        })
+
     # ── generate_image ──────────────────────────────────────
 
     async def generate_image(params: dict) -> str:
         """Generate an image from a text prompt using Nano Banana."""
-        prompt = params.get("prompt", "").strip()
-        if not prompt:
-            return json.dumps({"error": "prompt is required"})
-
-        img_model = params.get("model", model)
-        if img_model not in SUPPORTED_MODELS:
-            return json.dumps({
-                "error": f"Unsupported model: {img_model}",
-                "supported": list(SUPPORTED_MODELS),
-            })
+        prompt, img_model, err = _validate_params(params, "prompt is required")
+        if err:
+            return err
 
         try:
             from google.genai import types
@@ -149,25 +174,10 @@ def register_image_tools(
                 ),
             )
 
-            image_data, response_text = _extract_image_from_response(response)
-
-            if not image_data:
-                return json.dumps({
-                    "error": "No image generated. The model may have refused the prompt.",
-                    "model_response": response_text or "(no text response)",
-                })
-
-            image_path, size_bytes = _save_and_queue(
-                image_data, images_dir, get_user_id, prefix="gen",
+            return _build_success(
+                response, prompt, img_model, "gen",
+                "No image generated. The model may have refused the prompt.",
             )
-
-            return json.dumps({
-                "status": "ok",
-                "image_path": image_path,
-                "model": img_model,
-                "description": response_text or prompt,
-                "size_bytes": size_bytes,
-            })
 
         except ImportError:
             return json.dumps({
@@ -181,16 +191,11 @@ def register_image_tools(
 
     async def edit_image(params: dict) -> str:
         """Edit the user's last sent image based on a text instruction."""
-        prompt = params.get("prompt", "").strip()
-        if not prompt:
-            return json.dumps({"error": "prompt is required — describe what to change"})
-
-        img_model = params.get("model", model)
-        if img_model not in SUPPORTED_MODELS:
-            return json.dumps({
-                "error": f"Unsupported model: {img_model}",
-                "supported": list(SUPPORTED_MODELS),
-            })
+        prompt, img_model, err = _validate_params(
+            params, "prompt is required — describe what to change",
+        )
+        if err:
+            return err
 
         # Find the source image
         source_bytes = _find_last_image_in_conversation(get_user_id)
@@ -216,25 +221,10 @@ def register_image_tools(
                 ),
             )
 
-            image_data, response_text = _extract_image_from_response(response)
-
-            if not image_data:
-                return json.dumps({
-                    "error": "Image editing failed. The model may have refused the request.",
-                    "model_response": response_text or "(no text response)",
-                })
-
-            image_path, size_bytes = _save_and_queue(
-                image_data, images_dir, get_user_id, prefix="edit",
+            return _build_success(
+                response, prompt, img_model, "edit",
+                "Image editing failed. The model may have refused the request.",
             )
-
-            return json.dumps({
-                "status": "ok",
-                "image_path": image_path,
-                "model": img_model,
-                "description": response_text or prompt,
-                "size_bytes": size_bytes,
-            })
 
         except ImportError:
             return json.dumps({
