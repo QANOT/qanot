@@ -209,6 +209,24 @@ class ContextTracker:
         buffer_path.write_text(content, encoding="utf-8")
         logger.info("Working buffer initialized at %s", buffer_path)
 
+    @staticmethod
+    def _sanitize_buffer_content(text: str) -> str:
+        """Sanitize text before writing to working buffer to prevent injection.
+
+        Prevents users from injecting fake headers, agent summaries,
+        or structural markers that could mislead recovery.
+        """
+        import re
+        # Remove markdown headers that could fake structural elements
+        sanitized = re.sub(r'^#{1,6}\s', '> ', text, flags=re.MULTILINE)
+        # Remove horizontal rules that could fake section breaks
+        sanitized = re.sub(r'^\s*-{3,}\s*$', '', sanitized, flags=re.MULTILINE)
+        sanitized = re.sub(r'^\s*\*{3,}\s*$', '', sanitized, flags=re.MULTILINE)
+        # Limit total length to prevent buffer flooding
+        if len(sanitized) > 4000:
+            sanitized = sanitized[:4000] + "\n[truncated]"
+        return sanitized
+
     def append_to_buffer(self, human_msg: str, agent_summary: str) -> None:
         """Append an exchange to the working buffer."""
         if not self.buffer_active:
@@ -219,9 +237,11 @@ class ContextTracker:
             self._init_working_buffer()
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        safe_human = self._sanitize_buffer_content(human_msg)
+        safe_summary = self._sanitize_buffer_content(agent_summary)
         entry = (
-            f"\n## [{ts}] Human\n{human_msg}\n\n"
-            f"## [{ts}] Agent (summary)\n{agent_summary}\n"
+            f"\n## [{ts}] Human\n{safe_human}\n\n"
+            f"## [{ts}] Agent (summary)\n{safe_summary}\n"
         )
 
         with open(buffer_path, "a", encoding="utf-8") as f:
