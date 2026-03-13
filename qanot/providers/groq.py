@@ -34,13 +34,19 @@ class GroqProvider(OpenAIProvider):
     ):
         if not api_key or not isinstance(api_key, str) or not api_key.strip():
             raise ValueError("GroqProvider requires a non-empty api_key")
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("GroqProvider requires a non-empty model name")
+        if len(model) > 256:
+            raise ValueError(
+                f"GroqProvider model name too long ({len(model)} chars), max 256"
+            )
         if not isinstance(base_url, str) or not base_url.startswith("https://"):
             raise ValueError(
                 f"GroqProvider base_url must use HTTPS to protect API credentials, got: {base_url!r}"
             )
         import openai
         self.client = openai.AsyncOpenAI(api_key=api_key.strip(), base_url=base_url)
-        self.model = model
+        self.model = model.strip()
 
     def _calc_cost(self, inp: int, out: int) -> float:
         prices = GROQ_PRICING.get(self.model, {"input": 0.59, "output": 0.79})
