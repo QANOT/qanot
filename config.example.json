@@ -68,29 +68,5 @@
       "timeout": 60
     }
   ],
-  "plugins": [
-    {
-      "name": "absmarket",
-      "enabled": false,
-      "config": {
-        "api_url": "https://your-absmarket-server.com",
-        "email": "admin@example.com",
-        "password": "password",
-        "db_host": "",
-        "db_port": 3306,
-        "db_user": "",
-        "db_password": "",
-        "db_name": "absmarket"
-      }
-    },
-    {
-      "name": "absvision",
-      "enabled": false,
-      "config": {
-        "api_url": "https://your-absvision-server.com",
-        "phone": "+998901234567",
-        "password": "password"
-      }
-    }
-  ]
+  "plugins": []
 }
