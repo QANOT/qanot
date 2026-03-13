@@ -141,15 +141,18 @@ class ContextTracker:
         return compacted
 
     @staticmethod
-    def extract_compaction_text(messages: list[dict], keep_start: int = 2, keep_recent: int = 4) -> str:
+    def extract_compaction_text(messages: list[dict], keep_start: int = 2, keep_recent: int | None = None) -> str:
         """Extract the text content of messages that would be removed during compaction.
 
         Returns a formatted string suitable for sending to an LLM for summarization.
+        Uses the same keep_recent logic as compact_messages to ensure consistency.
         """
+        if keep_recent is None:
+            keep_recent = min(4, len(messages) // 2)
         if len(messages) <= keep_start + keep_recent:
             return ""
 
-        middle = messages[keep_start:-keep_recent]
+        middle = messages[keep_start:-keep_recent] if keep_recent > 0 else messages[keep_start:]
         parts: list[str] = []
 
         for msg in middle:
