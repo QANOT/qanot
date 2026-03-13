@@ -308,8 +308,14 @@ def register_web_tools(
         query = params.get("query", "").strip()
         if not query:
             return json.dumps({"error": "Query is required"})
+        if len(query) > 2000:
+            return json.dumps({"error": "Query too long (max 2000 characters)"})
 
-        count = min(int(params.get("count", 5)), 10)
+        try:
+            count = int(params.get("count", 5))
+        except (TypeError, ValueError):
+            return json.dumps({"error": "count must be an integer"})
+        count = max(1, min(count, 10))
 
         # Check cache
         cache_key = f"{query.lower()}:{count}"
