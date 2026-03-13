@@ -42,7 +42,12 @@ def classify_error(error: Exception) -> str:
     """
     # Extract HTTP status code if available
     status = getattr(error, "status_code", None) or getattr(error, "status", None)
-    if status and status in _STATUS_MAP:
+    if status is not None:
+        try:
+            status = int(status)
+        except (ValueError, TypeError):
+            status = None
+    if status is not None and status in _STATUS_MAP:
         return _STATUS_MAP[status]
 
     # Fallback: check error message
