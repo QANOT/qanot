@@ -100,23 +100,32 @@ async def _run_sub_agent(
 
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
-        await send_callback(
-            chat_id,
-            f"**Sub-agent timed out** ({elapsed:.0f}s)\n"
-            f"Task: {task}\n\n"
-            f"The task took too long (>{SUB_AGENT_TIMEOUT}s limit). "
-            f"Try breaking it into smaller parts.",
-        )
+        task_preview = task[:200] + ("..." if len(task) > 200 else "")
+        try:
+            await send_callback(
+                chat_id,
+                f"**Sub-agent timed out** ({elapsed:.0f}s)\n"
+                f"Task: {task_preview}\n\n"
+                f"The task took too long (>{SUB_AGENT_TIMEOUT}s limit). "
+                f"Try breaking it into smaller parts.",
+            )
+        except Exception as cb_err:
+            logger.error("Failed to send timeout notification for sub-agent %s: %s", task_id[:8], cb_err)
         logger.warning("Sub-agent %s timed out for user %s", task_id[:8], user_id)
 
     except Exception as e:
         elapsed = time.monotonic() - start
-        await send_callback(
-            chat_id,
-            f"**Sub-agent failed** ({elapsed:.0f}s)\n"
-            f"Task: {task}\n\n"
-            f"Error: {e}",
-        )
+        task_preview = task[:200] + ("..." if len(task) > 200 else "")
+        error_msg = str(e)[:500] if str(e) else "Unknown error"
+        try:
+            await send_callback(
+                chat_id,
+                f"**Sub-agent failed** ({elapsed:.0f}s)\n"
+                f"Task: {task_preview}\n\n"
+                f"Error: {error_msg}",
+            )
+        except Exception as cb_err:
+            logger.error("Failed to send error notification for sub-agent %s: %s", task_id[:8], cb_err)
         logger.error("Sub-agent %s failed for user %s: %s", task_id[:8], user_id, e)
 
     finally:
