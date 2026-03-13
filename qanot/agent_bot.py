@@ -159,10 +159,11 @@ class AgentBot:
         chat_id = message.chat.id
         text = message.text or message.caption or ""
 
-        # Strip @bot_username from the text
+        # Strip @bot_username from the text (case-insensitive)
         username = await self._resolve_bot_username()
         if username:
-            text = text.replace(f"@{username}", "").replace(f"@{username.upper()}", "").strip()
+            import re
+            text = re.sub(rf"@{re.escape(username)}", "", text, flags=re.IGNORECASE).strip()
 
         if not text.strip():
             return
