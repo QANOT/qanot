@@ -287,38 +287,34 @@ class AgentBot:
 
         return dataclasses.replace(self.config, **overrides)
 
+    async def _send_chunk(self, chat_id: int, chunk: str) -> None:
+        """Send a single message chunk with HTML formatting and plain-text fallback."""
+        from qanot.telegram import _md_to_html
+
+        try:
+            html = _md_to_html(chunk)
+            await self.bot.send_message(
+                chat_id=chat_id, text=html,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            await self.bot.send_message(chat_id=chat_id, text=chunk)
+
     async def _send_response(self, chat_id: int, text: str) -> None:
         """Send response, splitting if too long."""
         if not text:
             return
 
-        # Import the formatting helper from telegram module
-        from qanot.telegram import _md_to_html, _sanitize_response
+        from qanot.telegram import _sanitize_response
 
         text = _sanitize_response(text)
 
         if len(text) <= MAX_MSG_LEN:
-            try:
-                html = _md_to_html(text)
-                await self.bot.send_message(
-                    chat_id=chat_id, text=html,
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                # Fallback to plain text
-                await self.bot.send_message(chat_id=chat_id, text=text)
+            await self._send_chunk(chat_id, text)
         else:
-            # Split long messages
             chunks = [text[i:i + MAX_MSG_LEN] for i in range(0, len(text), MAX_MSG_LEN)]
             for chunk in chunks:
-                try:
-                    html = _md_to_html(chunk)
-                    await self.bot.send_message(
-                        chat_id=chat_id, text=html,
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception:
-                    await self.bot.send_message(chat_id=chat_id, text=chunk)
+                await self._send_chunk(chat_id, chunk)
 
     async def _typing_loop(self, chat_id: int) -> None:
         """Send typing indicator until cancelled."""
