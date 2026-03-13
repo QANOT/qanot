@@ -880,35 +880,36 @@ class TelegramAdapter:
         interval = self.config.stream_flush_interval
         sent_msg_id: int | None = None
 
-        async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
-            if event.type == "text_delta":
-                accumulated += event.text
-                now = asyncio.get_event_loop().time()
-                if now - last_flush >= interval and accumulated.strip():
-                    if sent_msg_id is None:
-                        try:
-                            send_kwargs: dict = {"chat_id": chat_id, "text": accumulated[:MAX_MSG_LEN]}
-                            if reply_to:
-                                send_kwargs["reply_to_message_id"] = reply_to
-                            msg = await self.bot.send_message(**send_kwargs)
-                            sent_msg_id = msg.message_id
-                        except Exception as e:
-                            logger.warning("Partial send failed: %s", e)
-                    else:
-                        try:
-                            await self.bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=sent_msg_id,
-                                text=accumulated[:MAX_MSG_LEN],
-                            )
-                        except Exception:
-                            pass  # Edit failures are expected (unchanged text)
-                    last_flush = now
+        try:
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
+                if event.type == "text_delta":
+                    accumulated += event.text
+                    now = asyncio.get_event_loop().time()
+                    if now - last_flush >= interval and accumulated.strip():
+                        if sent_msg_id is None:
+                            try:
+                                send_kwargs: dict = {"chat_id": chat_id, "text": accumulated[:MAX_MSG_LEN]}
+                                if reply_to:
+                                    send_kwargs["reply_to_message_id"] = reply_to
+                                msg = await self.bot.send_message(**send_kwargs)
+                                sent_msg_id = msg.message_id
+                            except Exception as e:
+                                logger.warning("Partial send failed: %s", e)
+                        else:
+                            try:
+                                await self.bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=sent_msg_id,
+                                    text=accumulated[:MAX_MSG_LEN],
+                                )
+                            except Exception:
+                                pass  # Edit failures are expected (unchanged text)
+                        last_flush = now
 
-            elif event.type == "done":
-                break
-
-        typing_task.cancel()
+                elif event.type == "done":
+                    break
+        finally:
+            typing_task.cancel()
 
         # Final edit or send
         final_text = accumulated or "(No response)"
