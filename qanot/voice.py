@@ -249,33 +249,45 @@ async def kotib_transcribe(
     """Transcribe audio using KotibAI STT API. Requires MP3/WAV/M4A (no OGG)."""
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    data = aiohttp.FormData()
-    data.add_field(
-        "file",
-        open(audio_path, "rb"),
-        filename=os.path.basename(audio_path),
-    )
-    data.add_field("blocking", "true")
-    if language:
-        data.add_field("language", language)
+    if not os.path.isfile(audio_path):
+        raise ValueError(f"Audio file does not exist: {audio_path}")
+    # Prevent path traversal: only allow files in temp directories or current working dir
+    real_path = os.path.realpath(audio_path)
+    allowed_prefixes = (tempfile.gettempdir(), os.getcwd())
+    if not any(real_path.startswith(os.path.realpath(p) + os.sep) or real_path == os.path.realpath(p) for p in allowed_prefixes):
+        raise ValueError(f"Audio path not in allowed directory: {audio_path}")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{KOTIB_BASE_URL}/stt",
-            headers=headers,
-            data=data,
-        ) as resp:
-            result = await resp.json()
-            if resp.status != 200:
-                error = result.get("error", f"HTTP {resp.status}")
-                raise RuntimeError(f"KotibAI STT error: {error}")
-            if result.get("status") != "success":
-                raise RuntimeError(f"KotibAI STT failed: {result}")
-            text = result.get("text", "")
-            # Strip "Speaker N:" prefixes from diarization output
-            import re
-            text = re.sub(r"Speaker \d+:\s*", "", text).strip()
-            return TranscriptionResult(text=text, language=language)
+    data = aiohttp.FormData()
+    file_handle = open(audio_path, "rb")
+    try:
+        data.add_field(
+            "file",
+            file_handle,
+            filename=os.path.basename(audio_path),
+        )
+        data.add_field("blocking", "true")
+        if language:
+            data.add_field("language", language)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{KOTIB_BASE_URL}/stt",
+                headers=headers,
+                data=data,
+            ) as resp:
+                result = await resp.json()
+                if resp.status != 200:
+                    error = result.get("error", f"HTTP {resp.status}")
+                    raise RuntimeError(f"KotibAI STT error: {error}")
+                if result.get("status") != "success":
+                    raise RuntimeError(f"KotibAI STT failed: {result}")
+                text = result.get("text", "")
+                # Strip "Speaker N:" prefixes from diarization output
+                import re
+                text = re.sub(r"Speaker \d+:\s*", "", text).strip()
+                return TranscriptionResult(text=text, language=language)
+    finally:
+        file_handle.close()
 
 
 async def kotib_tts(
