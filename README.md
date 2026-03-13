@@ -1,7 +1,8 @@
 <p align="center">
   <h1 align="center">🪶 Qanot AI</h1>
   <p align="center">
-    <strong>Build intelligent Telegram agents in minutes, not months.</strong>
+    <strong>The AI agent that flies on its own.</strong><br>
+    <em>Two commands to fly.</em>
   </p>
   <p align="center">
     <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/v/qanot?color=blue&label=PyPI" alt="PyPI"></a>

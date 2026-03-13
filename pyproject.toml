@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qanot"
 version = "1.2.0"
-description = "Lightweight AI agent framework for Telegram bots"
+description = "The AI agent that flies on its own. Two commands to fly."
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
