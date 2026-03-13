@@ -137,7 +137,6 @@ async def main() -> None:
     rag_indexer = None
     if config.rag_enabled:
         from qanot.rag import create_embedder, SqliteVecStore, RAGEngine, MemoryIndexer
-        from qanot.tools.rag import register_rag_tools
 
         embedder = create_embedder(config)
         dimensions = embedder.dimensions if embedder else 768
