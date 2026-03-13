@@ -148,6 +148,24 @@ class RAGEngine:
 
         return result
 
+    # Maximum allowed lengths for string inputs (defense-in-depth)
+    _MAX_SOURCE_LEN = 1024
+    _MAX_USER_ID_LEN = 256
+    _MAX_TEXT_LEN = 10_000_000  # 10 MB
+    _MAX_QUERY_LEN = 10_000
+
+    @staticmethod
+    def _validate_str(value: str, name: str, max_len: int) -> str:
+        """Validate a string input: type check, strip, and enforce length."""
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string, got {type(value).__name__}")
+        value = value.strip()
+        if len(value) > max_len:
+            raise ValueError(
+                f"{name} exceeds maximum length ({len(value)} > {max_len})"
+            )
+        return value
+
     async def ingest(
         self,
         text: str,
@@ -161,6 +179,11 @@ class RAGEngine:
         Uses embedding cache to skip re-embedding unchanged chunks.
         Falls back to FTS-only indexing if no embedder is available.
         """
+        text = self._validate_str(text, "text", self._MAX_TEXT_LEN)
+        source = self._validate_str(source, "source", self._MAX_SOURCE_LEN)
+        user_id = self._validate_str(user_id, "user_id", self._MAX_USER_ID_LEN)
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError(f"metadata must be a dict or None, got {type(metadata).__name__}")
         chunks = chunk_text(
             text,
             max_tokens=self.chunk_size,
