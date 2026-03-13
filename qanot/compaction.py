@@ -479,19 +479,28 @@ def prune_history_for_context(
     budget = int(max_context_tokens * max_history_share)
     kept = messages
     total_dropped = 0
+    kept_tokens = estimate_messages_tokens(kept)
 
-    while kept and estimate_messages_tokens(kept) > budget:
+    while kept and kept_tokens > budget:
         chunks = split_messages_by_token_share(kept, parts)
         if len(chunks) <= 1:
             break
 
         # Drop oldest chunk, keep rest
         dropped = chunks[0]
+        dropped_tokens = estimate_messages_tokens(dropped)
         kept = [msg for chunk in chunks[1:] for msg in chunk]
         total_dropped += len(dropped)
 
         # Repair orphaned tool results
         kept = _repair_orphaned_tool_results(kept)
+        # Re-estimate only if repair may have removed messages, otherwise subtract
+        new_len = len(kept)
+        expected_len = sum(len(c) for c in chunks[1:])
+        if new_len != expected_len:
+            kept_tokens = estimate_messages_tokens(kept)
+        else:
+            kept_tokens -= dropped_tokens
 
     return kept, total_dropped
 
