@@ -134,30 +134,42 @@ async def muxlisa_transcribe(
     """
     headers = {"x-api-key": api_key}
 
+    if not os.path.isfile(audio_path):
+        raise ValueError(f"Audio file does not exist: {audio_path}")
+    # Prevent path traversal: only allow files in temp directories or current working dir
+    real_path = os.path.realpath(audio_path)
+    allowed_prefixes = (tempfile.gettempdir(), os.getcwd())
+    if not any(real_path.startswith(os.path.realpath(p) + os.sep) or real_path == os.path.realpath(p) for p in allowed_prefixes):
+        raise ValueError(f"Audio path not in allowed directory: {audio_path}")
+
     data = aiohttp.FormData()
-    data.add_field(
-        "audio",
-        open(audio_path, "rb"),
-        filename=os.path.basename(audio_path),
-    )
+    file_handle = open(audio_path, "rb")
+    try:
+        data.add_field(
+            "audio",
+            file_handle,
+            filename=os.path.basename(audio_path),
+        )
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{MUXLISA_BASE_URL}/stt",
-            headers=headers,
-            data=data,
-        ) as resp:
-            if resp.status == 402:
-                raise RuntimeError("Muxlisa STT: balance depleted (402)")
-            if resp.status == 429:
-                raise RuntimeError("Muxlisa STT: rate limit exceeded (40 req/min)")
-            if resp.status != 200:
-                body = await resp.text()
-                raise RuntimeError(f"Muxlisa STT error: HTTP {resp.status} — {body[:200]}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{MUXLISA_BASE_URL}/stt",
+                headers=headers,
+                data=data,
+            ) as resp:
+                if resp.status == 402:
+                    raise RuntimeError("Muxlisa STT: balance depleted (402)")
+                if resp.status == 429:
+                    raise RuntimeError("Muxlisa STT: rate limit exceeded (40 req/min)")
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Muxlisa STT error: HTTP {resp.status} — {body[:200]}")
 
-            result = await resp.json()
-            text = result.get("text", "") if isinstance(result, dict) else str(result)
-            return TranscriptionResult(text=text)
+                result = await resp.json()
+                text = result.get("text", "") if isinstance(result, dict) else str(result)
+                return TranscriptionResult(text=text)
+    finally:
+        file_handle.close()
 
 
 # Muxlisa TTS voices
