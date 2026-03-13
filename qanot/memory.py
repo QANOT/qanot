@@ -135,18 +135,26 @@ def _append_to_memory(entries: list[WALEntry], workspace_dir: str) -> None:
     if not new_lines:
         return
 
-    # Ensure header exists
+    # Ensure header and section exist
+    needs_rewrite = False
     if not existing.strip():
         existing = "# MEMORY.md - Long-Term Memory\n\n"
+        needs_rewrite = True
 
-    # Append under "## Auto-captured" section
     section_header = "## Auto-captured\n"
     if section_header not in existing:
         existing = existing.rstrip() + f"\n\n{section_header}\n"
+        needs_rewrite = True
 
-    with open(memory_path, "w", encoding="utf-8") as f:
-        f.write(existing.rstrip() + "\n")
-        f.writelines(new_lines)
+    if needs_rewrite:
+        with open(memory_path, "w", encoding="utf-8") as f:
+            f.write(existing.rstrip() + "\n")
+            f.writelines(new_lines)
+    else:
+        # Append-only: avoids race condition where concurrent writes
+        # overwrite each other's data
+        with open(memory_path, "a", encoding="utf-8") as f:
+            f.writelines(new_lines)
 
     logger.info("Saved %d durable facts to MEMORY.md", len(new_lines))
     _notify_hooks("".join(new_lines), "MEMORY.md")
