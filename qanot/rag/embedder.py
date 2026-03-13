@@ -91,14 +91,17 @@ class OpenAIEmbedder(Embedder):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts in batches of 100."""
-        all_embeddings: list[list[float]] = []
+        if not texts:
+            return []
+        all_embeddings: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
         for i in range(0, len(texts), 100):
             batch = texts[i : i + 100]
             response = await self.client.embeddings.create(
                 input=batch,
                 model=self.model,
             )
-            all_embeddings.extend([d.embedding for d in response.data])
+            for j, d in enumerate(response.data):
+                all_embeddings[i + j] = d.embedding
             logger.debug("OpenAI embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))
         return all_embeddings
 
