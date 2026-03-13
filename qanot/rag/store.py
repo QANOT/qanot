@@ -331,6 +331,13 @@ class SqliteVecStore(VectorStore):
                 f"metadatas ({len(metadatas)}) must match texts ({len(texts)})"
             )
 
+        for i, emb in enumerate(embeddings):
+            if len(emb) != self.dimensions:
+                raise ValueError(
+                    f"Embedding at index {i} has {len(emb)} dimensions, "
+                    f"expected {self.dimensions}"
+                )
+
         conn = self._conn
         assert conn is not None, "Database not initialized"
 
