@@ -258,10 +258,16 @@ async def fetch_link_previews(
     if not urls:
         return ""
 
-    # Limit to max_urls
+    # Limit to max_urls (ensure positive)
+    if max_urls <= 0:
+        return ""
     urls = urls[:max_urls]
+    if not urls:
+        return ""
 
     # Fetch all URLs concurrently
+    if max_total_chars <= 0:
+        return ""
     per_url_chars = max_total_chars // len(urls)
     tasks = [fetch_url_preview(url, max_chars=per_url_chars) for url in urls]
     results = await asyncio.gather(*tasks, return_exceptions=True)
