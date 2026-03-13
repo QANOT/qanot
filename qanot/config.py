@@ -180,6 +180,38 @@ def load_config(path: str | None = None) -> Config:
         if f.name in raw:
             simple[f.name] = raw[f.name]
 
+    # Sanitize string fields: reject control characters (null bytes, newlines, etc.)
+    # that could enable injection attacks in HTTP headers, file paths, or API calls
+    import re
+    _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+    _SENSITIVE_FIELDS = {
+        'bot_token', 'api_key', 'brave_api_key', 'voice_api_key',
+        'image_api_key', 'webhook_url', 'base_url',
+        'soul_path', 'tools_path', 'workspace_dir', 'sessions_dir',
+        'cron_dir', 'plugins_dir',
+    }
+    for key, value in simple.items():
+        if isinstance(value, str) and key in _SENSITIVE_FIELDS:
+            if _CONTROL_CHAR_RE.search(value):
+                raise ValueError(
+                    f"Config field '{key}' contains invalid control characters"
+                )
+    # Also validate provider and agent secrets
+    for pc in provider_configs:
+        for attr in ('api_key', 'base_url'):
+            val = getattr(pc, attr, '')
+            if val and _CONTROL_CHAR_RE.search(val):
+                raise ValueError(
+                    f"Provider '{pc.name}' field '{attr}' contains invalid control characters"
+                )
+    for ad in agent_defs:
+        for attr in ('api_key', 'bot_token'):
+            val = getattr(ad, attr, '')
+            if val and _CONTROL_CHAR_RE.search(val):
+                raise ValueError(
+                    f"Agent '{ad.id}' field '{attr}' contains invalid control characters"
+                )
+
     return Config(
         **simple,
         plugins=plugins,
