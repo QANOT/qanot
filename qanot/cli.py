@@ -223,6 +223,14 @@ def _validate_api_key(provider: str, api_key: str) -> bool:
         # 401/403 = bad key, but 400/429 = key works (just bad request or rate limit)
         if e.code in (400, 429):
             return True
+    except urllib.error.URLError as e:
+        # Network-level errors (DNS, connection refused, timeout)
+        # Treat as inconclusive — don't reject a potentially valid key
+        # due to network issues
+        import socket
+        if isinstance(e.reason, socket.timeout):
+            return True  # Assume key is valid; network just timed out
+        pass
     except Exception:
         pass
     return False
