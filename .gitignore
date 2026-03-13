@@ -9,3 +9,5 @@ config.json
 /data/
 .venv/
 venv/
+.claude/
+CLAUDE.md
