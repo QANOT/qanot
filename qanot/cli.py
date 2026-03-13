@@ -450,8 +450,13 @@ def cmd_init(args: list[str]) -> None:
     if brave_api_key:
         print(f"  Web Search: Brave API")
     print()
-    print(f"  Run: {_cyan(f'qanot start {target}')}")
+
+    # Auto-start after init
+    print(f"  {_cyan('Starting bot...')}")
     print()
+    os.environ["QANOT_CONFIG"] = str(config_path.resolve())
+    from qanot.main import main as run_main
+    asyncio.run(run_main())
 
 
 def cmd_start(args: list[str]) -> None:

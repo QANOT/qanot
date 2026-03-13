@@ -21,11 +21,10 @@ Most agent frameworks give you building blocks and say "good luck." Qanot gives 
 
 ```bash
 pip install qanot
-qanot init mybot
-qanot start mybot
+qanot init
 ```
 
-That's it. Your bot is live on Telegram with tool-use, memory, multi-agent delegation, and streaming responses.
+That's it. The wizard sets up your bot and starts it automatically. Live on Telegram with tool-use, memory, multi-agent delegation, and streaming responses.
 
 ---
 
@@ -169,20 +168,14 @@ pip install qanot
 ### Initialize
 
 ```bash
-qanot init mybot
+qanot init
 ```
 
-The interactive wizard walks you through:
+The wizard walks you through setup and starts your bot automatically:
 - Telegram bot token (validates via API)
 - AI provider selection + API key validation
 - Voice provider setup
 - User access control
-
-### Run
-
-```bash
-qanot start mybot
-```
 
 ### Docker
 
