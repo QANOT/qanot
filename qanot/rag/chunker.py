@@ -163,9 +163,8 @@ class BM25Index:
 
         scores: list[tuple[str, float]] = []
 
-        for i, (doc_id, freq) in enumerate(zip(self._doc_ids, self._doc_freqs)):
+        for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
-            dl = self._doc_lens[i]
 
             for token in query_tokens:
                 if token not in freq:
