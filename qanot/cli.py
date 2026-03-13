@@ -841,23 +841,17 @@ def cmd_backup(args: list[str]) -> None:
     print()
 
     # Collect directories to back up
-    dirs_to_backup: list[tuple[Path, str]] = []
-
-    ws_dir = Path(raw.get("workspace_dir", project_dir / "workspace"))
-    if ws_dir.exists():
-        dirs_to_backup.append((ws_dir, "workspace"))
-
-    sessions_dir = Path(raw.get("sessions_dir", project_dir / "sessions"))
-    if sessions_dir.exists():
-        dirs_to_backup.append((sessions_dir, "sessions"))
-
-    cron_dir = Path(raw.get("cron_dir", project_dir / "cron"))
-    if cron_dir.exists():
-        dirs_to_backup.append((cron_dir, "cron"))
-
-    plugins_dir = Path(raw.get("plugins_dir", project_dir / "plugins"))
-    if plugins_dir.exists():
-        dirs_to_backup.append((plugins_dir, "plugins"))
+    backup_dirs_spec = [
+        ("workspace_dir", "workspace"),
+        ("sessions_dir", "sessions"),
+        ("cron_dir", "cron"),
+        ("plugins_dir", "plugins"),
+    ]
+    dirs_to_backup: list[tuple[Path, str]] = [
+        (Path(raw.get(config_key, project_dir / name)), name)
+        for config_key, name in backup_dirs_spec
+        if Path(raw.get(config_key, project_dir / name)).exists()
+    ]
 
     # Always include config.json
     if not dirs_to_backup and not config_path.exists():
