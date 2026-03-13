@@ -44,18 +44,9 @@ def backup_workspace(workspace_dir: str) -> str | None:
         logger.warning("Workspace directory does not exist: %s", workspace_dir)
         return None
 
-    # Collect files that actually exist
-    files_to_backup: list[Path] = []
-    for fname in BACKUP_FILES:
-        fpath = ws / fname
-        if fpath.is_file():
-            files_to_backup.append(fpath)
-
-    dirs_to_backup: list[Path] = []
-    for dname in BACKUP_DIRS:
-        dpath = ws / dname
-        if dpath.is_dir():
-            dirs_to_backup.append(dpath)
+    # Collect files and directories that actually exist
+    files_to_backup = [ws / f for f in BACKUP_FILES if (ws / f).is_file()]
+    dirs_to_backup = [ws / d for d in BACKUP_DIRS if (ws / d).is_dir()]
 
     # Find config.json (from parent or QANOT_CONFIG env)
     config_path = _find_config_path(ws)
