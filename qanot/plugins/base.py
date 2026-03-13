@@ -41,17 +41,32 @@ class PluginManifest:
         """Load manifest from plugin.json file."""
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                logger.warning("plugin.json at %s is not a JSON object", path)
+                return cls(name=path.parent.name)
+
+            def _str(key: str, default: str = "") -> str:
+                v = raw.get(key, default)
+                return str(v) if v is not None else default
+
+            def _list(key: str) -> list[str]:
+                v = raw.get(key, [])
+                if not isinstance(v, list):
+                    logger.warning("plugin.json at %s: '%s' should be a list, got %s", path, key, type(v).__name__)
+                    return []
+                return [str(item) for item in v]
+
             return cls(
-                name=raw.get("name", path.parent.name),
-                version=raw.get("version", "0.1.0"),
-                description=raw.get("description", ""),
-                author=raw.get("author", ""),
-                dependencies=raw.get("dependencies", []),
-                plugin_deps=raw.get("plugin_deps", []),
-                required_config=raw.get("required_config", []),
-                min_qanot_version=raw.get("min_qanot_version", ""),
-                homepage=raw.get("homepage", ""),
-                license=raw.get("license", "MIT"),
+                name=_str("name", path.parent.name),
+                version=_str("version", "0.1.0"),
+                description=_str("description"),
+                author=_str("author"),
+                dependencies=_list("dependencies"),
+                plugin_deps=_list("plugin_deps"),
+                required_config=_list("required_config"),
+                min_qanot_version=_str("min_qanot_version"),
+                homepage=_str("homepage"),
+                license=_str("license", "MIT"),
             )
         except Exception as e:
             logger.warning("Failed to parse plugin.json at %s: %s", path, e)
