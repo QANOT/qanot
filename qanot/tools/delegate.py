@@ -665,11 +665,19 @@ def register_delegate_tools(
 
     async def delegate_to_agent(params: dict) -> str:
         """Delegate a task to a specialist agent and wait for the result."""
-        task = params.get("task", "").strip()
+        task = params.get("task", "")
+        if not isinstance(task, str):
+            return json.dumps({"error": "task must be a string"})
+        task = task.strip()
         if not task:
             return json.dumps({"error": "task is required"})
+        if len(task) > 10000:
+            return json.dumps({"error": f"task too long ({len(task)} chars, max 10000)"})
 
-        agent_id = params.get("agent_id", "researcher").lower()
+        agent_id = params.get("agent_id", "researcher")
+        if not isinstance(agent_id, str):
+            return json.dumps({"error": "agent_id must be a string"})
+        agent_id = agent_id.lower()
         if agent_id not in available_agents:
             return json.dumps({
                 "error": f"Unknown agent: {agent_id}",
