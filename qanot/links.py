@@ -156,11 +156,14 @@ async def fetch_url_preview(
                     return None
 
                 # Read body with size limit
-                body_bytes = b""
+                chunks: list[bytes] = []
+                total_read = 0
                 async for chunk in resp.content.iter_chunked(8192):
-                    body_bytes += chunk
-                    if len(body_bytes) > LINK_MAX_BODY:
+                    chunks.append(chunk)
+                    total_read += len(chunk)
+                    if total_read > LINK_MAX_BODY:
                         break
+                body_bytes = b"".join(chunks)
 
                 charset = resp.charset or "utf-8"
                 try:
