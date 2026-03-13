@@ -308,7 +308,7 @@ def cmd_init(args: list[str]) -> None:
                     break
 
         # Ask for model
-        model_options = [(m, desc) for m, desc in info["models"]]
+        model_options = info["models"]
         selected_model = _prompt_select(
             f"Default model for {info['label']}:",
             model_options,
