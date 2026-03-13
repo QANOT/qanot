@@ -228,10 +228,22 @@ class AnthropicProvider(LLMProvider):
                             _in_thinking_block = False
                             continue
                         if current_tool_id:
-                            try:
-                                tool_input = json.loads(current_tool_json) if current_tool_json else {}
-                            except json.JSONDecodeError:
+                            # Guard against unbounded tool JSON accumulation
+                            if len(current_tool_json) > 1_000_000:
+                                logger.warning(
+                                    "Tool call %s JSON too large (%d bytes), truncating",
+                                    current_tool_name, len(current_tool_json),
+                                )
                                 tool_input = {}
+                            else:
+                                try:
+                                    tool_input = json.loads(current_tool_json) if current_tool_json else {}
+                                except json.JSONDecodeError:
+                                    logger.warning(
+                                        "Invalid JSON in tool call %s: %s",
+                                        current_tool_name, current_tool_json[:200],
+                                    )
+                                    tool_input = {}
                             tc = ToolCall(
                                 id=current_tool_id,
                                 name=current_tool_name,
