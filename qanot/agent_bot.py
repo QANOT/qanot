@@ -303,19 +303,43 @@ class AgentBot:
 
     async def _send_response(self, chat_id: int, text: str) -> None:
         """Send response, splitting if too long."""
-        if not text:
+        if not text or not text.strip():
             return
 
         from qanot.telegram import _sanitize_response
 
-        text = _sanitize_response(text)
+        try:
+            text = _sanitize_response(text)
+        except Exception:
+            logger.warning("AgentBot '%s': failed to sanitize response, sending raw", self.agent_def.id)
 
         if len(text) <= MAX_MSG_LEN:
             await self._send_chunk(chat_id, text)
         else:
-            chunks = [text[i:i + MAX_MSG_LEN] for i in range(0, len(text), MAX_MSG_LEN)]
+            # Split on newlines near the boundary to avoid breaking mid-word/entity
+            chunks = self._split_text(text, MAX_MSG_LEN)
             for chunk in chunks:
-                await self._send_chunk(chat_id, chunk)
+                if chunk.strip():
+                    await self._send_chunk(chat_id, chunk)
+
+    @staticmethod
+    def _split_text(text: str, max_len: int) -> list[str]:
+        """Split text into chunks, preferring newline boundaries."""
+        chunks: list[str] = []
+        while len(text) > max_len:
+            # Try to find a newline near the boundary to split cleanly
+            split_at = text.rfind("\n", 0, max_len)
+            if split_at < max_len // 2:
+                # No good newline found; try space
+                split_at = text.rfind(" ", 0, max_len)
+            if split_at < max_len // 2:
+                # Fall back to hard split
+                split_at = max_len
+            chunks.append(text[:split_at])
+            text = text[split_at:].lstrip("\n")
+        if text:
+            chunks.append(text)
+        return chunks
 
     async def _typing_loop(self, chat_id: int) -> None:
         """Send typing indicator until cancelled."""
