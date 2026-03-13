@@ -384,6 +384,12 @@ class Agent:
             self._locks[user_id] = asyncio.Lock()
         return self._locks[user_id]
 
+    def _remove_user_state(self, user_id: str | None) -> None:
+        """Remove all per-user state (conversation, lock, activity timestamp)."""
+        self._conversations.pop(user_id, None)
+        self._locks.pop(user_id, None)
+        self._last_active.pop(user_id, None)
+
     def _evict_stale(self) -> None:
         """Remove conversation state for users idle longer than CONVERSATION_TTL."""
         now = time.monotonic()
@@ -392,9 +398,7 @@ class Agent:
             if now - ts > CONVERSATION_TTL
         ]
         for uid in stale:
-            self._conversations.pop(uid, None)
-            self._locks.pop(uid, None)
-            self._last_active.pop(uid, None)
+            self._remove_user_state(uid)
             logger.debug("Evicted stale conversation for user_id=%s", uid)
 
     def _get_messages(self, user_id: str | None = None) -> list[dict]:
