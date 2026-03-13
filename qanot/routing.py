@@ -240,20 +240,16 @@ class RoutingProvider(LLMProvider):
                 break
 
         # Check for tool_result messages (means tools were executed recently)
-        has_tool_result = False
-        for msg in reversed(messages[-6:]):  # Check last 6 messages
+        def _has_tool_result(msg: dict) -> bool:
             if msg.get("role") == "tool":
-                has_tool_result = True
-                break
+                return True
             content = msg.get("content", "")
-            if isinstance(content, list):
-                if any(
-                    isinstance(block, dict) and block.get("type") == "tool_result"
-                    for block in content
-                ):
-                    has_tool_result = True
-                    break
-        if has_tool_result:
+            return isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in content
+            )
+
+        if any(_has_tool_result(m) for m in messages[-6:]):
             score += 0.5
 
         return min(score, 1.0)
