@@ -69,10 +69,18 @@ class LinkPreview(TypedDict):
     preview: str
 
 
+# Max URL length to prevent abuse via extremely long URLs
+_MAX_URL_LENGTH = 2048
+
+# Pattern to detect control characters, null bytes, and other dangerous chars in URLs
+_DANGEROUS_URL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 def extract_urls(text: str) -> list[str]:
     """Extract HTTP/HTTPS URLs from text.
 
     Returns deduplicated list preserving first-occurrence order.
+    URLs with control characters, null bytes, or excessive length are rejected.
     """
     seen: set[str] = set()
     urls: list[str] = []
@@ -81,6 +89,22 @@ def extract_urls(text: str) -> list[str]:
         url = match.group(0)
         # Strip trailing punctuation that's likely not part of the URL
         url = url.rstrip(".,;:!?)>]}\"'")
+
+        # Reject URLs that are too long (potential abuse / buffer attacks)
+        if len(url) > _MAX_URL_LENGTH:
+            logger.debug("Skipping excessively long URL (%d chars)", len(url))
+            continue
+
+        # Reject URLs containing control characters or null bytes
+        if _DANGEROUS_URL_CHARS.search(url):
+            logger.debug("Skipping URL with dangerous characters: %r", url[:100])
+            continue
+
+        # Reject URLs with embedded credentials (user:pass@host)
+        if "@" in url.split("//", 1)[-1].split("/", 1)[0]:
+            logger.debug("Skipping URL with embedded credentials")
+            continue
+
         if url not in seen:
             seen.add(url)
             urls.append(url)
