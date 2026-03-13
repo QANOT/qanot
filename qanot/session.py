@@ -178,10 +178,26 @@ class SessionWriter:
                         except json.JSONDecodeError:
                             continue
 
+                        # Validate entry is a dict with expected structure
+                        if not isinstance(entry, dict):
+                            continue
+                        if entry.get("type") != "message":
+                            continue
+                        msg = entry.get("message")
+                        if not isinstance(msg, dict):
+                            continue
+                        # Guard against excessively large content in restored history
+                        content = msg.get("content", "")
+                        if isinstance(content, str) and len(content) > 100_000:
+                            logger.warning("Skipping oversized message in %s", filepath)
+                            continue
+
                         # Filter by user_id.
                         # Legacy entries without user_id are included (personal bot
                         # — all messages belong to the same user).
                         entry_uid = entry.get("user_id", "")
+                        if not isinstance(entry_uid, str):
+                            entry_uid = str(entry_uid)
                         if entry_uid == user_id or not entry_uid:
                             entries.append(entry)
             except Exception as e:
