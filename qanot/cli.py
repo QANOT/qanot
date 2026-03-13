@@ -1233,6 +1233,67 @@ def _plugin_list(args: list[str]) -> None:
     print()
 
 
+def cmd_daemon(args: list[str]) -> None:
+    """Manage OS-native background service (systemd/launchd/schtasks)."""
+    from qanot.daemon import (
+        daemon_install, daemon_uninstall,
+        daemon_start, daemon_stop, daemon_restart, daemon_status,
+    )
+
+    if not args:
+        _daemon_help()
+        return
+
+    subcmd = args[0]
+    remaining = args[1:]
+
+    config_path = _resolve_config(remaining)
+    if not config_path.exists():
+        print(_red(f"Config not found: {config_path}"))
+        print("Run 'qanot init' first.")
+        sys.exit(1)
+
+    actions = {
+        "install": daemon_install,
+        "uninstall": daemon_uninstall,
+        "start": daemon_start,
+        "stop": daemon_stop,
+        "restart": daemon_restart,
+        "status": daemon_status,
+    }
+
+    action = actions.get(subcmd)
+    if not action:
+        print(_red(f"Unknown daemon command: {subcmd}"))
+        _daemon_help()
+        return
+
+    ok, msg = action(config_path)
+    if ok:
+        print(f"  {_green('✓')} {msg}")
+    else:
+        print(f"  {_red('✗')} {msg}")
+
+
+def _daemon_help() -> None:
+    print(LOGO)
+    print("Usage: qanot daemon <command> [path]")
+    print()
+    print("Commands:")
+    print("  install    Install as OS service (systemd/launchd/schtasks)")
+    print("  uninstall  Remove OS service")
+    print("  start      Start via OS service manager")
+    print("  stop       Stop via OS service manager")
+    print("  restart    Restart via OS service manager")
+    print("  status     Check service status")
+    print()
+    print("Examples:")
+    print("  qanot daemon install        # Install service for current dir")
+    print("  qanot daemon start          # Start via systemd/launchd")
+    print("  qanot daemon status         # Check if running")
+    print()
+
+
 def cmd_version() -> None:
     from qanot import __version__
     print(f"qanot {__version__}")
@@ -1248,6 +1309,7 @@ def cmd_help() -> None:
     print("  stop [path]        Stop bot")
     print("  status [path]      Check if bot is running")
     print("  logs [path]        Tail bot logs")
+    print("  daemon <cmd>       Manage OS service (install/start/stop/status)")
     print("  doctor [path]      Health checks (--fix to auto-repair)")
     print("  backup [path]      Export workspace to .tar.gz")
     print("  plugin new <name>  Scaffold a new plugin")
@@ -1260,7 +1322,7 @@ def cmd_help() -> None:
     print("Examples:")
     print("  qanot init")
     print("  qanot start")
-    print("  qanot logs")
+    print("  qanot daemon install")
     print("  qanot stop")
     print()
 
@@ -1279,6 +1341,7 @@ def main() -> None:
         "doctor": cmd_doctor,
         "backup": cmd_backup,
         "plugin": cmd_plugin,
+        "daemon": cmd_daemon,
     }
     # Commands with no args
     _NO_ARG_COMMANDS = {
