@@ -96,8 +96,9 @@ class CronScheduler:
     def _ensure_builtin_jobs(self, jobs: list[dict]) -> list[dict]:
         """Ensure heartbeat and briefing jobs exist in the job list."""
         changed = False
+        existing_names = {j["name"] for j in jobs}
 
-        if not any(j["name"] == "heartbeat" for j in jobs):
+        if "heartbeat" not in existing_names:
             jobs.append({
                 "name": "heartbeat",
                 "schedule": self.config.heartbeat_interval,
@@ -107,7 +108,7 @@ class CronScheduler:
             })
             changed = True
 
-        if not any(j["name"] == "briefing" for j in jobs):
+        if "briefing" not in existing_names:
             jobs.append({
                 "name": "briefing",
                 "schedule": self.config.briefing_schedule,
