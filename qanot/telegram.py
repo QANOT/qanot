@@ -376,6 +376,11 @@ class TelegramAdapter:
             async with self._concurrent:
                 await self._process_turn(msg, coalesce_key, text, images, voice_req, coalesced=coalesced)
 
+        # Clean up lock if no more pending messages for this key
+        # (avoids unbounded growth of _user_locks dict over time)
+        if coalesce_key not in self._pending_messages:
+            self._user_locks.pop(coalesce_key, None)
+
     async def _process_turn(
         self,
         message: Message,
