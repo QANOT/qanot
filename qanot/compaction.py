@@ -203,10 +203,17 @@ def _chunk_messages(
     return chunks
 
 
-def split_messages_by_token_share(messages: list[dict], parts: int = DEFAULT_PARTS) -> list[list[dict]]:
+def split_messages_by_token_share(
+    messages: list[dict],
+    parts: int = DEFAULT_PARTS,
+    _precomputed_total: int | None = None,
+) -> list[list[dict]]:
     """Split messages into roughly equal-sized token chunks.
 
     Keeps message boundaries intact (never splits a single message).
+
+    Args:
+        _precomputed_total: If provided, skip re-estimating total tokens.
     """
     if not messages:
         return []
@@ -215,7 +222,7 @@ def split_messages_by_token_share(messages: list[dict], parts: int = DEFAULT_PAR
     if parts <= 1:
         return [messages]
 
-    total_tokens = estimate_messages_tokens(messages)
+    total_tokens = _precomputed_total if _precomputed_total is not None else estimate_messages_tokens(messages)
     target_tokens = total_tokens / parts
 
     return _chunk_messages(
