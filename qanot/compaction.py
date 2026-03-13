@@ -493,7 +493,11 @@ def prune_history_for_context(
 
         # Drop oldest chunk, keep rest
         dropped = chunks[0]
+        if not dropped:
+            # Safety: if the oldest chunk is empty, avoid infinite loop
+            break
         dropped_tokens = estimate_messages_tokens(dropped)
+        prev_kept_len = len(kept)
         kept = [msg for chunk in chunks[1:] for msg in chunk]
         total_dropped += len(dropped)
 
@@ -506,6 +510,11 @@ def prune_history_for_context(
             kept_tokens = estimate_messages_tokens(kept)
         else:
             kept_tokens -= dropped_tokens
+
+        # Guard against no progress (e.g., rounding or repair restoring tokens)
+        if len(kept) >= prev_kept_len:
+            logger.warning("prune_history_for_context: no progress made, breaking to avoid infinite loop")
+            break
 
     return kept, total_dropped
 
