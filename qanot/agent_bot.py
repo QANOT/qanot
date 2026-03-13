@@ -134,9 +134,15 @@ class AgentBot:
 
         # Check if message is a reply to this bot's message
         if message.reply_to_message and message.reply_to_message.from_user:
-            me = await self.bot.get_me()
-            if message.reply_to_message.from_user.id == me.id:
-                return True
+            try:
+                me = await self.bot.get_me()
+                if message.reply_to_message.from_user.id == me.id:
+                    return True
+            except Exception:
+                logger.debug(
+                    "AgentBot '%s': failed to check reply-to mention",
+                    self.agent_def.id,
+                )
 
         return False
 
