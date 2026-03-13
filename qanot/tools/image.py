@@ -135,9 +135,9 @@ def register_image_tools(
             })
         return prompt, img_model, None
 
-    def _build_success(image_data, prompt, img_model, prefix, fail_msg):
-        """Process response image data: save, queue, return JSON result."""
-        image_data_bytes, response_text = _extract_image_from_response(image_data)
+    def _build_success(response, prompt, img_model, prefix, fail_msg):
+        """Process Gemini response: extract image, save, queue, return JSON result."""
+        image_data_bytes, response_text = _extract_image_from_response(response)
         if not image_data_bytes:
             return json.dumps({
                 "error": fail_msg,
