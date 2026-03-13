@@ -238,6 +238,7 @@ class OpenAIProvider(LLMProvider):
         # Track partial tool calls: index -> {id, name, arguments}
         partial_tools: dict[int, dict] = {}
         usage_data: dict | None = None
+        _MAX_TOOL_JSON = 1_000_000  # 1 MB cap on accumulated tool arguments
 
         try:
             stream = await self.client.chat.completions.create(**kwargs)
@@ -275,7 +276,13 @@ class OpenAIProvider(LLMProvider):
                             if tc_delta.function.name:
                                 pt["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
-                                pt["arguments"] += tc_delta.function.arguments
+                                if len(pt["arguments"]) + len(tc_delta.function.arguments) > _MAX_TOOL_JSON:
+                                    logger.warning(
+                                        "Tool call arguments for index %d exceeded %d byte limit, truncating",
+                                        idx, _MAX_TOOL_JSON,
+                                    )
+                                else:
+                                    pt["arguments"] += tc_delta.function.arguments
 
         except openai.APIError as e:
             logger.error("OpenAI streaming error: %s", e)
