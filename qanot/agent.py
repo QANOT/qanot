@@ -307,8 +307,18 @@ class ToolRegistry:
             logger.error("Tool %s timed out after %ds", name, timeout)
             return json.dumps({"error": f"Tool timed out after {timeout}s"})
         except Exception as e:
-            logger.error("Tool %s failed: %s", name, e)
-            return json.dumps({"error": str(e)})
+            logger.error("Tool %s failed: %s", name, e, exc_info=True)
+            # Sanitize error message to prevent leaking sensitive internals
+            error_msg = str(e)
+            # Truncate overly long error messages that may contain data dumps
+            if len(error_msg) > 500:
+                error_msg = error_msg[:500] + "... [truncated]"
+            # Strip potential file system paths from error messages
+            import re
+            error_msg = re.sub(r'(/[\w./\-]+){3,}', '[path redacted]', error_msg)
+            # Strip potential environment variable values or API keys
+            error_msg = re.sub(r'(?:key|token|secret|password|auth)[=:]\s*\S+', '[credential redacted]', error_msg, flags=re.IGNORECASE)
+            return json.dumps({"error": error_msg})
 
     @property
     def tool_names(self) -> list[str]:
