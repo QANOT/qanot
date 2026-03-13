@@ -227,6 +227,12 @@ class ContextTracker:
         with open(buffer_path, "a", encoding="utf-8") as f:
             f.write(entry)
 
+    _COMPACTION_MARKERS = (
+        "<summary>", "truncated", "context limits",
+        "context compaction", "where were we",
+        "continue where", "what were we doing",
+    )
+
     def detect_compaction(self, messages: list[dict]) -> bool:
         """Detect if we need compaction recovery.
 
@@ -235,6 +241,7 @@ class ContextTracker:
         if not messages:
             return False
 
+        markers = self._COMPACTION_MARKERS
         for msg in messages[:3]:  # Check first few messages
             content = msg.get("content", "")
             if isinstance(content, str):
@@ -248,11 +255,7 @@ class ContextTracker:
                 continue
 
             lower = text.lower()
-            if any(marker in lower for marker in [
-                "<summary>", "truncated", "context limits",
-                "context compaction", "where were we",
-                "continue where", "what were we doing",
-            ]):
+            if any(marker in lower for marker in markers):
                 return True
 
         return False
