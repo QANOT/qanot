@@ -174,6 +174,11 @@ async def fetch_url_preview(
                         logger.debug("Link preview redirect SSRF blocked: %s", final_url)
                         return None
 
+                # Reject non-success HTTP status codes
+                if resp.status >= 400:
+                    logger.debug("Link preview HTTP %d for %s", resp.status, url)
+                    return None
+
                 content_type = resp.content_type or ""
                 if "html" not in content_type and "text" not in content_type:
                     # Not a text-based page — skip silently
