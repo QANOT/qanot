@@ -83,7 +83,7 @@ class Config:
     # Web search
     brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
     # UX
-    reactions_enabled: bool = True  # Send emoji reactions (👀, ✅, ❌) on messages
+    reactions_enabled: bool = False  # Send emoji reactions (👀, ✅, ❌) on messages
     reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"
     # Group chat
     group_mode: str = "off"  # "off" | "mention" | "all"

@@ -8,6 +8,7 @@ import json
 import logging
 import sqlite3
 import struct
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -145,6 +146,7 @@ class SqliteVecStore(VectorStore):
         self._conn: sqlite3.Connection | None = None
         self._vec_available = False
         self._fts_available = False
+        self._lock = threading.Lock()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -344,33 +346,34 @@ class SqliteVecStore(VectorStore):
         now = time.time()
         chunk_ids: list[str] = []
 
-        for i, (text, embedding) in enumerate(zip(texts, embeddings)):
-            chunk_id = uuid.uuid4().hex[:16]
-            meta = metadatas[i] if metadatas else {}
-            meta_json = json.dumps(meta, ensure_ascii=False)
+        with self._lock:
+            for i, (text, embedding) in enumerate(zip(texts, embeddings)):
+                chunk_id = uuid.uuid4().hex[:16]
+                meta = metadatas[i] if metadatas else {}
+                meta_json = json.dumps(meta, ensure_ascii=False)
 
-            cursor = conn.execute(
-                "INSERT INTO chunks (id, text, source, user_id, metadata, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (chunk_id, text, source, user_id, meta_json, now),
-            )
-
-            if self._vec_available:
-                conn.execute(
-                    "INSERT INTO chunks_vec (rowid, embedding) VALUES (?, ?)",
-                    (cursor.lastrowid, _serialize_f32(embedding)),
+                cursor = conn.execute(
+                    "INSERT INTO chunks (id, text, source, user_id, metadata, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (chunk_id, text, source, user_id, meta_json, now),
                 )
 
-            # FTS5 index
-            if self._fts_available:
-                conn.execute(
-                    "INSERT INTO chunks_fts (text, id, source) VALUES (?, ?, ?)",
-                    (text, chunk_id, source),
-                )
+                if self._vec_available:
+                    conn.execute(
+                        "INSERT INTO chunks_vec (rowid, embedding) VALUES (?, ?)",
+                        (cursor.lastrowid, _serialize_f32(embedding)),
+                    )
 
-            chunk_ids.append(chunk_id)
+                # FTS5 index
+                if self._fts_available:
+                    conn.execute(
+                        "INSERT INTO chunks_fts (text, id, source) VALUES (?, ?, ?)",
+                        (text, chunk_id, source),
+                    )
 
-        conn.commit()
+                chunk_ids.append(chunk_id)
+
+            conn.commit()
         logger.debug("Added %d chunks from source=%r", len(chunk_ids), source)
         return chunk_ids
 
@@ -392,24 +395,25 @@ class SqliteVecStore(VectorStore):
 
         fetch_limit = top_k * 4 if (user_id or source) else top_k
 
-        rows = conn.execute(
-            "SELECT rowid, distance FROM chunks_vec "
-            "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-            (_serialize_f32(query_embedding), fetch_limit),
-        ).fetchall()
+        with self._lock:
+            rows = conn.execute(
+                "SELECT rowid, distance FROM chunks_vec "
+                "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                (_serialize_f32(query_embedding), fetch_limit),
+            ).fetchall()
 
-        if not rows:
-            return []
+            if not rows:
+                return []
 
-        rowid_distance = {row[0]: row[1] for row in rows}
-        rowid_list = list(rowid_distance.keys())
+            rowid_distance = {row[0]: row[1] for row in rows}
+            rowid_list = list(rowid_distance.keys())
 
-        placeholders = ",".join("?" for _ in rowid_list)
-        chunk_rows = conn.execute(
-            f"SELECT rowid, id, text, source, user_id, metadata, created_at FROM chunks "
-            f"WHERE rowid IN ({placeholders})",
-            rowid_list,
-        ).fetchall()
+            placeholders = ",".join("?" for _ in rowid_list)
+            chunk_rows = conn.execute(
+                f"SELECT rowid, id, text, source, user_id, metadata, created_at FROM chunks "
+                f"WHERE rowid IN ({placeholders})",
+                rowid_list,
+            ).fetchall()
 
         results: list[SearchResult] = []
         for crow in chunk_rows:
