@@ -341,9 +341,10 @@ def register_agent_manager_tools(
         # Schedule exit after short delay so the response gets sent first.
         # systemd Restart=always will bring us back automatically.
         async def _do_restart():
+            import os
             await asyncio.sleep(2)
             logger.info("Exiting for restart (systemd will respawn)...")
-            sys.exit(0)
+            os._exit(0)
 
         asyncio.create_task(_do_restart())
         return json.dumps({
