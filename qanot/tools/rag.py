@@ -42,11 +42,21 @@ def register_rag_tools(
     ws = Path(workspace_dir)
 
     def _resolve_path(path: str) -> Path:
-        """Resolve a path relative to workspace_dir."""
+        """Resolve a path relative to workspace_dir, preventing traversal."""
         p = Path(path)
         if p.is_absolute():
-            return p
-        return ws / p
+            resolved = p.resolve()
+        else:
+            resolved = (ws / p).resolve()
+        # Ensure the resolved path is within the workspace directory
+        ws_resolved = ws.resolve()
+        try:
+            resolved.relative_to(ws_resolved)
+        except ValueError:
+            raise ValueError(
+                f"Path '{path}' resolves outside workspace directory"
+            )
+        return resolved
 
     # ── rag_index ──
     async def rag_index(params: dict) -> str:
