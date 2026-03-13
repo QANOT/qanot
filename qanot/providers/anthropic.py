@@ -87,9 +87,8 @@ class AnthropicProvider(LLMProvider):
         out = usage.get("output_tokens", 0)
         cr = usage.get("cache_read_input_tokens", 0)
         cw = usage.get("cache_creation_input_tokens", 0)
-        non_cached_input = max(0, inp - cr - cw)
         return (
-            non_cached_input * prices["input"] / 1_000_000
+            inp * prices["input"] / 1_000_000
             + out * prices["output"] / 1_000_000
             + cr * prices["cache_read"] / 1_000_000
             + cw * prices["cache_write"] / 1_000_000
