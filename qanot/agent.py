@@ -286,6 +286,12 @@ class ToolRegistry:
 
     async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
         """Execute a tool by name with parameter validation and timeout protection."""
+        # Validate input types to prevent type confusion attacks
+        if not isinstance(name, str) or not name.strip():
+            return json.dumps({"error": "Invalid tool name"})
+        if not isinstance(input_data, dict):
+            logger.warning("Tool %s received non-dict input: %s", name, type(input_data).__name__)
+            return json.dumps({"error": "Tool input must be a JSON object"})
         handler = self._handlers.get(name)
         if not handler:
             return json.dumps({"error": f"Unknown tool: {name}"})
