@@ -214,7 +214,8 @@ async def _load_from_path(plugin_dir: Path, config: dict) -> Plugin | None:
 
     # Add plugin dir to path temporarily
     str_dir = str(plugin_dir)
-    if str_dir not in sys.path:
+    added_to_path = str_dir not in sys.path
+    if added_to_path:
         sys.path.insert(0, str_dir)
 
     try:
@@ -251,7 +252,7 @@ async def _load_from_path(plugin_dir: Path, config: dict) -> Plugin | None:
         logger.error("Plugin import failed for %s: %s", plugin_dir.name, e, exc_info=True)
         return None
     finally:
-        if str_dir in sys.path:
+        if added_to_path and str_dir in sys.path:
             sys.path.remove(str_dir)
 
 
