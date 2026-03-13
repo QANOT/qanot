@@ -1036,9 +1036,21 @@ class Agent:
                             tools=tool_defs if tool_defs else None,
                             system=system,
                         )
+                        # Calculate what text is new vs already streamed
+                        already_streamed = "".join(text_parts)
                         if response.content:
-                            yield StreamEvent(type="text_delta", text=response.content)
-                            text_parts.append(response.content)
+                            new_text = response.content
+                            if already_streamed and new_text.startswith(already_streamed):
+                                # Only yield the part not yet streamed
+                                remaining = new_text[len(already_streamed):]
+                                if remaining:
+                                    yield StreamEvent(type="text_delta", text=remaining)
+                            elif not already_streamed:
+                                yield StreamEvent(type="text_delta", text=new_text)
+                            else:
+                                # Partial stream doesn't match fallback — yield replacement marker
+                                yield StreamEvent(type="text_delta", text="\n" + new_text)
+                            text_parts = [response.content]  # Reset to full fallback content
                         tool_calls = response.tool_calls
                     except Exception:
                         yield StreamEvent(
