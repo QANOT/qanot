@@ -132,20 +132,33 @@ def load_config(path: str | None = None) -> Config:
     raw = json.loads(p.read_text(encoding="utf-8"))
 
     plugins = []
-    for pl in raw.get("plugins", []):
+    for i, pl in enumerate(raw.get("plugins", [])):
         if isinstance(pl, str):
             plugins.append(PluginConfig(name=pl))
         elif isinstance(pl, dict):
+            if "name" not in pl:
+                raise ValueError(
+                    f"Plugin at index {i} is missing required 'name' field"
+                )
             plugins.append(PluginConfig(
                 name=pl["name"],
                 enabled=pl.get("enabled", True),
                 config=pl.get("config", {}),
             ))
+        else:
+            raise TypeError(
+                f"Plugin at index {i} must be a string or dict, got {type(pl).__name__}"
+            )
 
     def _dict_to_dataclass(cls, data: dict):
         """Map a dict to a dataclass using field names and defaults."""
         import dataclasses
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Expected dict for {cls.__name__}, got {type(data).__name__}"
+            )
         kwargs = {}
+        missing = []
         for f in dataclasses.fields(cls):
             if f.name in data:
                 kwargs[f.name] = data[f.name]
@@ -153,6 +166,12 @@ def load_config(path: str | None = None) -> Config:
                 kwargs[f.name] = f.default
             elif f.default_factory is not dataclasses.MISSING:
                 kwargs[f.name] = f.default_factory()
+            else:
+                missing.append(f.name)
+        if missing:
+            raise ValueError(
+                f"{cls.__name__} is missing required field(s): {', '.join(missing)}"
+            )
         return cls(**kwargs)
 
     # Parse multi-provider configs
