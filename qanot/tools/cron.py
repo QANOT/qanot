@@ -169,13 +169,25 @@ def register_cron_tools(
             return json.dumps({"error": f"Job '{name}' not found"})
 
         if "schedule" in params:
-            found["schedule"] = params["schedule"]
+            sched = str(params["schedule"]).strip()
+            if not sched or len(sched) > 200:
+                return json.dumps({"error": "schedule must be a non-empty string (max 200 chars)"})
+            found["schedule"] = sched
         if "mode" in params:
-            found["mode"] = params["mode"]
+            mode_val = str(params["mode"]).strip()
+            if mode_val not in ("systemEvent", "isolated"):
+                return json.dumps({"error": "mode must be 'systemEvent' or 'isolated'"})
+            found["mode"] = mode_val
         if "prompt" in params:
-            found["prompt"] = params["prompt"]
+            prompt_val = str(params["prompt"]).strip()
+            if not prompt_val or len(prompt_val) > 10000:
+                return json.dumps({"error": "prompt must be a non-empty string (max 10000 chars)"})
+            found["prompt"] = prompt_val
         if "enabled" in params:
-            found["enabled"] = params["enabled"]
+            enabled_val = params["enabled"]
+            if not isinstance(enabled_val, bool):
+                return json.dumps({"error": "enabled must be a boolean"})
+            found["enabled"] = enabled_val
 
         _save_jobs(jobs)
 
