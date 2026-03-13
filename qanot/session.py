@@ -161,6 +161,17 @@ class SessionWriter:
 
     def _read_user_messages(self, user_id: str) -> list[dict]:
         """Read all JSONL entries for a specific user from recent session files."""
+        if not isinstance(user_id, str):
+            user_id = str(user_id)
+        # Reject excessively long or empty user IDs
+        if not user_id or len(user_id) > 256:
+            logger.warning("Invalid user_id (empty or too long): %r", user_id[:50] if user_id else "")
+            return []
+        # Reject user IDs with control characters or path separators
+        if any(c in user_id for c in ('\x00', '/', '\\', '..', '\n', '\r')):
+            logger.warning("Rejected user_id with suspicious characters: %r", user_id[:50])
+            return []
+
         entries: list[dict] = []
 
         # Read from recent session files (last 7 days)
