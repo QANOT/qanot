@@ -178,15 +178,12 @@ def _check_context(context: "ContextTracker") -> dict:
     elif pct > 80:
         status = "warning"
 
+    compaction_mode = "active" if context.needs_compaction() else "idle"
     details = (
         f"usage: {pct}%; "
         f"tokens: {status_data['total_tokens']}; "
         f"buffer_active: {status_data['buffer_active']}; "
-        f"compaction_mode: active" if context.needs_compaction() else
-        f"usage: {pct}%; "
-        f"tokens: {status_data['total_tokens']}; "
-        f"buffer_active: {status_data['buffer_active']}; "
-        f"compaction_mode: idle"
+        f"compaction_mode: {compaction_mode}"
     )
 
     return {"status": status, "details": details}
