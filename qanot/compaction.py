@@ -148,7 +148,7 @@ def messages_to_text(messages: list[dict]) -> str:
 
         if text.strip():
             # Sanitize: remove embedded role markers that could act as prompt injection
-            sanitized = text[:1000]
+            sanitized = text[:8000]
             for marker in ("**system**:", "**System**:", "<|system|>", "<|im_start|>system",
                            "[INST]", "<<SYS>>", "</s>", "<|endoftext|>"):
                 sanitized = sanitized.replace(marker, f"[blocked:{marker[:8]}]")
