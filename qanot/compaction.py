@@ -154,6 +154,50 @@ def messages_to_text(messages: list[dict]) -> str:
 
 # ── Splitting ──
 
+def _chunk_messages(
+    messages: list[dict],
+    should_flush: "callable",
+    flush_oversized: bool = False,
+    max_chunks: int | None = None,
+) -> list[list[dict]]:
+    """Generic chunking helper: split messages at boundaries determined by should_flush.
+
+    Args:
+        messages: Messages to chunk.
+        should_flush: Callable(current_tokens, msg_tokens, chunks_so_far) -> bool.
+        flush_oversized: If True, flush immediately after adding an oversized message.
+        max_chunks: If set, stop creating new chunks after this many (last chunk gets the rest).
+    """
+    if not messages:
+        return []
+
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+
+    for msg in messages:
+        msg_tokens = estimate_message_tokens(msg)
+
+        can_split = max_chunks is None or len(chunks) < max_chunks - 1
+        if can_split and current and should_flush(current_tokens, msg_tokens, len(chunks)):
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+
+        current.append(msg)
+        current_tokens += msg_tokens
+
+        if flush_oversized and should_flush(0, msg_tokens, len(chunks)):
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
 def split_messages_by_token_share(messages: list[dict], parts: int = DEFAULT_PARTS) -> list[list[dict]]:
     """Split messages into roughly equal-sized token chunks.
 
@@ -169,29 +213,11 @@ def split_messages_by_token_share(messages: list[dict], parts: int = DEFAULT_PAR
     total_tokens = estimate_messages_tokens(messages)
     target_tokens = total_tokens / parts
 
-    chunks: list[list[dict]] = []
-    current: list[dict] = []
-    current_tokens = 0
-
-    for msg in messages:
-        msg_tokens = estimate_message_tokens(msg)
-
-        if (
-            len(chunks) < parts - 1
-            and current
-            and current_tokens + msg_tokens > target_tokens
-        ):
-            chunks.append(current)
-            current = []
-            current_tokens = 0
-
-        current.append(msg)
-        current_tokens += msg_tokens
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+    return _chunk_messages(
+        messages,
+        should_flush=lambda cur_tokens, msg_tokens, _n: cur_tokens + msg_tokens > target_tokens,
+        max_chunks=parts,
+    )
 
 
 def chunk_messages_by_max_tokens(messages: list[dict], max_tokens: int) -> list[list[dict]]:
@@ -200,31 +226,12 @@ def chunk_messages_by_max_tokens(messages: list[dict], max_tokens: int) -> list[
         return []
 
     effective_max = max(1, int(max_tokens / SAFETY_MARGIN))
-    chunks: list[list[dict]] = []
-    current: list[dict] = []
-    current_tokens = 0
 
-    for msg in messages:
-        msg_tokens = estimate_message_tokens(msg)
-
-        if current and current_tokens + msg_tokens > effective_max:
-            chunks.append(current)
-            current = []
-            current_tokens = 0
-
-        current.append(msg)
-        current_tokens += msg_tokens
-
-        # Oversized single message: flush immediately
-        if msg_tokens > effective_max:
-            chunks.append(current)
-            current = []
-            current_tokens = 0
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+    return _chunk_messages(
+        messages,
+        should_flush=lambda cur_tokens, msg_tokens, _n: cur_tokens + msg_tokens > effective_max,
+        flush_oversized=True,
+    )
 
 
 def compute_adaptive_chunk_ratio(messages: list[dict], context_window: int) -> float:
