@@ -148,18 +148,15 @@ def build_system_prompt(
     return full
 
 
-def _read_file(path: Path, max_chars: int = MAX_FILE_CHARS) -> str:
+def _read_file(path: Path) -> str:
     """Read a file if it exists, return empty string otherwise.
 
-    Args:
-        path: File path to read.
-        max_chars: Maximum characters to keep. Content exceeding this
-            limit is truncated with 70% head / 20% tail.
+    Content is returned as-is; callers (e.g. ``_add``) are responsible
+    for applying truncation within the overall character budget.
     """
     try:
         if path.exists():
-            content = path.read_text(encoding="utf-8").strip()
-            return _truncate_content(content, max_chars)
+            return path.read_text(encoding="utf-8").strip()
     except Exception as e:
         logger.warning("Failed to read %s: %s", path, e)
     return ""
