@@ -92,8 +92,16 @@ class GeminiProvider(OpenAIProvider):
         self.model = model
 
     def _calc_cost(self, inp: int, out: int) -> float:
-        prices = GEMINI_PRICING.get(self.model, {"input": 0.15, "output": 0.60})
-        return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
+        try:
+            price_in, price_out = self._cached_pricing
+        except AttributeError:
+            prices = GEMINI_PRICING.get(self.model)
+            if prices is not None:
+                price_in, price_out = prices["input"], prices["output"]
+            else:
+                price_in, price_out = 0.15, 0.60
+            self._cached_pricing = (price_in, price_out)
+        return inp * price_in / 1_000_000 + out * price_out / 1_000_000
 
     def _prepare_messages(self, messages: list[dict], system: str | None) -> list[dict]:
         """Convert messages and ensure conversation starts with a user turn."""
