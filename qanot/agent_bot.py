@@ -370,10 +370,16 @@ class AgentBot:
             await self.bot.session.close()
 
     async def stop(self) -> None:
-        """Stop this agent bot."""
+        """Stop this agent bot gracefully."""
         logger.info("AgentBot '%s' stopping...", self.agent_def.id)
-        await self.dp.stop_polling()
-        await self.bot.session.close()
+        try:
+            await self.dp.stop_polling()
+        except Exception:
+            logger.debug("AgentBot '%s': stop_polling raised (may not have been started)", self.agent_def.id)
+        try:
+            await self.bot.session.close()
+        except Exception:
+            logger.debug("AgentBot '%s': session.close raised (may already be closed)", self.agent_def.id)
 
 
 async def start_agent_bots(
