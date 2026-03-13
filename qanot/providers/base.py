@@ -46,6 +46,9 @@ class ProviderResponse:
     usage: Usage = field(default_factory=Usage)
 
 
+_VALID_STREAM_EVENT_TYPES = frozenset({"text_delta", "tool_use", "done"})
+
+
 @dataclass
 class StreamEvent:
     """A single event from a streaming LLM response."""
@@ -54,6 +57,13 @@ class StreamEvent:
     text: str = ""
     tool_call: ToolCall | None = None
     response: ProviderResponse | None = None  # set on "done"
+
+    def __post_init__(self) -> None:
+        if self.type not in _VALID_STREAM_EVENT_TYPES:
+            raise ValueError(
+                f"StreamEvent.type must be one of {sorted(_VALID_STREAM_EVENT_TYPES)}, "
+                f"got {self.type!r}"
+            )
 
 
 class LLMProvider(ABC):
