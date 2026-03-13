@@ -244,8 +244,11 @@ class ContextTracker:
             f"## [{ts}] Agent (summary)\n{safe_summary}\n"
         )
 
-        with open(buffer_path, "a", encoding="utf-8") as f:
-            f.write(entry)
+        try:
+            with open(buffer_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except OSError as exc:
+            logger.warning("Failed to append to working buffer %s: %s", buffer_path, exc)
 
     _COMPACTION_MARKERS = (
         "<summary>", "truncated", "context limits",
