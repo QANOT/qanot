@@ -93,7 +93,7 @@ DETERMINISTIC_ERRORS = (
 def _tool_call_fingerprint(name: str, input_data: dict) -> str:
     """Hash a tool call for duplicate detection."""
     raw = f"{name}:{json.dumps(input_data, sort_keys=True)}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _is_deterministic_error(result: str) -> bool:
