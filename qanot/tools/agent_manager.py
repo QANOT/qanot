@@ -48,31 +48,25 @@ def _save_agents_to_config(config: "Config") -> None:
     raw = json.loads(p.read_text(encoding="utf-8"))
 
     # Serialize agents
+    # Fields that are included when truthy
+    _TRUTHY_FIELDS = (
+        "name", "prompt", "model", "provider", "api_key",
+        "bot_token", "tools_allow", "tools_deny", "delegate_allow",
+    )
+    # Fields that are included when they differ from their default
+    _DEFAULT_FIELDS = {"max_iterations": 15, "timeout": 120}
+
     agents_data = []
     for ad in config.agents:
         agent_dict = {"id": ad.id}
-        if ad.name:
-            agent_dict["name"] = ad.name
-        if ad.prompt:
-            agent_dict["prompt"] = ad.prompt
-        if ad.model:
-            agent_dict["model"] = ad.model
-        if ad.provider:
-            agent_dict["provider"] = ad.provider
-        if ad.api_key:
-            agent_dict["api_key"] = ad.api_key
-        if ad.bot_token:
-            agent_dict["bot_token"] = ad.bot_token
-        if ad.tools_allow:
-            agent_dict["tools_allow"] = ad.tools_allow
-        if ad.tools_deny:
-            agent_dict["tools_deny"] = ad.tools_deny
-        if ad.delegate_allow:
-            agent_dict["delegate_allow"] = ad.delegate_allow
-        if ad.max_iterations != 15:
-            agent_dict["max_iterations"] = ad.max_iterations
-        if ad.timeout != 120:
-            agent_dict["timeout"] = ad.timeout
+        for field in _TRUTHY_FIELDS:
+            value = getattr(ad, field, None)
+            if value:
+                agent_dict[field] = value
+        for field, default in _DEFAULT_FIELDS.items():
+            value = getattr(ad, field, default)
+            if value != default:
+                agent_dict[field] = value
         agents_data.append(agent_dict)
 
     raw["agents"] = agents_data
