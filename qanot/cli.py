@@ -371,8 +371,28 @@ def cmd_init(args: list[str]) -> None:
         voice_mode = "inbound"
         print(_green("  ✓ Voice enabled (inbound mode — replies to voice with voice)"))
 
-    # ── Step 4: Web Search (optional) ──
-    print(f"\n{_bold('  Step 4: Web Search (optional)')}")
+    # ── Step 4: Access Control ──
+    print(f"\n{_bold('  Step 4: Access Control')}")
+    print(f"  {_dim('Your Telegram user ID restricts who can use the bot.')}")
+    print(f"  {_dim('Find it: message @userinfobot on Telegram.')}")
+    owner_id_str = _prompt("Your Telegram user ID", "")
+    allowed_users: list[int] = []
+    owner_name = ""
+    if owner_id_str:
+        try:
+            allowed_users = [int(owner_id_str.strip())]
+            print(_green(f"  ✓ Bot restricted to user {allowed_users[0]}"))
+        except ValueError:
+            print(_yellow("  ! Invalid ID, bot will be public (add allowed_users to config.json later)"))
+    else:
+        print(_yellow("  ! No ID set — bot is PUBLIC. Anyone can use it."))
+
+    owner_name_input = _prompt("Your name (optional)", "")
+    if owner_name_input:
+        owner_name = owner_name_input
+
+    # ── Step 5: Web Search (optional) ──
+    print(f"\n{_bold('  Step 5: Web Search (optional)')}")
     brave_api_key = ""
     web_search_enabled = _prompt_yn("Enable web search? (free Brave Search API)")
     if web_search_enabled:
@@ -382,8 +402,8 @@ def cmd_init(args: list[str]) -> None:
         else:
             print(_yellow("  ! Skipped — you can add brave_api_key to config.json later"))
 
-    # ── Step 5: Build config ──
-    print(f"\n{_bold('  Step 5: Saving configuration')}")
+    # ── Step 6: Build config ──
+    print(f"\n{_bold('  Step 6: Saving configuration')}")
 
     config = {
         "bot_token": bot_token,
@@ -391,13 +411,13 @@ def cmd_init(args: list[str]) -> None:
         "model": primary_model,
         "api_key": primary_api_key,
         "providers": providers_config,
-        "owner_name": "",
+        "owner_name": owner_name,
         "bot_name": bot_name,
         "timezone": "Asia/Tashkent",
         "max_concurrent": 4,
         "compaction_mode": "safeguard",
         "max_context_tokens": 200000,
-        "allowed_users": [],
+        "allowed_users": allowed_users,
         "response_mode": "stream",
         "stream_flush_interval": 0.8,
         "telegram_mode": "polling",
@@ -451,45 +471,169 @@ def cmd_init(args: list[str]) -> None:
         print(f"  Web Search: Brave API")
     print()
 
-    # Auto-start after init
-    print(f"  {_cyan('Starting bot...')}")
-    print()
-    os.environ["QANOT_CONFIG"] = str(config_path.resolve())
-    from qanot.main import main as run_main
-    asyncio.run(run_main())
+    # Auto-start after init (background)
+    cmd_start([str(target)])
+
+
+def _resolve_config(args: list[str]) -> Path:
+    """Resolve config.json path from args or defaults."""
+    # Filter out flags
+    positional = [a for a in args if not a.startswith("--")]
+    if positional:
+        path = Path(positional[0])
+        if path.is_dir():
+            return path / "config.json"
+        return path
+
+    env_path = os.environ.get("QANOT_CONFIG")
+    if env_path:
+        return Path(env_path)
+    if Path("config.json").exists():
+        return Path("config.json")
+    return Path("/data/config.json")
+
+
+def _pid_file(config_path: Path) -> Path:
+    """Return PID file path for a given config."""
+    return config_path.parent / ".qanot.pid"
+
+
+def _log_file(config_path: Path) -> Path:
+    """Return log file path for a given config."""
+    return config_path.parent / "qanot.log"
+
+
+def _is_running(pid_path: Path) -> tuple[bool, int]:
+    """Check if bot is running. Returns (running, pid)."""
+    if not pid_path.exists():
+        return False, 0
+    try:
+        pid = int(pid_path.read_text().strip())
+        os.kill(pid, 0)  # Check if process exists
+        return True, pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        pid_path.unlink(missing_ok=True)
+        return False, 0
 
 
 def cmd_start(args: list[str]) -> None:
-    """Start the Qanot agent."""
-    # Determine config path
-    if args:
-        path = Path(args[0])
-        if path.is_dir():
-            config_path = path / "config.json"
-        else:
-            config_path = path
-    else:
-        # Check env, then current dir, then /data/config.json
-        env_path = os.environ.get("QANOT_CONFIG")
-        if env_path:
-            config_path = Path(env_path)
-        elif Path("config.json").exists():
-            config_path = Path("config.json")
-        else:
-            config_path = Path("/data/config.json")
+    """Start the Qanot agent in the background."""
+    import subprocess
+
+    foreground = "--foreground" in args or "-f" in args
+    config_path = _resolve_config(args)
 
     if not config_path.exists():
         print(f"Config not found: {config_path}")
         print("Run 'qanot init' first, or set QANOT_CONFIG env var.")
         sys.exit(1)
 
-    os.environ["QANOT_CONFIG"] = str(config_path.resolve())
+    config_path = config_path.resolve()
+    pid_path = _pid_file(config_path)
+    log_path = _log_file(config_path)
+
+    # Check if already running
+    running, pid = _is_running(pid_path)
+    if running:
+        print(f"Bot is already running (PID {pid})")
+        print(f"  Stop:   qanot stop")
+        print(f"  Logs:   qanot logs")
+        return
+
+    if foreground:
+        # Run in foreground (for Docker, systemd, debugging)
+        os.environ["QANOT_CONFIG"] = str(config_path)
+        print(LOGO)
+        print(f"Config: {config_path}")
+        print()
+        from qanot.main import main as run_main
+        asyncio.run(run_main())
+        return
+
+    # Run in background
     print(LOGO)
-    print(f"Config: {config_path}")
+    env = os.environ.copy()
+    env["QANOT_CONFIG"] = str(config_path)
+    env["PYTHONUNBUFFERED"] = "1"
+
+    with open(log_path, "a") as log_fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "qanot"],
+            env=env,
+            stdout=log_fh,
+            stderr=log_fh,
+            start_new_session=True,  # Detach from terminal
+        )
+
+    pid_path.write_text(str(proc.pid))
+    print(f"  {_green('✓')} Bot started (PID {proc.pid})")
+    print(f"  Logs:   {_cyan('qanot logs')}")
+    print(f"  Status: {_cyan('qanot status')}")
+    print(f"  Stop:   {_cyan('qanot stop')}")
     print()
 
-    from qanot.main import main as run_main
-    asyncio.run(run_main())
+
+def cmd_stop(args: list[str]) -> None:
+    """Stop the running bot."""
+    import signal
+
+    config_path = _resolve_config(args).resolve()
+    pid_path = _pid_file(config_path)
+
+    running, pid = _is_running(pid_path)
+    if not running:
+        print("Bot is not running.")
+        return
+
+    os.kill(pid, signal.SIGTERM)
+    pid_path.unlink(missing_ok=True)
+    print(f"  {_green('✓')} Bot stopped (PID {pid})")
+
+
+def cmd_logs(args: list[str]) -> None:
+    """Show bot logs (tail -f)."""
+    import subprocess
+
+    config_path = _resolve_config(args).resolve()
+    log_path = _log_file(config_path)
+
+    if not log_path.exists():
+        print("No log file found. Is the bot running?")
+        return
+
+    lines = "50"
+    for a in args:
+        if a.startswith("-n"):
+            lines = a[2:] or "50"
+
+    try:
+        subprocess.run(["tail", "-f", "-n", lines, str(log_path)])
+    except KeyboardInterrupt:
+        pass
+
+
+def cmd_status(args: list[str]) -> None:
+    """Check if the bot is running."""
+    config_path = _resolve_config(args).resolve()
+    pid_path = _pid_file(config_path)
+    log_path = _log_file(config_path)
+
+    running, pid = _is_running(pid_path)
+    if running:
+        print(f"  {_green('●')} Bot is running (PID {pid})")
+        # Show last log line
+        if log_path.exists():
+            import subprocess
+            last = subprocess.run(
+                ["tail", "-1", str(log_path)],
+                capture_output=True, text=True,
+            )
+            if last.stdout.strip():
+                print(f"  {_dim(last.stdout.strip())}")
+    else:
+        print(f"  {_red('●')} Bot is not running")
+        if log_path.exists():
+            print(f"  Last logs: {_cyan(f'qanot logs')}")
 
 
 def cmd_doctor(args: list[str]) -> None:
@@ -1108,22 +1252,25 @@ def cmd_help() -> None:
     print("Usage: qanot <command> [args]")
     print()
     print("Commands:")
-    print("  init [dir]         Interactive setup wizard (creates config.json)")
-    print("  start [path]       Start agent (path to config.json or directory)")
+    print("  init [dir]         Interactive setup wizard")
+    print("  start [path]       Start bot (background)")
+    print("  stop [path]        Stop bot")
+    print("  status [path]      Check if bot is running")
+    print("  logs [path]        Tail bot logs")
     print("  doctor [path]      Health checks (--fix to auto-repair)")
-    print("  backup [path]      Export workspace + sessions to .tar.gz")
+    print("  backup [path]      Export workspace to .tar.gz")
     print("  plugin new <name>  Scaffold a new plugin")
     print("  plugin list        List installed plugins")
     print("  version            Show version")
-    print("  help               Show this help")
+    print()
+    print("Flags:")
+    print("  start --foreground  Run in foreground (for Docker/systemd)")
     print()
     print("Examples:")
-    print("  qanot init mybot")
-    print("  qanot start mybot")
-    print("  qanot doctor mybot")
-    print("  qanot doctor --fix")
-    print("  qanot backup mybot")
-    print("  qanot plugin new weather")
+    print("  qanot init")
+    print("  qanot start")
+    print("  qanot logs")
+    print("  qanot stop")
     print()
 
 
@@ -1134,6 +1281,10 @@ def main() -> None:
     _COMMANDS = {
         "init": cmd_init,
         "start": cmd_start,
+        "stop": cmd_stop,
+        "status": cmd_status,
+        "logs": cmd_logs,
+        "log": cmd_logs,
         "doctor": cmd_doctor,
         "backup": cmd_backup,
         "plugin": cmd_plugin,

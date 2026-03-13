@@ -464,13 +464,14 @@ class SqliteVecStore(VectorStore):
             return []
 
         try:
-            rows = conn.execute(
-                "SELECT f.id, f.text, f.source, bm25(chunks_fts) as rank, c.created_at "
-                "FROM chunks_fts f LEFT JOIN chunks c ON f.id = c.id "
-                "WHERE chunks_fts MATCH ? "
-                "ORDER BY rank LIMIT ?",
-                (fts_query, top_k),
-            ).fetchall()
+            with self._lock:
+                rows = conn.execute(
+                    "SELECT f.id, f.text, f.source, bm25(chunks_fts) as rank, c.created_at "
+                    "FROM chunks_fts f LEFT JOIN chunks c ON f.id = c.id "
+                    "WHERE chunks_fts MATCH ? "
+                    "ORDER BY rank LIMIT ?",
+                    (fts_query, top_k),
+                ).fetchall()
         except sqlite3.OperationalError as e:
             logger.debug("FTS5 query failed: %s", e)
             return []
@@ -497,19 +498,20 @@ class SqliteVecStore(VectorStore):
         conn = self._conn
         assert conn is not None, "Database not initialized"
 
-        if self._vec_available or self._fts_available:
-            rows = conn.execute(
-                "SELECT rowid, id FROM chunks WHERE source = ?", (source,)
-            ).fetchall()
-            for rowid, cid in rows:
-                if self._vec_available:
-                    conn.execute("DELETE FROM chunks_vec WHERE rowid = ?", (rowid,))
-                if self._fts_available:
-                    conn.execute("DELETE FROM chunks_fts WHERE id = ?", (cid,))
+        with self._lock:
+            if self._vec_available or self._fts_available:
+                rows = conn.execute(
+                    "SELECT rowid, id FROM chunks WHERE source = ?", (source,)
+                ).fetchall()
+                for rowid, cid in rows:
+                    if self._vec_available:
+                        conn.execute("DELETE FROM chunks_vec WHERE rowid = ?", (rowid,))
+                    if self._fts_available:
+                        conn.execute("DELETE FROM chunks_fts WHERE id = ?", (cid,))
 
-        cursor = conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
-        count = cursor.rowcount
-        conn.commit()
+            cursor = conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
+            count = cursor.rowcount
+            conn.commit()
         logger.debug("Deleted %d chunks from source=%r", count, source)
         return count
 
@@ -518,10 +520,11 @@ class SqliteVecStore(VectorStore):
         conn = self._conn
         assert conn is not None, "Database not initialized"
 
-        rows = conn.execute(
-            "SELECT source, COUNT(*) as chunk_count, MIN(created_at) as first_added "
-            "FROM chunks GROUP BY source ORDER BY source"
-        ).fetchall()
+        with self._lock:
+            rows = conn.execute(
+                "SELECT source, COUNT(*) as chunk_count, MIN(created_at) as first_added "
+                "FROM chunks GROUP BY source ORDER BY source"
+            ).fetchall()
 
         return [
             {

@@ -6,6 +6,7 @@ build/
 .env
 config.json
 *.log
+.qanot.pid
 /data/
 .venv/
 venv/
