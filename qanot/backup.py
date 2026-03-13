@@ -131,9 +131,15 @@ def _rotate_backups(backups_root: Path) -> None:
         return
 
     try:
+        import re
+        _TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$")
         # List backup directories, sorted alphabetically (timestamps sort chronologically)
         backup_dirs = sorted(
-            [d for d in backups_root.iterdir() if d.is_dir() and not d.is_symlink()],
+            [
+                d
+                for d in backups_root.iterdir()
+                if d.is_dir() and not d.is_symlink() and _TS_PATTERN.match(d.name)
+            ],
             key=lambda d: d.name,
         )
 
