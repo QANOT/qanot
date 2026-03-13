@@ -174,6 +174,12 @@ class OpenAIProvider(LLMProvider):
             logger.error("OpenAI API error: %s", e)
             raise
 
+        if not response.choices:
+            raise ValueError(
+                f"OpenAI returned empty choices for model {self.model}; "
+                f"finish_reason may be content_filter or the request was rejected"
+            )
+
         choice = response.choices[0]
         msg = choice.message
 
