@@ -15,12 +15,27 @@ class Usage:
     cache_creation_input_tokens: int = 0
     cost: float = 0.0
 
+    def __post_init__(self) -> None:
+        self.input_tokens = max(0, int(self.input_tokens))
+        self.output_tokens = max(0, int(self.output_tokens))
+        self.cache_read_input_tokens = max(0, int(self.cache_read_input_tokens))
+        self.cache_creation_input_tokens = max(0, int(self.cache_creation_input_tokens))
+        self.cost = max(0.0, float(self.cost))
+
 
 @dataclass
 class ToolCall:
     id: str
     name: str
     input: dict
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id:
+            raise ValueError(f"ToolCall.id must be a non-empty string, got {self.id!r}")
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError(f"ToolCall.name must be a non-empty string, got {self.name!r}")
+        if not isinstance(self.input, dict):
+            raise TypeError(f"ToolCall.input must be a dict, got {type(self.input).__name__}")
 
 
 @dataclass
