@@ -129,6 +129,7 @@ def register_rag_tools(
             },
         },
         handler=rag_index,
+        category="rag",
     )
 
     # ── rag_search ──
@@ -181,6 +182,7 @@ def register_rag_tools(
             },
         },
         handler=rag_search,
+        category="rag",
     )
 
     # ── rag_list ──
@@ -195,6 +197,7 @@ def register_rag_tools(
         description="Indekslangan hujjatlar ro'yxati.",
         parameters={"type": "object", "properties": {}},
         handler=rag_list,
+        category="rag",
     )
 
     # ── rag_forget ──
@@ -226,4 +229,5 @@ def register_rag_tools(
             },
         },
         handler=rag_forget,
+        category="rag",
     )

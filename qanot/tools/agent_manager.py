@@ -408,6 +408,7 @@ def register_agent_manager_tools(
             },
         },
         handler=create_agent,
+        category="agent",
     )
 
     registry.register(
@@ -441,6 +442,7 @@ def register_agent_manager_tools(
             },
         },
         handler=update_agent,
+        category="agent",
     )
 
     registry.register(
@@ -457,6 +459,7 @@ def register_agent_manager_tools(
             },
         },
         handler=delete_agent,
+        category="agent",
     )
 
     registry.register(
@@ -476,4 +479,5 @@ def register_agent_manager_tools(
             },
         },
         handler=restart_self,
+        category="agent",
     )

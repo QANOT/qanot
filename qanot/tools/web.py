@@ -379,6 +379,7 @@ def register_web_tools(
             "required": ["query"],
         },
         handler=web_search,
+        category="web",
     )
 
     # ── web_fetch ──────────────────────────────────────────────────
@@ -516,4 +517,5 @@ def register_web_tools(
             },
         },
         handler=web_fetch,
+        category="web",
     )

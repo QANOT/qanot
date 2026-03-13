@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
 
 from qanot.config import Config
-from qanot.context import ContextTracker, truncate_tool_result
+from qanot.context import ContextTracker, CostTracker, truncate_tool_result
 from qanot.memory import wal_scan, wal_write, write_daily_note
 from qanot.prompt import build_system_prompt
 from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage
@@ -253,12 +253,24 @@ def _repair_messages(messages: list[dict]) -> list[dict]:
 
 
 class ToolRegistry:
-    """Registry of available tools."""
+    """Registry of available tools with lazy loading support.
+
+    Tools are grouped by category. Core tools (always loaded) are sent
+    with every API call. Extended tools are only sent when relevant,
+    saving tokens on every request.
+    """
+
+    # Core tools: always sent to LLM (cheap, frequently used)
+    CORE_CATEGORY = "core"
+    # Extended: only loaded when the user's message hints they're needed
+    EXTENDED_CATEGORIES = {"rag", "image", "web", "cron", "agent", "plugin"}
 
     def __init__(self):
         self._tools: dict[str, dict] = {}
         self._handlers: dict[str, Callable[[dict], Awaitable[str]]] = {}
+        self._categories: dict[str, str] = {}  # tool_name → category
         self._cached_definitions: list[dict] | None = None
+        self._cached_core: list[dict] | None = None
 
     def register(
         self,
@@ -266,8 +278,15 @@ class ToolRegistry:
         description: str,
         parameters: dict,
         handler: Callable[[dict], Awaitable[str]],
+        category: str = "core",
     ) -> None:
-        """Register a tool with its handler."""
+        """Register a tool with its handler.
+
+        Args:
+            category: Tool category for lazy loading.
+                "core" = always loaded (read_file, write_file, etc.)
+                "rag", "image", "web", "cron", "agent", "plugin" = loaded on demand.
+        """
         if name in self._tools:
             logger.warning("Tool '%s' already registered — overriding", name)
         self._tools[name] = {
@@ -276,13 +295,57 @@ class ToolRegistry:
             "input_schema": parameters,
         }
         self._handlers[name] = handler
-        self._cached_definitions = None  # Invalidate cache on registration
+        self._categories[name] = category
+        self._cached_definitions = None
+        self._cached_core = None
 
     def get_definitions(self) -> list[dict]:
-        """Get tool definitions for the LLM (cached until next register)."""
+        """Get ALL tool definitions (fallback, full list)."""
         if self._cached_definitions is None:
             self._cached_definitions = list(self._tools.values())
         return self._cached_definitions
+
+    def get_lazy_definitions(self, user_message: str = "") -> list[dict]:
+        """Get tool definitions using lazy loading.
+
+        Always includes core tools. Extended tools are included only
+        when the user message hints they're needed.
+
+        This saves ~500-2000 tokens per API call by not sending
+        unused tool schemas (image gen, RAG, cron, etc.).
+        """
+        if self._cached_core is None:
+            self._cached_core = [
+                t for name, t in self._tools.items()
+                if self._categories.get(name, self.CORE_CATEGORY) == self.CORE_CATEGORY
+            ]
+
+        if not user_message:
+            return self._cached_core
+
+        needed = set()
+        msg_lower = user_message.lower()
+
+        # Detect which extended categories are needed
+        if any(w in msg_lower for w in ("search", "find", "qidir", "remember", "esla", "xotira", "memory")):
+            needed.add("rag")
+        if any(w in msg_lower for w in ("image", "rasm", "photo", "surat", "draw", "generate", "chiz")):
+            needed.add("image")
+        if any(w in msg_lower for w in ("web", "search", "google", "internet", "site", "url", "link")):
+            needed.add("web")
+        if any(w in msg_lower for w in ("cron", "schedule", "timer", "jadval", "reminder", "eslatma")):
+            needed.add("cron")
+        if any(w in msg_lower for w in ("agent", "delegate", "task", "sub-agent", "vazifa")):
+            needed.add("agent")
+
+        if not needed:
+            return self._cached_core
+
+        return [
+            t for name, t in self._tools.items()
+            if self._categories.get(name, self.CORE_CATEGORY) == self.CORE_CATEGORY
+            or self._categories.get(name) in needed
+        ]
 
     async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
         """Execute a tool by name with parameter validation and timeout protection."""
@@ -362,6 +425,7 @@ class Agent:
         self._current_user_id: str = ""
         self._current_chat_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
+        self.cost_tracker = CostTracker(config.workspace_dir)
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
         self._conversations: dict[str | None, list[dict]] = {}
@@ -668,11 +732,13 @@ class Agent:
         self, messages: list[dict], user_id: str | None, *,
         cached_system: str | None = None,
         cached_tool_defs: list[dict] | None = None,
+        user_message: str = "",
     ) -> tuple[list[dict], str, list[dict]]:
         """Shared per-iteration prep: compaction, repair, build prompt/tools.
 
         Pass cached_system/cached_tool_defs to reuse from the first iteration
         (system prompt and tool defs don't change within a single turn).
+        user_message is used for lazy tool loading on the first iteration.
 
         Returns (messages, system_prompt, tool_defs).
         """
@@ -693,7 +759,11 @@ class Agent:
             self._conversations[user_id] = messages
 
         system = cached_system or self._build_system_prompt()
-        tool_defs = cached_tool_defs if cached_tool_defs is not None else self.tools.get_definitions()
+        # Lazy tool loading: only send tools the user likely needs
+        if cached_tool_defs is not None:
+            tool_defs = cached_tool_defs
+        else:
+            tool_defs = self.tools.get_lazy_definitions(user_message)
         return messages, system, tool_defs
 
     async def _handle_overflow(self, messages: list[dict], user_id: str | None) -> list[dict]:
@@ -714,6 +784,17 @@ class Agent:
             response.usage.input_tokens,
             response.usage.output_tokens,
         )
+        # Per-user cost tracking
+        uid = self._current_user_id
+        if uid:
+            self.cost_tracker.add_usage(
+                user_id=uid,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                cache_read=response.usage.cache_read_input_tokens,
+                cache_write=response.usage.cache_creation_input_tokens,
+                cost=response.usage.cost,
+            )
         if self.context.check_threshold():
             logger.warning("Context at %.1f%% — Working Buffer activated",
                          self.context.get_context_percent())
@@ -796,6 +877,8 @@ class Agent:
     ) -> None:
         """Shared end-turn handling: append message, log, buffer, daily note."""
         messages.append({"role": "assistant", "content": final_text})
+        # Persist per-user cost data
+        self.cost_tracker.save()
 
         self.session.log_assistant_message(
             text=final_text,
@@ -882,6 +965,8 @@ class Agent:
         """Internal implementation of run_turn (called under lock)."""
         self._current_user_id = user_id or ""
         self.context.turn_count += 1
+        if user_id:
+            self.cost_tracker.add_turn(user_id)
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
@@ -895,6 +980,7 @@ class Agent:
             messages, system, tool_defs = await self._prepare_iteration(
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,
+                user_message=user_message,
             )
             # Cache after first iteration — prompt/tools don't change within a turn
             if cached_system is None:
@@ -984,6 +1070,8 @@ class Agent:
         """Internal streaming implementation (called under lock)."""
         self._current_user_id = user_id or ""
         self.context.turn_count += 1
+        if user_id:
+            self.cost_tracker.add_turn(user_id)
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
@@ -996,6 +1084,7 @@ class Agent:
             messages, system, tool_defs = await self._prepare_iteration(
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,
+                user_message=user_message,
             )
             if cached_system is None:
                 cached_system = system

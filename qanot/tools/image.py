@@ -255,6 +255,7 @@ def register_image_tools(
             "required": ["prompt"],
         },
         handler=generate_image,
+        category="image",
     )
 
     registry.register(
@@ -276,4 +277,5 @@ def register_image_tools(
             "required": ["prompt"],
         },
         handler=edit_image,
+        category="image",
     )

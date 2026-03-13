@@ -243,6 +243,7 @@ def register_sub_agent_tools(
             },
         },
         handler=spawn_sub_agent,
+        category="agent",
     )
 
     # ── list_sub_agents ──
@@ -277,4 +278,5 @@ def register_sub_agent_tools(
         description="Faol sub-agentlar ro'yxatini ko'rsatish.",
         parameters={"type": "object", "properties": {}},
         handler=list_sub_agents,
+        category="agent",
     )

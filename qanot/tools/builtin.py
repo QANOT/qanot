@@ -90,6 +90,7 @@ def register_builtin_tools(
     context: ContextTracker,
     rag_indexer: "MemoryIndexer | None" = None,
     get_user_id: "callable | None" = None,
+    get_cost_tracker: "callable | None" = None,
 ) -> None:
     """Register all built-in tools."""
 
@@ -272,13 +273,49 @@ def register_builtin_tools(
 
     # ── session_status ──
     async def session_status(params: dict) -> str:
-        return json.dumps(context.session_status(), indent=2)
+        status = context.session_status()
+        # Include per-user cost if available
+        if get_cost_tracker and get_user_id:
+            uid = get_user_id()
+            if uid:
+                tracker = get_cost_tracker()
+                if tracker:
+                    status["user_cost"] = tracker.get_user_stats(uid)
+                    status["total_cost"] = tracker.get_total_cost()
+        return json.dumps(status, indent=2)
 
     registry.register(
         name="session_status",
-        description="Joriy sessiya holati — context %, token soni.",
+        description="Joriy sessiya holati — context %, token soni, xarajat.",
         parameters={"type": "object", "properties": {}},
         handler=session_status,
+    )
+
+    # ── cost_status ──
+    async def cost_status(params: dict) -> str:
+        if not get_cost_tracker:
+            return json.dumps({"error": "Cost tracking not available"})
+        tracker = get_cost_tracker()
+        if not tracker:
+            return json.dumps({"error": "Cost tracking not initialized"})
+        uid = get_user_id() if get_user_id else ""
+        user_id = params.get("user_id", uid)
+        if user_id:
+            stats = tracker.get_user_stats(str(user_id))
+            stats["user_id"] = str(user_id)
+            return json.dumps(stats, indent=2)
+        return json.dumps(tracker.get_all_stats(), indent=2)
+
+    registry.register(
+        name="cost_status",
+        description="Token va xarajat statistikasi — har bir foydalanuvchi uchun alohida.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "Foydalanuvchi ID (default: joriy user)"},
+            },
+        },
+        handler=cost_status,
     )
 
 

@@ -41,7 +41,7 @@ def registry():
     reg = MagicMock()
     handlers = {}
 
-    def capture_register(name, description, parameters, handler):
+    def capture_register(name, description, parameters, handler, **kwargs):
         handlers[name] = handler
 
     reg.register = capture_register

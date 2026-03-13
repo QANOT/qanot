@@ -162,6 +162,7 @@ async def main() -> None:
         tool_registry, config.workspace_dir, context,
         rag_indexer=rag_indexer,
         get_user_id=lambda: _agent_ref[0].current_user_id if _agent_ref else "",
+        get_cost_tracker=lambda: _agent_ref[0].cost_tracker if _agent_ref else None,
     )
 
     # Register doctor diagnostics tool

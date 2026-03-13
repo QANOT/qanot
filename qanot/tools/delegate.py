@@ -1252,6 +1252,7 @@ def register_delegate_tools(
                 },
             },
             handler=delegate_to_agent,
+            category="agent",
         )
 
         registry.register(
@@ -1282,6 +1283,7 @@ def register_delegate_tools(
                 },
             },
             handler=converse_with_agent,
+            category="agent",
         )
 
     registry.register(
@@ -1300,6 +1302,7 @@ def register_delegate_tools(
             },
         },
         handler=view_project_board,
+        category="agent",
     )
 
     registry.register(
@@ -1307,6 +1310,7 @@ def register_delegate_tools(
         description="Loyiha doskasini tozalash.",
         parameters={"type": "object", "properties": {}},
         handler=clear_project_board,
+        category="agent",
     )
 
     registry.register(
@@ -1314,6 +1318,7 @@ def register_delegate_tools(
         description="Mavjud agentlar ro'yxatini ko'rsatish — har birining modeli, roli va imkoniyatlari.",
         parameters={"type": "object", "properties": {}},
         handler=list_agents,
+        category="agent",
     )
 
     registry.register(
@@ -1343,6 +1348,7 @@ def register_delegate_tools(
             },
         },
         handler=agent_session_history,
+        category="agent",
     )
 
     registry.register(
@@ -1354,6 +1360,7 @@ def register_delegate_tools(
         ),
         parameters={"type": "object", "properties": {}},
         handler=agent_sessions_list,
+        category="agent",
     )
 
     registry.register(
@@ -1376,6 +1383,7 @@ def register_delegate_tools(
             },
         },
         handler=view_agent_activity,
+        category="agent",
     )
 
     registry.register(
@@ -1396,4 +1404,5 @@ def register_delegate_tools(
             },
         },
         handler=set_monitor_group,
+        category="agent",
     )

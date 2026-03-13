@@ -117,6 +117,7 @@ def register_cron_tools(
             },
         },
         handler=cron_create,
+        category="cron",
     )
 
     # ── cron_list ──
@@ -131,6 +132,7 @@ def register_cron_tools(
         description="Barcha rejali ishlar ro'yxati.",
         parameters={"type": "object", "properties": {}},
         handler=cron_list,
+        category="cron",
     )
 
     # ── cron_delete ──
@@ -163,6 +165,7 @@ def register_cron_tools(
             },
         },
         handler=cron_delete,
+        category="cron",
     )
 
     # ── cron_update ──
@@ -224,4 +227,5 @@ def register_cron_tools(
             },
         },
         handler=cron_update,
+        category="cron",
     )
