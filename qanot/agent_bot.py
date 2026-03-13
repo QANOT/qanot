@@ -345,10 +345,18 @@ class AgentBot:
         """Send typing indicator until cancelled."""
         try:
             while True:
-                await self.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                try:
+                    await self.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug(
+                        "AgentBot '%s': typing indicator failed for chat %s",
+                        self.agent_def.id, chat_id,
+                    )
                 await asyncio.sleep(4)
-        except (asyncio.CancelledError, Exception):
-            pass
+        except asyncio.CancelledError:
+            return
 
     async def start(self) -> None:
         """Start polling for this agent bot."""
