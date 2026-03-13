@@ -29,16 +29,29 @@ def register_cron_tools(
 
     # ── cron_create ──
     async def cron_create(params: dict) -> str:
-        name = params.get("name", "").strip()
-        schedule = params.get("schedule", "").strip()
-        at = params.get("at", "").strip()  # ISO 8601 for one-shot reminders
-        mode = params.get("mode", "isolated")
-        prompt = params.get("prompt", "").strip()
+        name = str(params.get("name", "")).strip()
+        schedule = str(params.get("schedule", "")).strip()
+        at = str(params.get("at", "")).strip()  # ISO 8601 for one-shot reminders
+        mode = str(params.get("mode", "isolated")).strip()
+        prompt = str(params.get("prompt", "")).strip()
         delete_after_run = params.get("delete_after_run", False)
-        tz = params.get("timezone", "")
+        tz = str(params.get("timezone", "")).strip()
 
         if not name or not prompt:
             return json.dumps({"error": "name and prompt are required"})
+
+        if len(name) > 200:
+            return json.dumps({"error": "name must be at most 200 characters"})
+        if len(prompt) > 10000:
+            return json.dumps({"error": "prompt must be at most 10000 characters"})
+        if schedule and len(schedule) > 200:
+            return json.dumps({"error": "schedule must be at most 200 characters"})
+        if at and len(at) > 100:
+            return json.dumps({"error": "at must be at most 100 characters"})
+        if tz and len(tz) > 100:
+            return json.dumps({"error": "timezone must be at most 100 characters"})
+        if not isinstance(delete_after_run, bool):
+            return json.dumps({"error": "delete_after_run must be a boolean"})
 
         if not schedule and not at:
             return json.dumps({"error": "Either 'schedule' (cron expression) or 'at' (ISO timestamp) is required"})
