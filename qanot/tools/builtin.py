@@ -89,6 +89,7 @@ def register_builtin_tools(
     workspace_dir: str,
     context: ContextTracker,
     rag_indexer: "MemoryIndexer | None" = None,
+    get_user_id: "callable | None" = None,
 ) -> None:
     """Register all built-in tools."""
 
@@ -240,16 +241,18 @@ def register_builtin_tools(
         if not query:
             return json.dumps({"error": "query is required"})
 
+        uid = get_user_id() if get_user_id else ""
+
         # Use RAG-powered search when available, fall back to substring search
         if rag_indexer is not None:
             try:
-                results = await rag_indexer.search(query)
+                results = await rag_indexer.search(query, user_id=uid or None)
                 if results:
                     return json.dumps(results, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.warning("RAG search failed, falling back to substring: %s", e)
 
-        results = _memory_search(query, workspace_dir)
+        results = _memory_search(query, workspace_dir, user_id=str(uid))
         if not results:
             return json.dumps({"message": "Hech narsa topilmadi", "query": query})
         return json.dumps(results, ensure_ascii=False, indent=2)

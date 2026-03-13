@@ -35,17 +35,17 @@ class MemoryIndexer:
         """
         total_chunks = 0
 
-        # Index MEMORY.md
+        # Index shared MEMORY.md (workspace root — all users' facts)
         memory_path = self.workspace_dir / "MEMORY.md"
         if memory_path.exists():
             total_chunks += await self._index_file(memory_path, user_id)
 
-        # Index SESSION-STATE.md
+        # Index shared SESSION-STATE.md (workspace root)
         state_path = self.workspace_dir / "SESSION-STATE.md"
         if state_path.exists():
             total_chunks += await self._index_file(state_path, user_id)
 
-        # Index daily notes
+        # Index shared daily notes (workspace root, OpenClaw-style)
         memory_dir = self.workspace_dir / "memory"
         if memory_dir.exists():
             for note_path in sorted(memory_dir.glob("*.md"), reverse=True)[:30]:

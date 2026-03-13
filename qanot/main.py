@@ -156,7 +156,13 @@ async def main() -> None:
             logger.info("RAG engine initialized in FTS-only mode (no embedder available)")
 
     # Register built-in tools
-    register_builtin_tools(tool_registry, config.workspace_dir, context, rag_indexer=rag_indexer)
+    # _agent_ref is populated after Agent creation; the lambda captures the list
+    _agent_ref: list = []
+    register_builtin_tools(
+        tool_registry, config.workspace_dir, context,
+        rag_indexer=rag_indexer,
+        get_user_id=lambda: _agent_ref[0].current_user_id if _agent_ref else "",
+    )
 
     # Register doctor diagnostics tool
     register_doctor_tool(tool_registry, config, context)
@@ -197,6 +203,8 @@ async def main() -> None:
         session=session,
         context=context,
     )
+
+    _agent_ref.append(agent)
 
     # Register RAG tools and hooks (needs agent reference for get_user_id)
     if rag_engine is not None and rag_indexer is not None:

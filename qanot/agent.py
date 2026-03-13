@@ -461,6 +461,7 @@ class Agent:
             context_percent=self.context.get_context_percent(),
             total_tokens=self.context.total_tokens,
             mode=self.prompt_mode,
+            user_id=str(self._current_user_id) if self._current_user_id else "",
         )
 
     async def _prepare_turn(self, user_message: str, messages: list[dict], *, images: list[dict] | None = None) -> str:
@@ -471,7 +472,7 @@ class Agent:
         # WAL Protocol: scan user message BEFORE generating response
         wal_entries = wal_scan(user_message)
         if wal_entries:
-            wal_write(wal_entries, self.config.workspace_dir)
+            wal_write(wal_entries, self.config.workspace_dir, user_id=str(self._current_user_id))
             logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
 
         # RAG context injection: auto-inject relevant memory for dumb models
@@ -811,6 +812,7 @@ class Agent:
         write_daily_note(
             f"**User:** {user_message[:100]}...\n**Agent:** {final_text[:200]}...",
             self.config.workspace_dir,
+            user_id=str(self._current_user_id),
         )
 
     async def _call_provider_with_retry(

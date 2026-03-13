@@ -30,6 +30,7 @@ def build_system_prompt(
     total_tokens: int = 0,
     skill_path: str | None = None,
     mode: str = "full",
+    user_id: str = "",
 ) -> str:
     """Build the full system prompt from workspace files.
 
@@ -93,13 +94,20 @@ def build_system_prompt(
         # 5. AGENTS.md
         _add(_read_file(ws / "AGENTS.md"))
 
-        # 6. SESSION-STATE.md
+        # 6. SESSION-STATE.md (shared per-agent, OpenClaw-style)
         state = _read_file(ws / "SESSION-STATE.md")
         if state:
             _add(f"# Current Session State\n\n{state}")
 
-        # 7. USER.md
-        _add(_read_file(ws / "USER.md"))
+        # 7. USER.md (per-user if exists, fallback to shared)
+        if user_id:
+            udir = ws / "users" / str(user_id)
+            user_md = _read_file(udir / "USER.md")
+            if not user_md:
+                user_md = _read_file(ws / "USER.md")
+        else:
+            user_md = _read_file(ws / "USER.md")
+        _add(user_md)
 
         # 8. BOOTSTRAP.md — first-run ritual (only if it exists)
         bootstrap = _read_file(ws / "BOOTSTRAP.md")
