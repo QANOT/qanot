@@ -506,6 +506,9 @@ class TelegramAdapter:
         import base64
         from io import BytesIO
 
+        if not message.photo:
+            return None
+
         try:
             # Telegram provides multiple sizes, pick the largest
             photo = message.photo[-1]
