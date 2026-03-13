@@ -13,11 +13,17 @@ def truncate_with_marker(
 
     Default: keeps first 70% and last 20%, with a gap marker.
     """
-    if len(text) <= max_chars:
+    text_len = len(text)
+    if text_len <= max_chars:
         return text
     head = int(max_chars * head_ratio)
     tail = int(max_chars * tail_ratio)
-    removed = len(text) - head - tail
+    removed = text_len - head - tail
+    if removed <= 0:
+        # Ratios sum to >= 1.0 for this max_chars; just hard-truncate
+        return text[:max_chars]
+    if tail == 0:
+        return text[:head] + f"\n\n... [truncated {removed} chars] ...\n\n"
     return (
         text[:head]
         + f"\n\n... [truncated {removed} chars] ...\n\n"
