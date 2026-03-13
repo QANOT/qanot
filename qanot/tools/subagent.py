@@ -164,8 +164,18 @@ def register_sub_agent_tools(
         if not task:
             return json.dumps({"error": "task is required — describe what to research or do"})
 
-        user_id = get_user_id()
-        chat_id = get_chat_id()
+        MAX_TASK_CHARS = 10000
+        if len(task) > MAX_TASK_CHARS:
+            return json.dumps({
+                "error": f"Task too long ({len(task)} chars). Max {MAX_TASK_CHARS} chars.",
+            })
+
+        try:
+            user_id = get_user_id()
+            chat_id = get_chat_id()
+        except Exception as e:
+            logger.error("Failed to resolve user/chat context for sub-agent: %s", e)
+            return json.dumps({"error": "Cannot resolve user conversation context"})
 
         if not user_id or not chat_id:
             return json.dumps({"error": "Cannot spawn sub-agent outside user conversation"})
