@@ -131,9 +131,19 @@ def validate_tool_params(params: dict, schema: dict) -> list[str]:
     Returns list of error messages. Empty list = valid.
     Only validates: required fields, type checking for basic types.
     """
+    if not isinstance(params, dict):
+        return [f"Parameters must be a dict, got {type(params).__name__}"]
+    if not isinstance(schema, dict):
+        return [f"Schema must be a dict, got {type(schema).__name__}"]
+
     errors: list[str] = []
     properties = schema.get("properties", {})
     required = schema.get("required", [])
+
+    if not isinstance(properties, dict):
+        properties = {}
+    if not isinstance(required, list):
+        required = []
 
     # Check required fields
     for key in required:
@@ -144,7 +154,10 @@ def validate_tool_params(params: dict, schema: dict) -> list[str]:
     for key, value in params.items():
         if key not in properties:
             continue
-        expected_type = properties[key].get("type")
+        prop = properties[key]
+        if not isinstance(prop, dict):
+            continue
+        expected_type = prop.get("type")
         if expected_type and not _check_type(value, expected_type):
             errors.append(f"Parameter '{key}' expected {expected_type}, got {type(value).__name__}")
 
@@ -153,6 +166,10 @@ def validate_tool_params(params: dict, schema: dict) -> list[str]:
 
 def _check_type(value: Any, expected: str) -> bool:
     """Check if value matches JSON schema type."""
+    # In Python, bool is a subclass of int, so we must check bool first
+    # to avoid booleans passing as integers/numbers.
+    if isinstance(value, bool):
+        return expected == "boolean"
     type_map = {
         "string": str,
         "integer": int,
