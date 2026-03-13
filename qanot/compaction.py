@@ -540,13 +540,10 @@ def prune_history_for_context(
 
         # Repair orphaned tool results
         kept = _repair_orphaned_tool_results(kept)
-        # Re-estimate only if repair may have removed messages, otherwise subtract
-        new_len = len(kept)
-        expected_len = sum(len(c) for c in chunks[1:])
-        if new_len != expected_len:
-            kept_tokens = estimate_messages_tokens(kept)
-        else:
-            kept_tokens -= dropped_tokens
+        # Always re-estimate: repair may change token counts even without
+        # removing whole messages (e.g., stripping tool_result blocks from
+        # a message's content list reduces tokens but not message count).
+        kept_tokens = estimate_messages_tokens(kept)
 
         # Guard against no progress (e.g., rounding or repair restoring tokens)
         if len(kept) >= prev_kept_len:
