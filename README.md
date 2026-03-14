@@ -287,18 +287,18 @@ All config lives in a single `config.json`. See [`config.example.json`](config.e
 | 3-command setup | ✅ | ✅ | ❌ |
 | Multi-agent delegation | ✅ | ✅ | ❌ |
 | Multi-provider failover | ✅ | ✅ | ✅ |
-| Built-in RAG | ✅ | ❌ | ✅ |
-| 3-tier memory | ✅ | ❌ | ❌ |
-| Model routing | ✅ | ❌ | ❌ |
-| Image generation | ✅ | ❌ | ❌ |
-| Self-healing | ✅ | ❌ | ❌ |
-| Voice I/O | ✅ | ❌ | ❌ |
-| Streaming (native draft) | ✅ | ❌ | ❌ |
-| Plugin system | ✅ | ✅ | ✅ |
-| Lazy tool loading | ✅ | ❌ | ❌ |
+| Built-in RAG | ✅ | ✅ | ✅ |
+| 3-tier memory (WAL+daily+long-term) | ✅ | ⚠️ 2-tier | ❌ |
+| Model routing | ✅ auto | ✅ alias | ❌ |
+| Image generation | ✅ | ✅ skill | ❌ |
+| Self-healing | ✅ | ⚠️ heartbeat | ❌ |
+| Voice I/O | ✅ | ✅ | ❌ |
+| Streaming (native draft) | ✅ | ✅ | ❌ |
+| Plugin system | ✅ | ✅ 40+ | ✅ |
+| Lazy tool loading | ✅ | ✅ | ❌ |
 | Per-user cost tracking | ✅ | ❌ | ❌ |
-| Cross-platform daemon | ✅ | ❌ | ❌ |
-| Lightweight (pure Python) | ✅ | ❌ | ❌ |
+| Cross-platform daemon | ✅ | ✅ | ❌ |
+| Lightweight (pure Python) | ✅ | ❌ Node.js | ❌ |
 | Uzbek voice support | ✅ | ❌ | ❌ |
 
 ---
