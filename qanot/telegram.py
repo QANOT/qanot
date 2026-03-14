@@ -938,9 +938,26 @@ class TelegramAdapter:
                 cleanup_paths.append(voice_path)
 
             elif result.audio_url:
-                # KotibAI returns URL → download
-                voice_path = await download_audio(result.audio_url)
-                cleanup_paths.append(voice_path)
+                # KotibAI/Aisha returns URL → download → convert to OGG if needed
+                dl_path = await download_audio(result.audio_url)
+                cleanup_paths.append(dl_path)
+                if dl_path.endswith(".ogg"):
+                    voice_path = dl_path
+                else:
+                    # WAV/MP3 → OGG for Telegram
+                    if dl_path.endswith(".wav"):
+                        voice_path = await convert_wav_to_ogg(dl_path)
+                    else:
+                        from qanot.voice import convert_ogg_to_mp3
+                        # MP3 → OGG (ffmpeg)
+                        ogg_path = dl_path.rsplit(".", 1)[0] + ".ogg"
+                        proc = await asyncio.create_subprocess_exec(
+                            "ffmpeg", "-i", dl_path, "-codec:a", "libopus", "-b:a", "32k", ogg_path, "-y",
+                            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                        )
+                        await proc.communicate()
+                        voice_path = ogg_path
+                    cleanup_paths.append(voice_path)
 
             if not voice_path:
                 return
