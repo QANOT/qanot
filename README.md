@@ -184,6 +184,25 @@ The wizard walks you through setup and starts your bot automatically:
 - Voice provider setup
 - User access control
 
+### CLI Commands
+
+```bash
+qanot init               # Interactive setup wizard
+qanot start              # Start bot (auto-installs OS service)
+qanot stop               # Stop bot
+qanot restart            # Restart bot
+qanot status             # Check if running
+qanot logs               # Tail bot logs
+qanot config show        # Show current configuration
+qanot config set <k> <v> # Change a config value
+qanot config add-provider # Add a backup AI provider
+qanot doctor             # Health checks (--fix to auto-repair)
+qanot backup             # Export workspace to .tar.gz
+qanot plugin new <name>  # Scaffold a new plugin
+```
+
+`qanot start` automatically installs an OS-native service (systemd on Linux, launchd on macOS, schtasks on Windows). The bot auto-restarts on crash and starts on boot.
+
 ### Docker
 
 ```bash
@@ -276,6 +295,9 @@ All config lives in a single `config.json`. See [`config.example.json`](config.e
 | Voice I/O | ✅ | ❌ | ❌ |
 | Streaming (native draft) | ✅ | ❌ | ❌ |
 | Plugin system | ✅ | ✅ | ✅ |
+| Lazy tool loading | ✅ | ❌ | ❌ |
+| Per-user cost tracking | ✅ | ❌ | ❌ |
+| Cross-platform daemon | ✅ | ❌ | ❌ |
 | Lightweight (pure Python) | ✅ | ❌ | ❌ |
 | Uzbek voice support | ✅ | ❌ | ❌ |
 
