@@ -304,7 +304,7 @@ async function load() {
 
     // Memory
     const mfiles = document.getElementById('m-files');
-    mfiles.innerHTML = memory.files.map(f => '<div class="file-item"><span class="file-name" onclick="viewFile(\'' + f.name + '\')">' + f.name + '</span><span class="file-size">' + (f.size/1024).toFixed(1) + ' KB</span></div>').join('');
+    mfiles.innerHTML = memory.files.map(f => '<div class="file-item"><span class="file-name" onclick="viewFile(&quot;' + f.name + '&quot;)">' + f.name + '</span><span class="file-size">' + (f.size/1024).toFixed(1) + ' KB</span></div>').join('');
 
     document.getElementById('refresh-time').textContent = 'Updated: ' + new Date().toLocaleTimeString();
   } catch(e) { console.error(e); }
