@@ -159,14 +159,17 @@ def create_embedder(config) -> Embedder | None:
         else:
             errors.append("gemini: empty API key")
 
-    # Priority 2: OpenAI (or Ollama via OpenAI-compatible API)
+    # Priority 2: OpenAI (skip Ollama — embedding causes VRAM swap, use FTS-only instead)
     if "openai" in providers:
         info = providers["openai"]
         if info.get("api_key"):
             base_url = info.get("base_url", "")
             is_ollama = "ollama" in info.get("api_key", "").lower() or "11434" in base_url
+            if is_ollama:
+                logger.info("Ollama detected — skipping embedding (FTS-only mode to avoid VRAM swap)")
+                return None
             try:
-                model = "nomic-embed-text" if is_ollama else "text-embedding-3-small"
+                model = "text-embedding-3-small"
                 embedder = OpenAIEmbedder(
                     api_key=info["api_key"],
                     model=model,
