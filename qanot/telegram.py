@@ -439,8 +439,9 @@ class TelegramAdapter:
             else:
                 await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
 
-            # Send any generated images
+            # Send any generated images and files
             await self._send_pending_images(message.chat.id, conv_key)
+            await self._send_pending_files(message.chat.id, conv_key)
 
             # Send TTS voice reply if configured
             should_tts = (
@@ -484,6 +485,21 @@ class TelegramAdapter:
                 logger.info("Sent generated image: %s", path)
             except Exception as e:
                 logger.warning("Failed to send generated image %s: %s", path, e)
+
+    async def _send_pending_files(self, chat_id: int, user_id: str) -> None:
+        """Send any files queued by send_file tool during this turn."""
+        file_paths = self.agent.pop_pending_files(user_id)
+        if not file_paths:
+            return
+
+        for path in file_paths:
+            try:
+                from aiogram.types import FSInputFile
+                doc = FSInputFile(path)
+                await self.bot.send_document(chat_id=chat_id, document=doc)
+                logger.info("Sent file: %s", path)
+            except Exception as e:
+                logger.warning("Failed to send file %s: %s", path, e)
 
     # ── Image processing ────────────────────────────────────
 

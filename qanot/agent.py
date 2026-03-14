@@ -452,6 +452,8 @@ class Agent:
         self._last_user_msg_id = ""
         # Per-user pending images queue (populated by generate_image tool)
         self._pending_images: dict[str, list[str]] = {}
+        # Per-user pending files queue (populated by send_file tool)
+        self._pending_files: dict[str, list[str]] = {}
         Agent._instance = self
 
     # Class-level reference for tools to push images without direct agent access
@@ -466,6 +468,10 @@ class Agent:
     def pop_pending_images(self, user_id: str) -> list[str]:
         """Pop all pending image paths for a user."""
         return self._pending_images.pop(user_id, [])
+
+    def pop_pending_files(self, user_id: str) -> list[str]:
+        """Pop all pending file paths for a user."""
+        return self._pending_files.pop(user_id, [])
 
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection."""

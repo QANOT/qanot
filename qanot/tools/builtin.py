@@ -433,6 +433,40 @@ def register_builtin_tools(
     )
 
 
+    # ── send_file ──
+    async def send_file(params: dict) -> str:
+        """Send a file from workspace to the user via Telegram."""
+        path = params.get("path", "")
+        if not path:
+            return json.dumps({"error": "path is required"})
+        full = _resolve_path(path, workspace_dir)
+        if not os.path.isfile(full):
+            return json.dumps({"error": f"File not found: {path}"})
+        # Size check — Telegram limit 50MB
+        size = os.path.getsize(full)
+        if size > 50 * 1024 * 1024:
+            return json.dumps({"error": f"File too large: {size / 1024 / 1024:.1f}MB (max 50MB)"})
+        # Push to pending files queue (telegram adapter will send it)
+        from qanot.agent import Agent
+        if Agent._instance:
+            user_id = get_user_id() if get_user_id else ""
+            Agent._instance._pending_files.setdefault(user_id, []).append(full)
+        return json.dumps({"success": True, "path": full, "size": size})
+
+    registry.register(
+        name="send_file",
+        description="Foydalanuvchiga fayl yuborish (Telegram orqali). Workspace yoki absolyut yo'l.",
+        parameters={
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {"type": "string", "description": "Fayl yo'li (SOUL.md, memory/2026-03-14.md, va h.k.)"},
+            },
+        },
+        handler=send_file,
+    )
+
+
 def _resolve_path(path: str, workspace_dir: str) -> str:
     """Resolve a path — absolute paths used as-is, relative resolved from workspace."""
     if os.path.isabs(path):
