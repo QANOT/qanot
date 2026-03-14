@@ -100,6 +100,9 @@ class Config:
     # Extended thinking (Claude reasoning mode)
     thinking_level: str = "off"  # "off" | "low" | "medium" | "high"
     thinking_budget: int = 10000  # max thinking tokens
+    # Execution security
+    exec_security: str = "cautious"  # "open" | "cautious" | "strict"
+    exec_allowlist: list[str] = field(default_factory=list)  # strict mode: only these commands allowed
     # Backup
     backup_enabled: bool = True  # Enable startup backups
     # Model routing (cost optimization)

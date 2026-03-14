@@ -24,6 +24,43 @@ MAX_OUTPUT = 50_000
 COMMAND_TIMEOUT = 120
 
 
+# ── Exec security levels ──
+# "open"     — only blocklist (dangerous patterns blocked)
+# "cautious" — blocklist + cautious patterns need user approval
+# "strict"   — only allowlist commands permitted
+
+_CAUTIOUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Package management (can install malware)
+    (re.compile(r"\bpip\s+install\b"), "pip install"),
+    (re.compile(r"\bnpm\s+install\b"), "npm install"),
+    (re.compile(r"\bapt(-get)?\s+install\b"), "apt install"),
+    (re.compile(r"\bbrew\s+install\b"), "brew install"),
+    # File deletion (non-recursive)
+    (re.compile(r"\brm\s+"), "file deletion (rm)"),
+    # Network operations
+    (re.compile(r"\bcurl\b"), "network request (curl)"),
+    (re.compile(r"\bwget\b"), "network request (wget)"),
+    (re.compile(r"\bssh\b"), "SSH connection"),
+    (re.compile(r"\bscp\b"), "file transfer (scp)"),
+    # Git push/force operations
+    (re.compile(r"\bgit\s+push\b"), "git push"),
+    (re.compile(r"\bgit\s+reset\b"), "git reset"),
+    # Process management
+    (re.compile(r"\bkill\b"), "process kill"),
+    (re.compile(r"\bpkill\b"), "process kill (pkill)"),
+    # System config
+    (re.compile(r"\bsudo\b"), "sudo (elevated privileges)"),
+    (re.compile(r"\bsystemctl\b"), "systemd service control"),
+    (re.compile(r"\blaunchctl\b"), "launchd service control"),
+    # Docker
+    (re.compile(r"\bdocker\b"), "Docker command"),
+    # Database
+    (re.compile(r"\bpsql\b"), "PostgreSQL client"),
+    (re.compile(r"\bmysql\b"), "MySQL client"),
+    (re.compile(r"\bmongosh?\b"), "MongoDB client"),
+]
+
+
 _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # --- Destructive filesystem operations ---
     # Matches both -rf and -fr flag orderings in a single pattern
@@ -84,6 +121,29 @@ def _is_dangerous_command(command: str) -> str | None:
     return None
 
 
+def _needs_approval(command: str) -> str | None:
+    """Check if command needs user approval in cautious mode.
+
+    Returns description if approval needed, None if safe.
+    """
+    for pattern, description in _CAUTIOUS_PATTERNS:
+        if pattern.search(command):
+            return description
+    return None
+
+
+def _matches_allowlist(command: str, allowlist: list[str]) -> bool:
+    """Check if command matches any pattern in the allowlist.
+
+    Allowlist entries are prefix matches: "git" matches "git status", "git log", etc.
+    """
+    cmd_base = command.strip().split()[0] if command.strip() else ""
+    for pattern in allowlist:
+        if command.strip().startswith(pattern) or cmd_base == pattern:
+            return True
+    return False
+
+
 def register_builtin_tools(
     registry: ToolRegistry,
     workspace_dir: str,
@@ -91,8 +151,14 @@ def register_builtin_tools(
     rag_indexer: "MemoryIndexer | None" = None,
     get_user_id: "callable | None" = None,
     get_cost_tracker: "callable | None" = None,
+    exec_security: str = "cautious",
+    exec_allowlist: list[str] | None = None,
 ) -> None:
-    """Register all built-in tools."""
+    """Register all built-in tools.
+
+    exec_security: "open" | "cautious" | "strict"
+    exec_allowlist: commands allowed in strict mode (prefix match)
+    """
 
     # ── read_file ──
     async def read_file(params: dict) -> str:
@@ -185,6 +251,7 @@ def register_builtin_tools(
         if not command:
             return json.dumps({"error": "command is required"})
 
+        # Level 1: Always block dangerous commands (all modes)
         danger = _is_dangerous_command(command)
         if danger:
             return json.dumps({
@@ -192,8 +259,30 @@ def register_builtin_tools(
                 "hint": "If this command is needed, the user must run it manually.",
             })
 
+        # Level 2: Strict mode — only allowlist
+        if exec_security == "strict":
+            if not _matches_allowlist(command, exec_allowlist or []):
+                return json.dumps({
+                    "error": f"Command not in allowlist (strict mode)",
+                    "hint": "Add to exec_allowlist in config.json, or set exec_security to 'cautious'.",
+                    "command": command,
+                })
+
+        # Level 3: Cautious mode — approval for risky commands
+        if exec_security == "cautious":
+            reason = _needs_approval(command)
+            if reason and not params.get("approved"):
+                return json.dumps({
+                    "needs_approval": True,
+                    "reason": reason,
+                    "command": command,
+                    "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
+                })
+
         timeout = params.get("timeout", COMMAND_TIMEOUT)
         cwd = params.get("cwd", workspace_dir)
+
+        logger.info("Executing command [%s]: %s", exec_security, command)
 
         try:
             result = await asyncio.to_thread(
@@ -220,7 +309,7 @@ def register_builtin_tools(
 
     registry.register(
         name="run_command",
-        description="Shell buyruq bajarish. Pipe, redirect ruxsat. Xavfli buyruqlar (rm -rf /, shutdown, fork bomb, h.k.) bloklangan.",
+        description="Shell buyruq bajarish. Pipe, redirect ruxsat. Xavfli buyruqlar bloklangan. Ba'zi buyruqlar (pip install, curl, sudo, h.k.) foydalanuvchi ruxsatini talab qiladi — agar needs_approval qaytsa, foydalanuvchidan so'ra va approved=true bilan qayta chaqir.",
         parameters={
             "type": "object",
             "required": ["command"],
@@ -228,6 +317,7 @@ def register_builtin_tools(
                 "command": {"type": "string", "description": "Shell buyruq (pipe, redirect, && ishlatsa bo'ladi)"},
                 "timeout": {"type": "integer", "description": "Timeout sekundlarda (default: 120)"},
                 "cwd": {"type": "string", "description": "Ishchi papka (default: workspace)"},
+                "approved": {"type": "boolean", "description": "Foydalanuvchi ruxsat berganini tasdiqlash (cautious mode uchun)"},
             },
         },
         handler=run_command,
