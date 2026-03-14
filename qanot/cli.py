@@ -71,6 +71,13 @@ AI_PROVIDERS = {
         "default_model": "llama-3.3-70b-versatile",
         "key_hint": "gsk_...",
     },
+    "ollama": {
+        "label": "Ollama (Local — free, private)",
+        "models": [],  # Populated dynamically from ollama list
+        "default_model": "",
+        "key_hint": "No API key needed",
+        "base_url": "http://localhost:11434/v1",
+    },
 }
 
 VOICE_PROVIDERS = {
@@ -83,6 +90,37 @@ VOICE_PROVIDERS = {
         "key_hint": "JWT token from developer.kotib.ai",
     },
 }
+
+
+# ── Ollama helpers ───────────────────────────────────────────
+
+def _detect_ollama(base_url: str = "http://localhost:11434") -> bool:
+    """Check if Ollama is running locally."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _list_ollama_models(base_url: str = "http://localhost:11434") -> list[tuple[str, str]]:
+    """List available Ollama models. Returns [(model_name, description), ...]."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                size_gb = m.get("size", 0) / (1024**3)
+                desc = f"{name} ({size_gb:.1f} GB)"
+                models.append((name, desc))
+            return models
+    except Exception:
+        return []
 
 
 # ── Input helpers ────────────────────────────────────────────
@@ -287,7 +325,54 @@ def cmd_init(args: list[str]) -> None:
         info = AI_PROVIDERS[prov]
         print(f"\n  {_bold(info['label'])}")
 
-        # Ask for API key
+        # Ollama: special handling — no API key, detect models
+        if prov == "ollama":
+            base_url = info.get("base_url", "http://localhost:11434/v1")
+            ollama_api = base_url.replace("/v1", "")
+            print("    Checking Ollama...", end=" ", flush=True)
+            if _detect_ollama(ollama_api):
+                print(_green("✓ Running"))
+                models = _list_ollama_models(ollama_api)
+                if models:
+                    model_options = models
+                else:
+                    print(_yellow("    No models found. Pull one first: ollama pull qwen3.5:35b"))
+                    model_options = [
+                        ("qwen3.5:35b", "Qwen 3.5 35B — recommended"),
+                        ("qwen3.5:9b", "Qwen 3.5 9B — lighter"),
+                        ("llama3.3:70b", "Llama 3.3 70B"),
+                    ]
+            else:
+                print(_yellow("! Not running"))
+                print(_dim("    Install: curl -fsSL https://ollama.com/install.sh | sh"))
+                model_options = [
+                    ("qwen3.5:35b", "Qwen 3.5 35B — recommended"),
+                    ("qwen3.5:9b", "Qwen 3.5 9B — lighter"),
+                    ("llama3.3:70b", "Llama 3.3 70B"),
+                ]
+
+            # Custom Ollama URL?
+            custom_url = _prompt("Ollama URL", base_url)
+            base_url = custom_url
+
+            selected_model = _prompt_select(
+                "Which model?",
+                model_options,
+            )[0]
+
+            if prov == primary_provider:
+                primary_model = selected_model
+
+            providers_config.append({
+                "name": "ollama-main",
+                "provider": "openai",  # Ollama is OpenAI-compatible
+                "model": selected_model,
+                "api_key": "ollama",  # Ollama doesn't need a real key
+                "base_url": base_url,
+            })
+            continue
+
+        # Cloud providers: ask for API key
         api_key = ""
         while True:
             api_key = _prompt_secret("API key", info["key_hint"])
@@ -1396,10 +1481,17 @@ def _config_add_provider(args: list[str]) -> None:
         return
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
-    existing = {p.get("provider") for p in raw.get("providers", [])}
+    existing_providers = {p.get("provider") for p in raw.get("providers", [])}
+    existing_names = {p.get("name", "") for p in raw.get("providers", [])}
 
-    # Filter out already configured providers
-    available = {k: v for k, v in AI_PROVIDERS.items() if k not in existing}
+    # Filter out already configured providers (check both provider type and ollama by name)
+    available = {}
+    for k, v in AI_PROVIDERS.items():
+        if k == "ollama":
+            if "ollama-main" not in existing_names:
+                available[k] = v
+        elif k not in existing_providers:
+            available[k] = v
     if not available:
         print(_yellow("All providers already configured."))
         return
@@ -1413,7 +1505,43 @@ def _config_add_provider(args: list[str]) -> None:
     selected = _prompt_select("Which provider to add?", provider_options)[0]
     info = AI_PROVIDERS[selected]
 
-    # API key
+    # Ollama: special handling
+    if selected == "ollama":
+        base_url = info.get("base_url", "http://localhost:11434/v1")
+        ollama_api = base_url.replace("/v1", "")
+        print("  Checking Ollama...", end=" ", flush=True)
+        if _detect_ollama(ollama_api):
+            print(_green("✓ Running"))
+            models = _list_ollama_models(ollama_api)
+            model_options = models if models else [
+                ("qwen3.5:35b", "Qwen 3.5 35B — recommended"),
+                ("qwen3.5:9b", "Qwen 3.5 9B — lighter"),
+            ]
+        else:
+            print(_yellow("! Not running"))
+            model_options = [("qwen3.5:35b", "Qwen 3.5 35B"), ("qwen3.5:9b", "Qwen 3.5 9B")]
+
+        custom_url = _prompt("Ollama URL", base_url)
+        selected_model = _prompt_select("Which model?", model_options)[0]
+
+        if "providers" not in raw:
+            raw["providers"] = []
+        raw["providers"].append({
+            "name": "ollama-main",
+            "provider": "openai",
+            "model": selected_model,
+            "api_key": "ollama",
+            "base_url": custom_url,
+        })
+        raw.setdefault("provider", "openai")
+        raw.setdefault("model", selected_model)
+        config_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        print(f"\n  {_green('✓')} Added Ollama ({selected_model})")
+        print(f"  {_dim('Restart bot: qanot restart')}")
+        print()
+        return
+
+    # Cloud providers: API key
     api_key = _prompt_secret(f"{info['label']} API key", info["key_hint"])
     if not api_key:
         print(_red("API key is required."))
