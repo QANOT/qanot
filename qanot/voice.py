@@ -503,13 +503,20 @@ async def aisha_tts(
             headers=headers,
             data=data,
         ) as resp:
-            if resp.status != 200:
+            if resp.status not in (200, 201):
                 body = await resp.text()
                 raise RuntimeError(f"Aisha TTS error: HTTP {resp.status} — {body[:200]}")
 
-            audio_data = await resp.read()
+            result = await resp.json()
+            audio_url = result.get("audio_path", "") or result.get("audio_url", "")
+            if audio_url:
+                return TTSResult(
+                    audio_url=audio_url,
+                    character_count=len(text),
+                )
+            # Fallback: maybe raw audio returned
             return TTSResult(
-                audio_data=audio_data,
+                audio_data=await resp.read(),
                 character_count=len(text),
             )
 
