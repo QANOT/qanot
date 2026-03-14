@@ -82,10 +82,13 @@ class OpenAIEmbedder(Embedder):
 
     provider_name = "openai"
 
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: str | None = None):
         import openai
 
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = openai.AsyncOpenAI(**kwargs)
         self.model = model
         self.dimensions = 1536
 
@@ -154,13 +157,21 @@ def create_embedder(config) -> Embedder | None:
         else:
             errors.append("gemini: empty API key")
 
-    # Priority 2: OpenAI
+    # Priority 2: OpenAI (or Ollama via OpenAI-compatible API)
     if "openai" in providers:
         info = providers["openai"]
         if info.get("api_key"):
+            base_url = info.get("base_url", "")
+            is_ollama = "ollama" in info.get("api_key", "").lower() or "11434" in base_url
             try:
-                embedder = OpenAIEmbedder(api_key=info["api_key"])
-                logger.info("RAG embedder: using OpenAI text-embedding-3-small")
+                model = "nomic-embed-text" if is_ollama else "text-embedding-3-small"
+                embedder = OpenAIEmbedder(
+                    api_key=info["api_key"],
+                    model=model,
+                    base_url=base_url or None,
+                )
+                label = f"Ollama {model}" if is_ollama else f"OpenAI {model}"
+                logger.info("RAG embedder: using %s", label)
                 return embedder
             except Exception as e:
                 errors.append(f"openai: {e}")
