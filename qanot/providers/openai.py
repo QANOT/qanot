@@ -139,6 +139,8 @@ class OpenAIProvider(LLMProvider):
             kwargs["base_url"] = base_url
         self.client = openai.AsyncOpenAI(**kwargs)
         self.model = model
+        # Detect Ollama — disable thinking mode for Qwen models (30x faster)
+        self._is_ollama = bool(base_url and "11434" in base_url)
 
     def _calc_cost(self, inp: int, out: int) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
@@ -167,6 +169,10 @@ class OpenAIProvider(LLMProvider):
 
         if tools:
             kwargs["tools"] = self._prepare_tools(tools)
+
+        # Ollama: disable thinking mode for Qwen (saves ~1000 tokens per call)
+        if self._is_ollama:
+            kwargs["extra_body"] = {"think": False}
 
         try:
             response = await self.client.chat.completions.create(**kwargs)
@@ -232,6 +238,10 @@ class OpenAIProvider(LLMProvider):
 
         if tools:
             kwargs["tools"] = self._prepare_tools(tools)
+
+        # Ollama: disable thinking mode for Qwen
+        if self._is_ollama:
+            kwargs["extra_body"] = {"think": False}
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
