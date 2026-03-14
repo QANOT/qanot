@@ -107,7 +107,8 @@ class Config:
     backup_enabled: bool = True  # Enable startup backups
     # Model routing (cost optimization)
     routing_enabled: bool = False  # Route simple messages to cheaper model
-    routing_model: str = "claude-haiku-4-5"  # Cheap model for simple messages
+    routing_model: str = "claude-haiku-4-5-20251001"  # Cheap model (greetings)
+    routing_mid_model: str = "claude-sonnet-4-6"  # Mid model (general conversation)
     routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
     # Image generation (Nano Banana / Gemini)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)

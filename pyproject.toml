@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qanot"
-version = "1.5.5"
+version = "1.6.0"
 description = "The AI agent that flies on its own. Two commands to fly."
 license = "MIT"
 requires-python = ">=3.11"

@@ -155,18 +155,18 @@ class TestRoutingProvider:
     @pytest.mark.asyncio
     async def test_simple_message_routes_to_cheap(self):
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5", threshold=0.3)
+        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5-20251001", threshold=0.3)
 
         await router.chat(self._make_messages("salom"))
 
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
         # Model should be restored after call
         assert fake.model == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
     async def test_complex_message_routes_to_primary(self):
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5", threshold=0.3)
+        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5-20251001", threshold=0.3)
 
         await router.chat(self._make_messages("explain the authentication flow in detail"))
 
@@ -175,13 +175,13 @@ class TestRoutingProvider:
     @pytest.mark.asyncio
     async def test_stream_routes_simple(self):
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5", threshold=0.3)
+        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5-20251001", threshold=0.3)
 
         events = []
         async for event in router.chat_stream(self._make_messages("rahmat")):
             events.append(event)
 
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
         assert any(e.type == "text_delta" for e in events)
         # Model restored
         assert fake.model == "claude-sonnet-4-6"
@@ -189,7 +189,7 @@ class TestRoutingProvider:
     @pytest.mark.asyncio
     async def test_stream_routes_complex(self):
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5", threshold=0.3)
+        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5-20251001", threshold=0.3)
 
         events = []
         async for event in router.chat_stream(self._make_messages("implement a REST API endpoint")):
@@ -239,7 +239,7 @@ class TestRoutingProvider:
         }]
         await router.chat(messages)
 
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     async def test_no_user_message_uses_primary(self):
@@ -251,15 +251,15 @@ class TestRoutingProvider:
         await router.chat(messages)
 
         # Empty text → score 0.0 → routes to cheap
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     def test_status_report(self):
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5", threshold=0.3)
+        router = RoutingProvider(fake, cheap_model="claude-haiku-4-5-20251001", threshold=0.3)
 
         status = router.status()
         assert status["primary_model"] == "claude-sonnet-4-6"
-        assert status["cheap_model"] == "claude-haiku-4-5"
+        assert status["cheap_model"] == "claude-haiku-4-5-20251001"
         assert status["threshold"] == 0.3
         assert status["stats"]["total"] == 0
 
@@ -306,7 +306,7 @@ class TestContextAwareRouting:
 
         messages = [{"role": "user", "content": "salom"}]
         await router.chat(messages)
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     async def test_ok_after_long_assistant_response_stays_primary(self):
@@ -349,7 +349,7 @@ class TestContextAwareRouting:
             {"role": "user", "content": "rahmat"},
         ]
         await router.chat(messages)
-        assert fake.last_model_used == "claude-haiku-4-5"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     def test_assess_context_empty(self):
         assert RoutingProvider._assess_context([]) == 0.0

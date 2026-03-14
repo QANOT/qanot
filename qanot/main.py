@@ -116,11 +116,12 @@ async def main() -> None:
         provider = RoutingProvider(
             provider=provider,
             cheap_model=config.routing_model,
+            mid_model=getattr(config, "routing_mid_model", "claude-sonnet-4-6"),
             threshold=config.routing_threshold,
         )
         logger.info(
-            "Model routing enabled: simple → %s, complex → %s (threshold=%.2f)",
-            config.routing_model, config.model, config.routing_threshold,
+            "3-tier routing: simple → %s, moderate → %s, complex → %s",
+            config.routing_model, getattr(config, "routing_mid_model", "claude-sonnet-4-6"), config.model,
         )
 
     # Create context tracker
