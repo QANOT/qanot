@@ -103,6 +103,9 @@ class Config:
     # Execution security
     exec_security: str = "open"  # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)  # strict mode: only these commands allowed
+    # Dashboard
+    dashboard_enabled: bool = True  # Enable web dashboard
+    dashboard_port: int = 8765  # Dashboard port
     # Backup
     backup_enabled: bool = True  # Enable startup backups
     # Model routing (cost optimization)

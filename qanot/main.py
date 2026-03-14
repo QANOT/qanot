@@ -310,6 +310,15 @@ async def main() -> None:
     from qanot.agent_bot import start_agent_bots
     agent_bots = await start_agent_bots(config, provider, tool_registry)
 
+    # Start web dashboard
+    if getattr(config, "dashboard_enabled", True):
+        try:
+            from qanot.dashboard import Dashboard
+            dashboard = Dashboard(config, agent)
+            await dashboard.start(port=getattr(config, "dashboard_port", 8765))
+        except Exception as e:
+            logger.warning("Dashboard failed to start: %s", e)
+
     try:
         await telegram.start()
     finally:
