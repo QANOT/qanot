@@ -890,6 +890,17 @@ class Agent:
             user_id=self._current_user_id,
         )
 
+    def _log_error_lesson(self, context: str, error: str) -> None:
+        """Log an error to daily notes so the agent can learn from mistakes."""
+        try:
+            write_daily_note(
+                f"**Error lesson:** {context}\n- Error: {error[:200]}",
+                self.config.workspace_dir,
+                user_id=str(self._current_user_id),
+            )
+        except Exception:
+            pass  # Non-fatal
+
     async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
         """Execute tool calls and return (tool_result blocks, combined result hash)."""
         tool_results: list[dict] = []
@@ -1053,6 +1064,9 @@ class Agent:
                     messages = await self._handle_overflow(messages, user_id)
                     continue
 
+                # Log error for agent learning
+                self._log_error_lesson(f"Provider error [{error_type}]", str(e))
+
                 if error_type == ERROR_RATE_LIMIT:
                     return "Limitga yetdik, biroz kutib qaytadan urinib ko'ring."
                 elif error_type == ERROR_AUTH:
@@ -1084,6 +1098,10 @@ class Agent:
                 call_key = ":".join(sorted(batch_fps))
                 if _is_no_progress(result_history, call_key, result_hash):
                     logger.warning("No-progress loop: same call producing same result")
+                    self._log_error_lesson(
+                        f"No-progress loop: {response.tool_calls[0].name}",
+                        "Same call producing same result — need different approach",
+                    )
                     final_text = (
                         f"Kechirasiz, {response.tool_calls[0].name} "
                         "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."

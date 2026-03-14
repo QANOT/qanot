@@ -99,6 +99,11 @@ def build_system_prompt(
         if state:
             _add(f"# Current Session State\n\n{state}")
 
+        # 6b. MEMORY.md — persistent curated knowledge (injected for context)
+        memory = _read_file(ws / "MEMORY.md")
+        if memory:
+            _add(f"# Your Long-Term Memory\n\n{memory}")
+
         # 7. USER.md (per-user if exists, fallback to shared)
         if user_id:
             udir = ws / "users" / str(user_id)
@@ -141,8 +146,8 @@ def build_system_prompt(
         f"- **Total Tokens:** {total_tokens:,}\n"
     )
 
-    if context_percent >= 60:
-        session_info += "- **WARNING:** Context above 60% — Working Buffer Protocol ACTIVE\n"
+    if context_percent >= 50:
+        session_info += "- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n"
 
     parts.append(session_info)
 
