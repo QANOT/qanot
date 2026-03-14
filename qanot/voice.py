@@ -371,7 +371,7 @@ async def _kotib_poll_task(
 # ══════════════════════════════════════════════════════════
 
 AISHA_TTS_URL = "https://back.aisha.group/api/v1/tts/post/"
-AISHA_STT_URL = "https://back.aisha.group/api/v2/stt/post/"
+AISHA_STT_URL = "https://back.aisha.group/api/v1/stt/post/"
 
 AISHA_VOICES = {
     "gulnoza": "gulnoza",    # Female, Uzbek
@@ -388,7 +388,8 @@ async def aisha_transcribe(
 ) -> TranscriptionResult:
     """Transcribe audio using Aisha AI STT API.
 
-    Supports uz/en/ru languages with diarization option.
+    Aisha STT is async: submit audio → get task_id → poll for result.
+    Supports uz/en/ru languages.
     """
     if not os.path.isfile(audio_path):
         raise ValueError(f"Audio file does not exist: {audio_path}")
@@ -412,18 +413,57 @@ async def aisha_transcribe(
         data.add_field("has_diarization", "false")
 
         async with aiohttp.ClientSession() as session:
+            # Step 1: Submit audio
             async with session.post(
                 AISHA_STT_URL,
                 headers=headers,
                 data=data,
             ) as resp:
-                if resp.status != 200:
+                if resp.status not in (200, 201):
                     body = await resp.text()
                     raise RuntimeError(f"Aisha STT error: HTTP {resp.status} — {body[:200]}")
 
                 result = await resp.json()
-                text = result.get("text", "") if isinstance(result, dict) else str(result)
-                return TranscriptionResult(text=text, language=language)
+
+                # If text is directly returned
+                if result.get("text"):
+                    return TranscriptionResult(text=result["text"], language=language)
+
+                # Async mode: get task_id and poll
+                task_id = result.get("task_id") or result.get("id")
+                if not task_id:
+                    raise RuntimeError(f"Aisha STT: no task_id in response: {result}")
+
+            # Step 2: Poll for result
+            logger.info("Aisha STT task submitted: %s, polling...", task_id)
+            poll_url = f"https://back.aisha.group/api/v1/stt/{task_id}/"
+            elapsed = 0.0
+            interval = 1.0
+            max_wait = 30.0
+
+            while elapsed < max_wait:
+                await asyncio.sleep(interval)
+                elapsed += interval
+
+                async with session.get(poll_url, headers=headers) as poll_resp:
+                    if poll_resp.status != 200:
+                        continue
+                    poll_result = await poll_resp.json()
+                    status = poll_result.get("status", "")
+
+                    if status in ("COMPLETED", "completed", "SUCCESS", "success"):
+                        text = poll_result.get("text", "")
+                        if not text and isinstance(poll_result.get("result"), dict):
+                            text = poll_result["result"].get("text", "")
+                        logger.info("Aisha STT completed: %s", text[:50])
+                        return TranscriptionResult(text=text, language=language)
+
+                    if status in ("FAILED", "failed", "ERROR", "error"):
+                        raise RuntimeError(f"Aisha STT task failed: {poll_result}")
+
+                interval = min(interval * 1.2, 3.0)
+
+            raise RuntimeError(f"Aisha STT timed out after {max_wait}s")
     finally:
         file_handle.close()
 
