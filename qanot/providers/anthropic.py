@@ -44,7 +44,8 @@ class AnthropicProvider(LLMProvider):
             # OAuth tokens use Bearer auth (auth_token), not x-api-key
             client_kwargs["auth_token"] = api_key
             client_kwargs["default_headers"] = {
-                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+                "User-Agent": "qanot",
             }
             logger.info("Using Anthropic OAuth token — Bearer auth + beta headers enabled")
         else:

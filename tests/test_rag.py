@@ -680,16 +680,17 @@ class TestEngineEdgeCases:
         for r in result.results:
             assert r.metadata.get("source") == "alpha.md"
 
-    def test_user_isolation(self, tmp_path):
+    def test_shared_memory_across_users(self, tmp_path):
+        """OpenClaw-style: all users share the same memory (no isolation)."""
         engine = self._make_engine(tmp_path)
         asyncio.run(
-            engine.ingest("Secret data for user A only", source="a.md", user_id="userA")
+            engine.ingest("Shared data from user A", source="a.md", user_id="userA")
         )
         result = asyncio.run(
-            engine.query("Secret data", top_k=5, user_id="userB")
+            engine.query("Shared data", top_k=5, user_id="userB")
         )
-        # userB should not see userA's data
-        assert result.results == []
+        # OpenClaw-style: userB CAN see userA's data (shared per-agent)
+        assert len(result.results) > 0
 
 
 class TestMemoryHooks:

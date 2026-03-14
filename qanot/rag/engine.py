@@ -330,6 +330,9 @@ class RAGEngine:
                 continue
             result = result_map[chunk_id]
             result.score = fused_scores[chunk_id]
+            # Source filter: skip results from other sources
+            if source and result.metadata.get("source") != source:
+                continue
             # Check text similarity against already-selected results
             if _is_redundant(result.text, seen_texts):
                 continue
