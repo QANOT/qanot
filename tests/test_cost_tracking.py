@@ -131,65 +131,28 @@ class TestLazyToolLoading:
         assert "rag_search" in names
         assert "generate_image" in names
 
-    def test_lazy_no_message_returns_core_only(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("")
-        names = {d["name"] for d in defs}
-        assert "read_file" in names
-        assert "write_file" in names
-        assert "run_command" in names
-        # Extended should NOT be included
-        assert "rag_search" not in names
-        assert "generate_image" not in names
-        assert "web_search" not in names
-        assert "cron_create" not in names
-        assert "delegate_to_agent" not in names
+    def test_lazy_returns_all_tools(self):
+        """get_lazy_definitions returns ALL tools for cache-friendly prompts.
 
-    def test_lazy_includes_rag_on_search(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("xotiradan qidir")
-        names = {d["name"] for d in defs}
-        assert "rag_search" in names
-        assert "read_file" in names  # Core always included
-        assert "generate_image" not in names  # Image not needed
-
-    def test_lazy_includes_image_on_request(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("rasm chiz")
-        names = {d["name"] for d in defs}
-        assert "generate_image" in names
-        assert "rag_search" not in names
-
-    def test_lazy_includes_web_on_search(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("search the internet for news")
-        names = {d["name"] for d in defs}
-        assert "web_search" in names
-
-    def test_lazy_includes_cron_on_schedule(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("schedule a reminder for tomorrow")
-        names = {d["name"] for d in defs}
-        assert "cron_create" in names
-
-    def test_lazy_includes_agent_on_delegate(self):
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("delegate this task to agent")
-        names = {d["name"] for d in defs}
-        assert "delegate_to_agent" in names
-
-    def test_lazy_multiple_categories(self):
-        """Message mentioning multiple categories loads all relevant tools."""
-        reg = self._make_registry()
-        defs = reg.get_lazy_definitions("search memory and generate an image")
-        names = {d["name"] for d in defs}
-        assert "rag_search" in names
-        assert "generate_image" in names
-        assert "cron_create" not in names
-
-    def test_lazy_saves_tokens(self):
-        """Lazy loading returns fewer tools than full list."""
+        Ollama and other local models cache the KV state when the prompt
+        prefix is identical. Sending consistent tools = cache hit = fast.
+        Changing tools per message breaks cache = slow.
+        """
         reg = self._make_registry()
         full = reg.get_definitions()
-        lazy = reg.get_lazy_definitions("hello, how are you?")
-        assert len(lazy) < len(full)
+        lazy_empty = reg.get_lazy_definitions("")
+        lazy_msg = reg.get_lazy_definitions("salom")
+        # All should return the same set
+        assert len(lazy_empty) == len(full)
+        assert len(lazy_msg) == len(full)
+
+    def test_lazy_includes_all_categories(self):
+        """All categories are included regardless of message content."""
+        reg = self._make_registry()
+        defs = reg.get_lazy_definitions("hello")
+        names = {d["name"] for d in defs}
+        assert "rag_search" in names
+        assert "generate_image" in names
+        assert "web_search" in names
+        assert "cron_create" in names
+        assert "delegate_to_agent" in names

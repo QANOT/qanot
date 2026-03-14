@@ -348,46 +348,18 @@ class ToolRegistry:
         return self._cached_definitions
 
     def get_lazy_definitions(self, user_message: str = "") -> list[dict]:
-        """Get tool definitions using lazy loading.
+        """Get tool definitions — returns ALL tools every time.
 
-        Always includes core tools. Extended tools are included only
-        when the user message hints they're needed.
+        Why not filter? Because Ollama (and most providers) cache the KV state
+        when the prompt prefix is identical. Sending the same tools every time
+        means prompt_eval is near-zero on subsequent calls (cache hit).
 
-        This saves ~500-2000 tokens per API call by not sending
-        unused tool schemas (image gen, RAG, cron, etc.).
+        Changing the tool set per message BREAKS the cache and causes
+        full prompt re-evaluation every time — much slower.
+
+        OpenClaw uses the same strategy: consistent tool set = cache friendly.
         """
-        if self._cached_core is None:
-            self._cached_core = [
-                t for name, t in self._tools.items()
-                if self._categories.get(name, self.CORE_CATEGORY) == self.CORE_CATEGORY
-            ]
-
-        if not user_message:
-            return self._cached_core
-
-        needed = set()
-        msg_lower = user_message.lower()
-
-        # Detect which extended categories are needed
-        if any(w in msg_lower for w in ("search", "find", "qidir", "remember", "esla", "xotira", "memory")):
-            needed.add("rag")
-        if any(w in msg_lower for w in ("image", "rasm", "photo", "surat", "draw", "generate", "chiz")):
-            needed.add("image")
-        if any(w in msg_lower for w in ("web", "search", "google", "internet", "site", "url", "link")):
-            needed.add("web")
-        if any(w in msg_lower for w in ("cron", "schedule", "timer", "jadval", "reminder", "eslatma")):
-            needed.add("cron")
-        if any(w in msg_lower for w in ("agent", "delegate", "task", "sub-agent", "vazifa")):
-            needed.add("agent")
-
-        if not needed:
-            return self._cached_core
-
-        return [
-            t for name, t in self._tools.items()
-            if self._categories.get(name, self.CORE_CATEGORY) == self.CORE_CATEGORY
-            or self._categories.get(name) in needed
-        ]
+        return self.get_definitions()
 
     async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
         """Execute a tool by name with parameter validation and timeout protection."""
