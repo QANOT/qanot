@@ -1,4 +1,4 @@
 """Qanot AI — Lightweight Python agent framework."""
 
-__version__ = "1.3.8"
+__version__ = "1.3.9"
 __all__ = ["__version__"]

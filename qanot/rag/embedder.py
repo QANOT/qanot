@@ -43,6 +43,35 @@ class Embedder(ABC):
         return (await self.embed([text]))[0]
 
 
+class FastEmbedEmbedder(Embedder):
+    """CPU-based embedding via FastEmbed (ONNX runtime, no GPU needed).
+
+    Uses nomic-embed-text-v1.5 (137MB, 768 dims).
+    Production-ready: runs on CPU, no VRAM conflict with chat model.
+    """
+
+    provider_name = "fastembed"
+
+    def __init__(self, model: str = "nomic-ai/nomic-embed-text-v1.5"):
+        from fastembed import TextEmbedding
+
+        self._model = TextEmbedding(model)
+        self.dimensions = 768
+        logger.info("FastEmbed initialized: %s (CPU, %d dims)", model, self.dimensions)
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts on CPU via ONNX runtime."""
+        import asyncio
+
+        if not texts:
+            return []
+
+        def _sync_embed():
+            return [emb.tolist() for emb in self._model.embed(texts)]
+
+        return await asyncio.to_thread(_sync_embed)
+
+
 class GeminiEmbedder(Embedder):
     """Google Gemini embedding via OpenAI-compatible endpoint (free tier)."""
 
@@ -134,13 +163,30 @@ def _collect_provider_keys(config) -> dict[str, dict]:
 def create_embedder(config) -> Embedder | None:
     """Auto-detect best available embedder with fallback chain.
 
-    Chain: Gemini (free) → OpenAI → None (FTS-only mode).
+    Chain: FastEmbed (CPU, for Ollama) → Gemini (free) → OpenAI → None (FTS-only).
 
     Soft failures (missing key, unsupported provider) skip to next.
     Returns None if no compatible provider found — RAG falls back to FTS-only.
     """
     providers = _collect_provider_keys(config)
     errors: list[str] = []
+
+    # Priority 0: FastEmbed (CPU) — best for Ollama/local setups (no VRAM conflict)
+    is_ollama = any(
+        "ollama" in info.get("api_key", "").lower() or "11434" in info.get("base_url", "")
+        for info in providers.values()
+    )
+    if is_ollama:
+        try:
+            embedder = FastEmbedEmbedder()
+            logger.info("RAG embedder: using FastEmbed CPU (no VRAM conflict with Ollama)")
+            return embedder
+        except ImportError:
+            errors.append("fastembed: not installed (pip install fastembed)")
+            logger.info("FastEmbed not installed — falling back to Ollama embedding")
+        except Exception as e:
+            errors.append(f"fastembed: {e}")
+            logger.warning("FastEmbed init failed: %s — trying next", e)
 
     # Priority 1: Gemini (free embedding tier)
     if "gemini" in providers:
