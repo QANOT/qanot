@@ -508,8 +508,8 @@ def _is_running(pid_path: Path) -> tuple[bool, int]:
 
 
 def cmd_start(args: list[str]) -> None:
-    """Start the Qanot agent in the background."""
-    import subprocess
+    """Start the bot via OS service manager, or foreground with -f."""
+    from qanot.daemon import daemon_install, daemon_start, daemon_status
 
     foreground = "--foreground" in args or "-f" in args
     config_path = _resolve_config(args)
@@ -520,16 +520,6 @@ def cmd_start(args: list[str]) -> None:
         sys.exit(1)
 
     config_path = config_path.resolve()
-    pid_path = _pid_file(config_path)
-    log_path = _log_file(config_path)
-
-    # Check if already running
-    running, pid = _is_running(pid_path)
-    if running:
-        print(f"Bot is already running (PID {pid})")
-        print(f"  Stop:   qanot stop")
-        print(f"  Logs:   qanot logs")
-        return
 
     if foreground:
         # Run in foreground (for Docker, systemd, debugging)
@@ -541,8 +531,38 @@ def cmd_start(args: list[str]) -> None:
         asyncio.run(run_main())
         return
 
-    # Run in background
+    # Check if already running via daemon
+    is_running, status_msg = daemon_status(config_path)
+    if is_running:
+        print(f"Bot is already running")
+        print(f"  {_dim(status_msg)}")
+        return
+
+    # Auto-install service if not installed yet
+    daemon_install(config_path)
+
+    # Start via OS service manager
     print(LOGO)
+    ok, msg = daemon_start(config_path)
+    if ok:
+        print(f"  {_green('✓')} {msg}")
+        print(f"  Logs:   {_cyan('qanot logs')}")
+        print(f"  Status: {_cyan('qanot status')}")
+        print(f"  Stop:   {_cyan('qanot stop')}")
+    else:
+        print(f"  {_red('✗')} {msg}")
+        print(f"  {_dim('Falling back to subprocess mode...')}")
+        _start_subprocess(config_path)
+    print()
+
+
+def _start_subprocess(config_path: Path) -> None:
+    """Fallback: start bot via subprocess (when OS service unavailable)."""
+    import subprocess
+
+    pid_path = _pid_file(config_path)
+    log_path = _log_file(config_path)
+
     env = os.environ.copy()
     env["QANOT_CONFIG"] = str(config_path)
     env["PYTHONUNBUFFERED"] = "1"
@@ -553,32 +573,45 @@ def cmd_start(args: list[str]) -> None:
             env=env,
             stdout=log_fh,
             stderr=log_fh,
-            start_new_session=True,  # Detach from terminal
+            start_new_session=True,
         )
 
     pid_path.write_text(str(proc.pid))
-    print(f"  {_green('✓')} Bot started (PID {proc.pid})")
-    print(f"  Logs:   {_cyan('qanot logs')}")
-    print(f"  Status: {_cyan('qanot status')}")
-    print(f"  Stop:   {_cyan('qanot stop')}")
-    print()
+    print(f"  {_green('✓')} Bot started via subprocess (PID {proc.pid})")
 
 
 def cmd_stop(args: list[str]) -> None:
-    """Stop the running bot."""
-    import signal
+    """Stop the bot via OS service manager."""
+    from qanot.daemon import daemon_stop, daemon_status
 
     config_path = _resolve_config(args).resolve()
-    pid_path = _pid_file(config_path)
 
-    running, pid = _is_running(pid_path)
-    if not running:
-        print("Bot is not running.")
+    # Try daemon stop first
+    is_running, _ = daemon_status(config_path)
+    if is_running:
+        ok, msg = daemon_stop(config_path)
+        if ok:
+            print(f"  {_green('✓')} {msg}")
+        else:
+            print(f"  {_red('✗')} {msg}")
         return
 
-    os.kill(pid, signal.SIGTERM)
-    pid_path.unlink(missing_ok=True)
-    print(f"  {_green('✓')} Bot stopped (PID {pid})")
+    # Fallback: check PID file (subprocess mode)
+    pid_path = _pid_file(config_path)
+    running, pid = _is_running(pid_path)
+    if running:
+        import signal
+        os.kill(pid, signal.SIGTERM)
+        pid_path.unlink(missing_ok=True)
+        print(f"  {_green('✓')} Bot stopped (PID {pid})")
+    else:
+        print("Bot is not running.")
+
+
+def cmd_restart(args: list[str]) -> None:
+    """Restart the bot."""
+    cmd_stop(args)
+    cmd_start(args)
 
 
 def cmd_logs(args: list[str]) -> None:
@@ -604,27 +637,23 @@ def cmd_logs(args: list[str]) -> None:
 
 
 def cmd_status(args: list[str]) -> None:
-    """Check if the bot is running."""
-    config_path = _resolve_config(args).resolve()
-    pid_path = _pid_file(config_path)
-    log_path = _log_file(config_path)
+    """Check bot status via OS service manager."""
+    from qanot.daemon import daemon_status
 
-    running, pid = _is_running(pid_path)
-    if running:
-        print(f"  {_green('●')} Bot is running (PID {pid})")
-        # Show last log line
-        if log_path.exists():
-            import subprocess
-            last = subprocess.run(
-                ["tail", "-1", str(log_path)],
-                capture_output=True, text=True,
-            )
-            if last.stdout.strip():
-                print(f"  {_dim(last.stdout.strip())}")
+    config_path = _resolve_config(args).resolve()
+
+    is_running, msg = daemon_status(config_path)
+    if is_running:
+        print(f"  {_green('●')} {msg}")
     else:
-        print(f"  {_red('●')} Bot is not running")
-        if log_path.exists():
-            print(f"  Last logs: {_cyan(f'qanot logs')}")
+        # Fallback: check PID file
+        pid_path = _pid_file(config_path)
+        running, pid = _is_running(pid_path)
+        if running:
+            print(f"  {_green('●')} Bot is running via subprocess (PID {pid})")
+        else:
+            print(f"  {_red('●')} Bot is not running")
+            print(f"  {_dim(msg)}")
 
 
 def cmd_doctor(args: list[str]) -> None:
@@ -1233,66 +1262,6 @@ def _plugin_list(args: list[str]) -> None:
     print()
 
 
-def cmd_daemon(args: list[str]) -> None:
-    """Manage OS-native background service (systemd/launchd/schtasks)."""
-    from qanot.daemon import (
-        daemon_install, daemon_uninstall,
-        daemon_start, daemon_stop, daemon_restart, daemon_status,
-    )
-
-    if not args:
-        _daemon_help()
-        return
-
-    subcmd = args[0]
-    remaining = args[1:]
-
-    config_path = _resolve_config(remaining)
-    if not config_path.exists():
-        print(_red(f"Config not found: {config_path}"))
-        print("Run 'qanot init' first.")
-        sys.exit(1)
-
-    actions = {
-        "install": daemon_install,
-        "uninstall": daemon_uninstall,
-        "start": daemon_start,
-        "stop": daemon_stop,
-        "restart": daemon_restart,
-        "status": daemon_status,
-    }
-
-    action = actions.get(subcmd)
-    if not action:
-        print(_red(f"Unknown daemon command: {subcmd}"))
-        _daemon_help()
-        return
-
-    ok, msg = action(config_path)
-    if ok:
-        print(f"  {_green('✓')} {msg}")
-    else:
-        print(f"  {_red('✗')} {msg}")
-
-
-def _daemon_help() -> None:
-    print(LOGO)
-    print("Usage: qanot daemon <command> [path]")
-    print()
-    print("Commands:")
-    print("  install    Install as OS service (systemd/launchd/schtasks)")
-    print("  uninstall  Remove OS service")
-    print("  start      Start via OS service manager")
-    print("  stop       Stop via OS service manager")
-    print("  restart    Restart via OS service manager")
-    print("  status     Check service status")
-    print()
-    print("Examples:")
-    print("  qanot daemon install        # Install service for current dir")
-    print("  qanot daemon start          # Start via systemd/launchd")
-    print("  qanot daemon status         # Check if running")
-    print()
-
 
 def cmd_version() -> None:
     from qanot import __version__
@@ -1305,11 +1274,11 @@ def cmd_help() -> None:
     print()
     print("Commands:")
     print("  init [dir]         Interactive setup wizard")
-    print("  start [path]       Start bot (background)")
+    print("  start [path]       Start bot (via OS service)")
     print("  stop [path]        Stop bot")
     print("  status [path]      Check if bot is running")
     print("  logs [path]        Tail bot logs")
-    print("  daemon <cmd>       Manage OS service (install/start/stop/status)")
+    print("  restart [path]     Restart bot")
     print("  doctor [path]      Health checks (--fix to auto-repair)")
     print("  backup [path]      Export workspace to .tar.gz")
     print("  plugin new <name>  Scaffold a new plugin")
@@ -1317,13 +1286,13 @@ def cmd_help() -> None:
     print("  version            Show version")
     print()
     print("Flags:")
-    print("  start --foreground  Run in foreground (for Docker/systemd)")
+    print("  start -f           Run in foreground (for Docker/debug)")
     print()
     print("Examples:")
-    print("  qanot init")
-    print("  qanot start")
-    print("  qanot daemon install")
-    print("  qanot stop")
+    print("  qanot init         # Setup wizard")
+    print("  qanot start        # Start bot")
+    print("  qanot stop         # Stop bot")
+    print("  qanot logs         # Watch logs")
     print()
 
 
@@ -1335,13 +1304,13 @@ def main() -> None:
         "init": cmd_init,
         "start": cmd_start,
         "stop": cmd_stop,
+        "restart": cmd_restart,
         "status": cmd_status,
         "logs": cmd_logs,
         "log": cmd_logs,
         "doctor": cmd_doctor,
         "backup": cmd_backup,
         "plugin": cmd_plugin,
-        "daemon": cmd_daemon,
     }
     # Commands with no args
     _NO_ARG_COMMANDS = {
