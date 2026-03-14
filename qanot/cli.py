@@ -90,7 +90,7 @@ VOICE_PROVIDERS = {
         "key_hint": "JWT token from developer.kotib.ai",
     },
     "aisha": {
-        "label": "Aisha AI (Uzbek TTS — Gulnoza/Jaxongir, mood control)",
+        "label": "Aisha AI (STT+TTS — Gulnoza/Jaxongir, mood, uz/en/ru)",
         "key_hint": "API key from aisha.group",
     },
     "whisper": {

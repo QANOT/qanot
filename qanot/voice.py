@@ -371,6 +371,7 @@ async def _kotib_poll_task(
 # ══════════════════════════════════════════════════════════
 
 AISHA_TTS_URL = "https://back.aisha.group/api/v1/tts/post/"
+AISHA_STT_URL = "https://back.aisha.group/api/v2/stt/post/"
 
 AISHA_VOICES = {
     "gulnoza": "gulnoza",    # Female, Uzbek
@@ -378,6 +379,53 @@ AISHA_VOICES = {
 }
 
 AISHA_MOODS = {"happy", "sad", "neutral"}
+
+
+async def aisha_transcribe(
+    audio_path: str,
+    api_key: str,
+    language: str | None = None,
+) -> TranscriptionResult:
+    """Transcribe audio using Aisha AI STT API.
+
+    Supports uz/en/ru languages with diarization option.
+    """
+    if not os.path.isfile(audio_path):
+        raise ValueError(f"Audio file does not exist: {audio_path}")
+    real_path = os.path.realpath(audio_path)
+    allowed_prefixes = (tempfile.gettempdir(), os.getcwd())
+    if not any(real_path.startswith(os.path.realpath(p) + os.sep) or real_path == os.path.realpath(p) for p in allowed_prefixes):
+        raise ValueError(f"Audio path not in allowed directory: {audio_path}")
+
+    headers = {"x-api-key": api_key}
+
+    data = aiohttp.FormData()
+    file_handle = open(audio_path, "rb")
+    try:
+        data.add_field(
+            "audio",
+            file_handle,
+            filename=os.path.basename(audio_path),
+        )
+        if language:
+            data.add_field("language", language)
+        data.add_field("has_diarization", "false")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                AISHA_STT_URL,
+                headers=headers,
+                data=data,
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Aisha STT error: HTTP {resp.status} — {body[:200]}")
+
+                result = await resp.json()
+                text = result.get("text", "") if isinstance(result, dict) else str(result)
+                return TranscriptionResult(text=text, language=language)
+    finally:
+        file_handle.close()
 
 
 async def aisha_tts(
@@ -505,6 +553,8 @@ async def transcribe(
         return await kotib_transcribe(audio_path, api_key, language)
     if provider == "whisper":
         return await whisper_transcribe(audio_path, api_key, language)
+    if provider == "aisha":
+        return await aisha_transcribe(audio_path, api_key, language)
     return await muxlisa_transcribe(audio_path, api_key)
 
 

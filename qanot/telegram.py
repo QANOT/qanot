@@ -117,6 +117,8 @@ class TelegramAdapter:
         # the agent is processing, collect them and process as one turn.
         self._user_locks: dict[str, asyncio.Lock] = {}
         self._pending_messages: dict[str, list[tuple]] = {}
+        # Pending exec approvals: approval_id → {command, user_id, chat_id, future}
+        self._pending_approvals: dict[str, dict] = {}
 
     def _next_draft_id(self) -> int:
         """Generate a unique draft_id for sendMessageDraft."""
@@ -160,6 +162,13 @@ class TelegramAdapter:
         @self.dp.message(F.video_note)
         async def handle_video_note(message: Message) -> None:
             await self._handle_message(message, is_voice=True)
+
+        # Callback query handler (inline buttons: approval, model picker, etc.)
+        from aiogram.types import CallbackQuery
+
+        @self.dp.callback_query()
+        async def handle_callback(callback: CallbackQuery) -> None:
+            await self._handle_callback_query(callback)
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self.config.allowed_users:
@@ -692,6 +701,77 @@ class TelegramAdapter:
             "Matn, rasm, sticker, ovozli xabar va fayllar qabul qilinadi."
         )
         await self._send_final(message.chat.id, help_text)
+
+    async def _handle_callback_query(self, callback: "CallbackQuery") -> None:
+        """Handle inline button callbacks (approvals, model picker, etc.)."""
+        data = callback.data or ""
+        user_id = callback.from_user.id
+
+        # Exec approval: approve:<id> or deny:<id>
+        if data.startswith("approve:") or data.startswith("deny:"):
+            action, approval_id = data.split(":", 1)
+            pending = self._pending_approvals.pop(approval_id, None)
+            if not pending:
+                await callback.answer("Bu so'rov muddati tugagan.", show_alert=True)
+                return
+            if pending["user_id"] != user_id:
+                await callback.answer("Faqat so'rov egasi ruxsat berishi mumkin.", show_alert=True)
+                self._pending_approvals[approval_id] = pending  # Restore
+                return
+
+            approved = action == "approve"
+            pending["future"].set_result(approved)
+
+            # Update the message to show result
+            status = "✅ Ruxsat berildi" if approved else "❌ Rad etildi"
+            try:
+                await callback.message.edit_text(
+                    f"{callback.message.text}\n\n{status}",
+                )
+            except Exception:
+                pass
+            await callback.answer(status)
+            return
+
+        # Unknown callback
+        await callback.answer("Noma'lum buyruq", show_alert=True)
+
+    async def request_approval(
+        self, chat_id: int, user_id: int, command: str, reason: str,
+    ) -> bool:
+        """Send inline approval buttons and wait for user response.
+
+        Returns True if approved, False if denied or timed out.
+        """
+        import hashlib
+        approval_id = hashlib.sha256(f"{user_id}:{command}:{asyncio.get_event_loop().time()}".encode()).hexdigest()[:12]
+
+        future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+        self._pending_approvals[approval_id] = {
+            "command": command,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "future": future,
+        }
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Ruxsat", callback_data=f"approve:{approval_id}"),
+                InlineKeyboardButton(text="❌ Rad", callback_data=f"deny:{approval_id}"),
+            ]
+        ])
+
+        text = f"⚠️ **Buyruq ruxsat talab qiladi**\n\n`{command}`\n\nSabab: {reason}"
+        await self.bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="Markdown")
+
+        # Wait for user response with timeout
+        try:
+            return await asyncio.wait_for(future, timeout=120)
+        except asyncio.TimeoutError:
+            self._pending_approvals.pop(approval_id, None)
+            return False
 
     async def _register_commands(self) -> None:
         """Register bot commands with BotFather (appears in Telegram UI menu)."""
