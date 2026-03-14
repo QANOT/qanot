@@ -10,12 +10,12 @@ logger = logging.getLogger(__name__)
 
 # Safety margin: actual tokens can exceed estimates by ~20%
 SAFETY_MARGIN = 1.2
-# Compact when context exceeds this fraction of max
-COMPACTION_THRESHOLD = 0.70
+# Compact when context exceeds this fraction of max (proactive, before overflow)
+COMPACTION_THRESHOLD = 0.60
 # After compaction, target this fraction
-COMPACTION_TARGET = 0.40
-# Working buffer activation threshold
-BUFFER_THRESHOLD = 0.60
+COMPACTION_TARGET = 0.35
+# Working buffer activation threshold (early warning)
+BUFFER_THRESHOLD = 0.50
 # Max chars to keep per tool result
 MAX_TOOL_RESULT_CHARS = 8_000
 

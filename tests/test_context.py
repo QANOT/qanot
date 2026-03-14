@@ -43,15 +43,15 @@ class TestContextTracker:
         assert ct.last_prompt_tokens == 15_000
         assert ct.get_context_percent() == 15.0  # Based on last prompt
 
-    def test_threshold_activates_at_60(self, tmp_path):
+    def test_threshold_activates_at_50(self, tmp_path):
         ct = ContextTracker(max_tokens=100_000, workspace_dir=str(tmp_path))
         # Simulate growing prompt tokens (as conversation builds up)
-        ct.add_usage(50_000, 0)
+        ct.add_usage(40_000, 0)
         assert ct.check_threshold() is False
         assert ct.buffer_active is False
 
-        # Prompt now exceeds 60%
-        ct.add_usage(60_000, 0)
+        # Prompt now exceeds 50% (new threshold)
+        ct.add_usage(50_000, 0)
         assert ct.check_threshold() is True
         assert ct.buffer_active is True
 

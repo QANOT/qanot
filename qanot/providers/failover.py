@@ -56,6 +56,15 @@ class ProviderProfile:
             self._cooldown_until = time.monotonic() + cooldown
             logger.warning("Provider %s cooldown %ds: %s", self.name, cooldown, error_type)
 
+        # Thinking level downgrade: if thinking is on and we're failing, try lower
+        if self.thinking_level != "off" and self._failure_count >= 2:
+            _THINKING_DOWNGRADE = {"high": "medium", "medium": "low", "low": "off"}
+            new_level = _THINKING_DOWNGRADE.get(self.thinking_level)
+            if new_level:
+                logger.info("Downgrading thinking: %s → %s for %s",
+                           self.thinking_level, new_level, self.name)
+                self.thinking_level = new_level
+
     def mark_success(self) -> None:
         """Reset failure state on success."""
         self._failure_count = 0

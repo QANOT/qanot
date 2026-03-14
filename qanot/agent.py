@@ -96,6 +96,37 @@ def _tool_call_fingerprint(name: str, input_data: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _result_fingerprint(result: str) -> str:
+    """Hash a tool result for no-progress detection."""
+    return hashlib.sha256(result.encode()).hexdigest()[:16]
+
+
+def _strip_verbose_result(result: str) -> str:
+    """Strip verbose fields from tool results to save context tokens.
+
+    Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
+    from JSON results while preserving the core data.
+    """
+    try:
+        data = json.loads(result)
+        if not isinstance(data, dict):
+            return result
+        _VERBOSE_KEYS = {"details", "debug", "trace", "raw", "stacktrace", "verbose", "raw_response"}
+        stripped = False
+        for key in _VERBOSE_KEYS:
+            if key in data:
+                val = data[key]
+                if isinstance(val, str) and len(val) > 200:
+                    data[key] = val[:100] + f"... [{len(val)} chars stripped]"
+                    stripped = True
+                elif isinstance(val, (list, dict)) and len(json.dumps(val)) > 500:
+                    data[key] = f"[{type(val).__name__} with {len(val)} items stripped]"
+                    stripped = True
+        return json.dumps(data) if stripped else result
+    except (json.JSONDecodeError, TypeError):
+        return result
+
+
 def _is_deterministic_error(result: str) -> bool:
     """Check if a tool error is deterministic (should not be retried)."""
     try:
@@ -125,6 +156,17 @@ def _is_loop_detected(recent_fingerprints: list[str], new_key: str) -> bool:
             return True
 
     return False
+
+
+def _is_no_progress(result_history: list[tuple[str, str]], call_key: str, result_hash: str) -> bool:
+    """Detect no-progress: same call producing same result repeatedly.
+
+    result_history: list of (call_fingerprint, result_hash) tuples.
+    Returns True if the same call+result pair has occurred 2+ times already.
+    """
+    pair = (call_key, result_hash)
+    same_count = sum(1 for entry in result_history if entry == pair)
+    return same_count >= 2
 
 
 def _strip_old_images(messages: list[dict]) -> list[dict]:
@@ -848,13 +890,17 @@ class Agent:
             user_id=self._current_user_id,
         )
 
-    async def _execute_tools(self, tool_calls: list[ToolCall]) -> list[dict]:
-        """Execute tool calls and return tool_result blocks."""
+    async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
+        """Execute tool calls and return (tool_result blocks, combined result hash)."""
         tool_results: list[dict] = []
+        result_parts: list[str] = []
         for tc in tool_calls:
             logger.info("Executing tool: %s", tc.name)
             timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
             result = await self.tools.execute(tc.name, tc.input, timeout=timeout)
+
+            # Strip verbose detail fields from JSON results to save context
+            result = _strip_verbose_result(result)
 
             if _is_deterministic_error(result):
                 result_data = json.loads(result)
@@ -866,7 +912,9 @@ class Agent:
                 "tool_use_id": tc.id,
                 "content": result,
             })
-        return tool_results
+            result_parts.append(result)
+        combined_hash = _result_fingerprint("|".join(result_parts))
+        return tool_results, combined_hash
 
     def _handle_end_turn(
         self,
@@ -972,6 +1020,7 @@ class Agent:
 
         final_text = ""
         recent_fingerprints: list[str] = []
+        result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
         overflow_retries = 0
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
@@ -1028,7 +1077,21 @@ class Agent:
                 )
                 self._log_tool_use(response.content, response.tool_calls, response.usage)
 
-                tool_results = await self._execute_tools(response.tool_calls)
+                tool_results, result_hash = await self._execute_tools(response.tool_calls)
+
+                # No-progress detection: same call + same result = stuck
+                batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in response.tool_calls]
+                call_key = ":".join(sorted(batch_fps))
+                if _is_no_progress(result_history, call_key, result_hash):
+                    logger.warning("No-progress loop: same call producing same result")
+                    final_text = (
+                        f"Kechirasiz, {response.tool_calls[0].name} "
+                        "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
+                    )
+                    messages.append({"role": "assistant", "content": final_text})
+                    break
+                result_history.append((call_key, result_hash))
+
                 messages.append({"role": "user", "content": tool_results})
 
             elif response.stop_reason == "end_turn":
@@ -1076,6 +1139,7 @@ class Agent:
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
         recent_fingerprints: list[str] = []
+        result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
         overflow_retries = 0
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
@@ -1188,7 +1252,25 @@ class Agent:
                 messages.append(self._build_assistant_tool_message(text, tool_calls))
                 self._log_tool_use(text, tool_calls, usage)
 
-                tool_results = await self._execute_tools(tool_calls)
+                tool_results, result_hash = await self._execute_tools(tool_calls)
+
+                # No-progress detection: same call + same result = stuck
+                batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
+                call_key = ":".join(sorted(batch_fps))
+                if _is_no_progress(result_history, call_key, result_hash):
+                    logger.warning("No-progress loop (stream): same call producing same result")
+                    no_progress_msg = (
+                        f"Kechirasiz, {tool_calls[0].name} "
+                        "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
+                    )
+                    messages.append({"role": "assistant", "content": no_progress_msg})
+                    yield StreamEvent(
+                        type="done",
+                        response=ProviderResponse(content=no_progress_msg),
+                    )
+                    return
+                result_history.append((call_key, result_hash))
+
                 messages.append({"role": "user", "content": tool_results})
 
                 yield StreamEvent(type="tool_use")
