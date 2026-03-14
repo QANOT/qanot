@@ -295,6 +295,8 @@ class TestContextAwareRouting:
             {"role": "assistant", "content": "Migration done. Should I proceed?"},
             {"role": "user", "content": "ha"},
         ]
+        # Simulate previous turn was on primary — "ha" should stay
+        router._last_model = "claude-sonnet-4-6"
         await router.chat(messages)
         assert fake.last_model_used == "claude-sonnet-4-6"
 
@@ -319,12 +321,14 @@ class TestContextAwareRouting:
             {"role": "assistant", "content": "x" * 600},  # Long explanation
             {"role": "user", "content": "ok"},
         ]
+        # Simulate previous turn was on primary (Opus) — "ok" should stay on Opus
+        router._last_model = "claude-sonnet-4-6"
         await router.chat(messages)
         assert fake.last_model_used == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
     async def test_thanks_in_deep_conversation_stays_primary(self):
-        """'rahmat' in a conversation with many turns → primary."""
+        """'rahmat' after Opus turn → stays on Opus (context continuity)."""
         fake = FakeProvider(model="claude-sonnet-4-6")
         router = RoutingProvider(fake, threshold=0.3)
 
@@ -334,6 +338,8 @@ class TestContextAwareRouting:
             messages.append({"role": "assistant", "content": f"answer {i}"})
         messages.append({"role": "user", "content": "rahmat"})
 
+        # Simulate previous turn was on primary — "rahmat" should stay
+        router._last_model = "claude-sonnet-4-6"
         await router.chat(messages)
         assert fake.last_model_used == "claude-sonnet-4-6"
 

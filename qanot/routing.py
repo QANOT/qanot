@@ -186,11 +186,11 @@ class RoutingProvider(LLMProvider):
                 "Routing → %s (continuation: msg=%.2f, ctx=%.2f)",
                 selected, msg_score, ctx_score,
             )
-        elif effective < 0.15:
-            # Simple greetings → Haiku
+        elif msg_score < 0.1:
+            # Pure greetings/acks → Haiku (use msg_score only, ignore context)
             self.stats.routed_cheap += 1
             selected = self._cheap_model
-            logger.info("Routing → %s (simple: %.2f)", selected, effective)
+            logger.info("Routing → %s (greeting: msg=%.2f)", selected, msg_score)
         elif effective < 0.5:
             # Moderate → Sonnet
             self.stats.routed_primary += 1
