@@ -142,6 +142,109 @@ class OpenAIProvider(LLMProvider):
         # Detect Ollama — disable thinking mode for Qwen models (30x faster)
         self._is_ollama = bool(base_url and "11434" in base_url)
 
+    @property
+    def _ollama_base(self) -> str:
+        """Get Ollama native API base URL from OpenAI base_url."""
+        base = str(self.client.base_url).rstrip("/")
+        return base.replace("/v1", "")  # http://localhost:11434
+
+    async def _ollama_chat(self, messages: list[dict], tools: list[dict] | None = None) -> ProviderResponse:
+        """Call Ollama native API with think=false."""
+        import httpx
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{self._ollama_base}/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        msg = data.get("message", {})
+        text = msg.get("content", "")
+        tool_calls_raw = msg.get("tool_calls", [])
+
+        tc_list = []
+        for i, tc in enumerate(tool_calls_raw):
+            fn = tc.get("function", {})
+            tc_list.append(ToolCall(
+                id=tc.get("id", f"call_{i}"),
+                name=fn.get("name", ""),
+                input=fn.get("arguments", {}),
+            ))
+
+        inp = data.get("prompt_eval_count", 0)
+        out = data.get("eval_count", 0)
+        stop = "tool_use" if tc_list else "end_turn"
+
+        return ProviderResponse(
+            content=text,
+            tool_calls=tc_list,
+            stop_reason=stop,
+            usage=Usage(input_tokens=inp, output_tokens=out, cost=0.0),
+        )
+
+    async def _ollama_chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[StreamEvent]:
+        """Stream from Ollama native API with think=false."""
+        import httpx
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "think": False,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        inp = 0
+        out = 0
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", f"{self._ollama_base}/api/chat", json=payload) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    msg = data.get("message", {})
+                    content = msg.get("content", "")
+                    if content:
+                        text_parts.append(content)
+                        yield StreamEvent(type="text_delta", text=content)
+
+                    # Tool calls come in the final message
+                    if data.get("done"):
+                        inp = data.get("prompt_eval_count", 0)
+                        out = data.get("eval_count", 0)
+                        for i, tc in enumerate(msg.get("tool_calls", [])):
+                            fn = tc.get("function", {})
+                            tool_calls.append(ToolCall(
+                                id=tc.get("id", f"call_{i}"),
+                                name=fn.get("name", ""),
+                                input=fn.get("arguments", {}),
+                            ))
+
+        stop = "tool_use" if tool_calls else "end_turn"
+        response = ProviderResponse(
+            content="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=stop,
+            usage=Usage(input_tokens=inp, output_tokens=out, cost=0.0),
+        )
+        yield StreamEvent(type="done", response=response)
+
     def _calc_cost(self, inp: int, out: int) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
         return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
@@ -170,9 +273,9 @@ class OpenAIProvider(LLMProvider):
         if tools:
             kwargs["tools"] = self._prepare_tools(tools)
 
-        # Ollama: disable thinking mode for Qwen (saves ~1000 tokens per call)
+        # Ollama: use native API with think=false (OpenAI compat doesn't support it)
         if self._is_ollama:
-            kwargs["extra_body"] = {"think": False}
+            return await self._ollama_chat(converted, kwargs.get("tools"))
 
         try:
             response = await self.client.chat.completions.create(**kwargs)
@@ -239,9 +342,11 @@ class OpenAIProvider(LLMProvider):
         if tools:
             kwargs["tools"] = self._prepare_tools(tools)
 
-        # Ollama: disable thinking mode for Qwen
+        # Ollama: use native API with think=false
         if self._is_ollama:
-            kwargs["extra_body"] = {"think": False}
+            async for event in self._ollama_chat_stream(converted, kwargs.get("tools")):
+                yield event
+            return
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
