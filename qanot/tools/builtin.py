@@ -193,11 +193,16 @@ def register_builtin_tools(
 
     # ── write_file ──
     async def write_file(params: dict) -> str:
+        from qanot.fs_safe import validate_write_path
         path = params.get("path", "")
         content = params.get("content", "")
         if not path:
             return json.dumps({"error": "path is required"})
         full = _resolve_path(path, workspace_dir)
+        # Security: block writes to system directories
+        error = validate_write_path(full)
+        if error:
+            return json.dumps({"error": f"Write blocked: {error}", "path": full})
         try:
             Path(full).parent.mkdir(parents=True, exist_ok=True)
             Path(full).write_text(content, encoding="utf-8")

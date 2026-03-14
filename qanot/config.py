@@ -135,6 +135,10 @@ def load_config(path: str | None = None) -> Config:
 
     raw = json.loads(p.read_text(encoding="utf-8"))
 
+    # Resolve SecretRef values (env vars, files) before parsing config
+    from qanot.secrets import resolve_config_secrets
+    raw = resolve_config_secrets(raw)
+
     plugins = []
     for i, pl in enumerate(raw.get("plugins", [])):
         if isinstance(pl, str):

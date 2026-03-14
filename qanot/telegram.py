@@ -119,6 +119,9 @@ class TelegramAdapter:
         self._pending_messages: dict[str, list[tuple]] = {}
         # Pending exec approvals: approval_id → {command, user_id, chat_id, future}
         self._pending_approvals: dict[str, dict] = {}
+        # Per-user rate limiting
+        from qanot.ratelimit import RateLimiter
+        self._rate_limiter = RateLimiter()
 
     def _next_draft_id(self) -> int:
         """Generate a unique draft_id for sendMessageDraft."""
@@ -239,6 +242,13 @@ class TelegramAdapter:
         user_id = message.from_user.id
         if not self._is_allowed(user_id):
             return
+
+        # Rate limiting
+        allowed, reason = self._rate_limiter.check(str(user_id))
+        if not allowed:
+            await message.reply(reason)
+            return
+        self._rate_limiter.record(str(user_id))
 
         # Group chat handling
         is_group = self._is_group_chat(message)
