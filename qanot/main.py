@@ -156,8 +156,26 @@ async def main() -> None:
             logger.info("RAG engine initialized in FTS-only mode (no embedder available)")
 
     # Register built-in tools
-    # _agent_ref is populated after Agent creation; the lambda captures the list
+    # _agent_ref/_telegram_ref populated after creation; lambdas capture the lists
     _agent_ref: list = []
+    _telegram_ref: list = []
+
+    async def _approval_callback(user_id: str, command: str, reason: str) -> bool:
+        """Route exec approval to Telegram inline buttons."""
+        if not _telegram_ref or not _agent_ref:
+            return False
+        adapter = _telegram_ref[0]
+        agent = _agent_ref[0]
+        chat_id = agent._current_chat_id
+        if not chat_id:
+            return False
+        return await adapter.request_approval(
+            chat_id=chat_id,
+            user_id=int(user_id) if user_id.isdigit() else 0,
+            command=command,
+            reason=reason,
+        )
+
     register_builtin_tools(
         tool_registry, config.workspace_dir, context,
         rag_indexer=rag_indexer,
@@ -165,6 +183,7 @@ async def main() -> None:
         get_cost_tracker=lambda: _agent_ref[0].cost_tracker if _agent_ref else None,
         exec_security=config.exec_security,
         exec_allowlist=config.exec_allowlist,
+        approval_callback=_approval_callback if config.exec_security == "cautious" else None,
     )
 
     # Register doctor diagnostics tool
@@ -248,6 +267,7 @@ async def main() -> None:
         agent=agent,
         scheduler=scheduler,
     )
+    _telegram_ref.append(telegram)
 
     # Register sub-agent tools (needs agent + telegram for delivery)
     from qanot.tools.subagent import register_sub_agent_tools

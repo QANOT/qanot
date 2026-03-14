@@ -151,13 +151,15 @@ def register_builtin_tools(
     rag_indexer: "MemoryIndexer | None" = None,
     get_user_id: "callable | None" = None,
     get_cost_tracker: "callable | None" = None,
-    exec_security: str = "cautious",
+    exec_security: str = "open",
     exec_allowlist: list[str] | None = None,
+    approval_callback: "callable | None" = None,
 ) -> None:
     """Register all built-in tools.
 
     exec_security: "open" | "cautious" | "strict"
     exec_allowlist: commands allowed in strict mode (prefix match)
+    approval_callback: async fn(user_id, command, reason) -> bool (for inline buttons)
     """
 
     # ── read_file ──
@@ -272,12 +274,34 @@ def register_builtin_tools(
         if exec_security == "cautious":
             reason = _needs_approval(command)
             if reason and not params.get("approved"):
-                return json.dumps({
-                    "needs_approval": True,
-                    "reason": reason,
-                    "command": command,
-                    "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
-                })
+                # Try inline button approval if callback available
+                if approval_callback:
+                    user_id = get_user_id() if get_user_id else ""
+                    try:
+                        approved = await approval_callback(user_id, command, reason)
+                        if not approved:
+                            return json.dumps({
+                                "error": f"Foydalanuvchi rad etdi: {reason}",
+                                "status": "denied",
+                                "command": command,
+                            })
+                        # Approved via inline button — continue execution
+                    except Exception as e:
+                        logger.warning("Approval callback failed: %s", e)
+                        # Fallback to text-based approval
+                        return json.dumps({
+                            "needs_approval": True,
+                            "reason": reason,
+                            "command": command,
+                            "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
+                        })
+                else:
+                    return json.dumps({
+                        "needs_approval": True,
+                        "reason": reason,
+                        "command": command,
+                        "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
+                    })
 
         timeout = params.get("timeout", COMMAND_TIMEOUT)
         cwd = params.get("cwd", workspace_dir)
