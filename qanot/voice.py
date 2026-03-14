@@ -436,9 +436,9 @@ async def aisha_transcribe(
 
             # Step 2: Poll for result
             logger.info("Aisha STT task submitted: %s, polling...", task_id)
-            poll_url = f"https://back.aisha.group/api/v1/stt/{task_id}/"
+            poll_url = f"https://back.aisha.group/api/v1/stt/get/{task_id}/"
             elapsed = 0.0
-            interval = 1.0
+            interval = 1.5
             max_wait = 30.0
 
             while elapsed < max_wait:
@@ -449,15 +449,14 @@ async def aisha_transcribe(
                     if poll_resp.status != 200:
                         continue
                     poll_result = await poll_resp.json()
-                    status = poll_result.get("status", "")
 
-                    if status in ("COMPLETED", "completed", "SUCCESS", "success"):
-                        text = poll_result.get("text", "")
-                        if not text and isinstance(poll_result.get("result"), dict):
-                            text = poll_result["result"].get("text", "")
-                        logger.info("Aisha STT completed: %s", text[:50])
+                    # Aisha returns transcript even while status is PENDING
+                    text = poll_result.get("transcript", "")
+                    if text:
+                        logger.info("Aisha STT result: %s", text[:50])
                         return TranscriptionResult(text=text, language=language)
 
+                    status = poll_result.get("status", "")
                     if status in ("FAILED", "failed", "ERROR", "error"):
                         raise RuntimeError(f"Aisha STT task failed: {poll_result}")
 
