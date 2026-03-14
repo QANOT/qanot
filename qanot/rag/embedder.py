@@ -97,11 +97,11 @@ class GeminiEmbedder(Embedder):
             response = await self.client.embeddings.create(
                 input=batch,
                 model=self.model,
-                dimensions=self.dimensions,
             )
-            # Sort by index to guarantee order matches input
-            for d in sorted(response.data, key=lambda d: d.index):
-                all_embeddings[i + d.index] = d.embedding
+            # Some providers return d.index=None — use enumerate as fallback
+            for j, d in enumerate(response.data):
+                idx = d.index if d.index is not None else j
+                all_embeddings[i + idx] = d.embedding
             logger.debug("Gemini embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))
         return all_embeddings
 
