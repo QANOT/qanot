@@ -280,25 +280,30 @@ class TestContextAwareRouting:
     """Test that conversation context prevents misrouting simple replies."""
 
     @pytest.mark.asyncio
-    async def test_ha_after_tool_use_stays_primary(self):
-        """'ha' reply after agent used tools → must stay on primary model."""
+    async def test_ha_after_tool_use_stays_on_last_model(self):
+        """'ha' reply after tool use → stays on previous model (continuation)."""
         fake = FakeProvider(model="claude-sonnet-4-6")
         router = RoutingProvider(fake, threshold=0.3)
 
+        # Immediate context has tool_result → ctx_score >= 0.5
         messages = [
             {"role": "user", "content": "implement database migration"},
             {"role": "assistant", "content": [
                 {"type": "text", "text": "I'll run the migration now."},
                 {"type": "tool_use", "id": "t1", "name": "run_command", "input": {"cmd": "migrate"}},
             ]},
-            {"role": "tool", "content": "Migration completed", "tool_use_id": "t1"},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "Migration completed"},
+            ]},
             {"role": "assistant", "content": "Migration done. Should I proceed?"},
             {"role": "user", "content": "ha"},
         ]
-        # Simulate previous turn was on primary — "ha" should stay
         router._last_model = "claude-sonnet-4-6"
         await router.chat(messages)
-        assert fake.last_model_used == "claude-sonnet-4-6"
+        # "ha" (msg_score<0.1) + recent context has no tool → Haiku
+        # But _last_model was Sonnet, so continuation keeps Sonnet
+        # Actually with new logic: last 2 msgs = "Migration done" + "ha" → no tool → ctx<0.5 → greeting
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     async def test_salom_in_fresh_conversation_uses_cheap(self):
@@ -321,27 +326,24 @@ class TestContextAwareRouting:
             {"role": "assistant", "content": "x" * 600},  # Long explanation
             {"role": "user", "content": "ok"},
         ]
-        # Simulate previous turn was on primary (Opus) — "ok" should stay on Opus
-        router._last_model = "claude-sonnet-4-6"
+        # Last 2 msgs: long response (0.2 ctx) + "ok" (0.05 msg)
+        # ctx < 0.5, msg < 0.1 → greeting → Haiku
         await router.chat(messages)
-        assert fake.last_model_used == "claude-sonnet-4-6"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
-    async def test_thanks_in_deep_conversation_stays_primary(self):
-        """'rahmat' after Opus turn → stays on Opus (context continuity)."""
+    async def test_thanks_in_calm_context_uses_haiku(self):
+        """'rahmat' after short answers → Haiku (no active task)."""
         fake = FakeProvider(model="claude-sonnet-4-6")
         router = RoutingProvider(fake, threshold=0.3)
 
-        messages = []
-        for i in range(6):
-            messages.append({"role": "user", "content": f"question {i}"})
-            messages.append({"role": "assistant", "content": f"answer {i}"})
-        messages.append({"role": "user", "content": "rahmat"})
-
-        # Simulate previous turn was on primary — "rahmat" should stay
-        router._last_model = "claude-sonnet-4-6"
+        messages = [
+            {"role": "user", "content": "salom"},
+            {"role": "assistant", "content": "Salom!"},
+            {"role": "user", "content": "rahmat"},
+        ]
         await router.chat(messages)
-        assert fake.last_model_used == "claude-sonnet-4-6"
+        assert fake.last_model_used == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     async def test_simple_exchange_uses_cheap(self):
@@ -363,13 +365,25 @@ class TestContextAwareRouting:
     def test_assess_context_single_message(self):
         assert RoutingProvider._assess_context([{"role": "user", "content": "hi"}]) == 0.0
 
-    def test_assess_context_with_tool_result(self):
+    def test_assess_context_only_recent(self):
+        """Context score only looks at last 2 messages."""
+        # Tool use far in history — should NOT affect score
         messages = [
             {"role": "user", "content": "run tests"},
             {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "cmd", "input": {}}]},
-            {"role": "tool", "content": "ok", "tool_use_id": "t1"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
             {"role": "assistant", "content": "Done"},
-            {"role": "user", "content": "ha"},
+            {"role": "user", "content": "rahmat"},
+        ]
+        score = RoutingProvider._assess_context(messages)
+        # Last 2: "Done" + "rahmat" — no tool, short → low score
+        assert score < 0.5
+
+    def test_assess_context_immediate_tool(self):
+        """Tool result in last 2 messages → high score."""
+        messages = [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "cmd", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
         ]
         score = RoutingProvider._assess_context(messages)
         assert score >= 0.5

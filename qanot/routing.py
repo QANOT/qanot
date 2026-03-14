@@ -177,30 +177,35 @@ class RoutingProvider(LLMProvider):
 
         self.stats.total += 1
 
-        # Rule 1: Context continuity — if previous turn was Opus and this is
-        # a continuation (short message like "ha", "davom et", "qil"), stay on Opus
-        if self._last_model == self._primary_model and msg_score < 0.2 and ctx_score >= 0.3:
-            self.stats.routed_primary += 1
-            selected = self._primary_model
-            logger.info(
-                "Routing → %s (continuation: msg=%.2f, ctx=%.2f)",
-                selected, msg_score, ctx_score,
-            )
-        elif msg_score < 0.1:
-            # Pure greetings/acks → Haiku (use msg_score only, ignore context)
+        # Routing logic:
+        # msg_score = what the USER is asking (their message complexity)
+        # ctx_score = what was HAPPENING before (tool use, long responses)
+        #
+        # Key insight: if user sends a SIMPLE message, route to cheap model
+        # REGARDLESS of context. Context only matters for ambiguous messages.
+        # "salom" is always simple. "ha" after tool use is continuation.
+
+        if msg_score < 0.1 and ctx_score < 0.5:
+            # Pure greeting in calm context → Haiku
             self.stats.routed_cheap += 1
             selected = self._cheap_model
             logger.info("Routing → %s (greeting: msg=%.2f)", selected, msg_score)
-        elif effective < 0.5:
-            # Moderate → Sonnet
+        elif msg_score < 0.1 and ctx_score >= 0.5:
+            # Short reply in active context ("ha", "yo'q" after tool use)
+            # → stay on previous model (continuation)
+            selected = self._last_model or self._mid_model
+            self.stats.routed_primary += 1
+            logger.info("Routing → %s (continuation: msg=%.2f, ctx=%.2f)", selected, msg_score, ctx_score)
+        elif msg_score < 0.4:
+            # Moderate message → Sonnet
             self.stats.routed_primary += 1
             selected = self._mid_model
-            logger.info("Routing → %s (moderate: %.2f)", selected, effective)
+            logger.info("Routing → %s (moderate: msg=%.2f)", selected, msg_score)
         else:
-            # Complex → Opus
+            # Complex message → Opus
             self.stats.routed_primary += 1
             selected = self._primary_model
-            logger.info("Routing → %s (complex: %.2f)", selected, effective)
+            logger.info("Routing → %s (complex: msg=%.2f)", selected, msg_score)
 
         self._last_model = selected
         return selected
@@ -214,53 +219,33 @@ class RoutingProvider(LLMProvider):
         - Tool use in recent assistant messages (tool_use = complex task)
         - Previous assistant response length (long response = complex topic)
         """
-        if len(messages) <= 2:
-            # Fresh conversation (just user message, maybe one prior exchange)
+        # Only look at the LAST 2 messages (immediate context, not history)
+        recent = messages[-2:] if len(messages) >= 2 else messages
+        if not recent:
             return 0.0
 
         score = 0.0
 
-        # Conversation depth: more turns = more likely complex context
-        turn_count = sum(1 for m in messages if m.get("role") == "user")
-        if turn_count > 5:
-            score += 0.4
-        elif turn_count > 2:
-            score += 0.2
-
-        # Check last assistant message for tool use or long response
-        for msg in reversed(messages):
-            if msg.get("role") == "assistant":
-                content = msg.get("content", "")
-                # Tool use in content blocks → complex task in progress
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
-                            score += 0.5  # Strong signal: agent was using tools
-                            break
-                    # Long assistant response → complex topic
-                    text_len = sum(
-                        len(b.get("text", ""))
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    )
-                    if text_len > 500:
-                        score += 0.2
-                elif isinstance(content, str) and len(content) > 500:
-                    score += 0.3
-                break
-
-        # Check for tool_result messages (means tools were executed recently)
-        def _has_tool_result(msg: dict) -> bool:
-            if msg.get("role") == "tool":
-                return True
+        for msg in recent:
             content = msg.get("content", "")
-            return isinstance(content, list) and any(
-                isinstance(block, dict) and block.get("type") == "tool_result"
-                for block in content
-            )
 
-        if any(_has_tool_result(m) for m in messages[-6:]):
-            score += 0.5
+            # Tool use → active complex task
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
+                        score += 0.5
+                        break
+
+            # Long response → complex topic
+            if isinstance(content, str) and len(content) > 500:
+                score += 0.2
+            elif isinstance(content, list):
+                text_len = sum(
+                    len(b.get("text", "")) for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+                if text_len > 500:
+                    score += 0.2
 
         return min(score, 1.0)
 
