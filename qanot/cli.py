@@ -89,6 +89,14 @@ VOICE_PROVIDERS = {
         "label": "KotibAI (6 voices, multi-language)",
         "key_hint": "JWT token from developer.kotib.ai",
     },
+    "aisha": {
+        "label": "Aisha AI (Uzbek TTS — Gulnoza/Jaxongir, mood control)",
+        "key_hint": "API key from aisha.group",
+    },
+    "whisper": {
+        "label": "OpenAI Whisper (STT only — high accuracy, 50+ languages)",
+        "key_hint": "sk-proj-... from platform.openai.com",
+    },
 }
 
 

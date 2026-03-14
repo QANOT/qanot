@@ -367,6 +367,122 @@ async def _kotib_poll_task(
 
 
 # ══════════════════════════════════════════════════════════
+# Aisha AI Provider (Uzbek-native TTS with mood/gender)
+# ══════════════════════════════════════════════════════════
+
+AISHA_TTS_URL = "https://back.aisha.group/api/v1/tts/post/"
+
+AISHA_VOICES = {
+    "gulnoza": "gulnoza",    # Female, Uzbek
+    "jaxongir": "jaxongir",  # Male, Uzbek
+}
+
+AISHA_MOODS = {"happy", "sad", "neutral"}
+
+
+async def aisha_tts(
+    text: str,
+    api_key: str,
+    language: str = "uz",
+    voice: str | None = None,
+    mood: str = "neutral",
+) -> TTSResult:
+    """Convert text to speech using Aisha AI TTS API.
+
+    Features: Uzbek-native voices (Gulnoza/Jaxongir), mood control,
+    supports uz/en/ru languages. Returns MP3 audio bytes directly.
+    """
+    model = AISHA_VOICES.get((voice or "").lower(), "gulnoza")
+    if mood not in AISHA_MOODS:
+        mood = "neutral"
+
+    headers = {
+        "x-api-key": api_key,
+        "X-Channels": "stereo",
+        "X-Quality": "64k",
+        "X-Rate": "16000",
+        "X-Format": "mp3",
+    }
+
+    data = aiohttp.FormData()
+    data.add_field("transcript", text[:5000])
+    data.add_field("language", language if language in ("uz", "en", "ru") else "uz")
+    data.add_field("model", model)
+    data.add_field("mood", mood)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            AISHA_TTS_URL,
+            headers=headers,
+            data=data,
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Aisha TTS error: HTTP {resp.status} — {body[:200]}")
+
+            audio_data = await resp.read()
+            return TTSResult(
+                audio_data=audio_data,
+                character_count=len(text),
+            )
+
+
+# ══════════════════════════════════════════════════════════
+# OpenAI Whisper Provider (STT — high accuracy, multi-language)
+# ══════════════════════════════════════════════════════════
+
+WHISPER_STT_URL = "https://api.openai.com/v1/audio/transcriptions"
+
+
+async def whisper_transcribe(
+    audio_path: str,
+    api_key: str,
+    language: str | None = None,
+) -> TranscriptionResult:
+    """Transcribe audio using OpenAI Whisper API.
+
+    High accuracy STT with auto language detection.
+    Supports: mp3, mp4, mpeg, mpga, m4a, wav, webm.
+    """
+    if not os.path.isfile(audio_path):
+        raise ValueError(f"Audio file does not exist: {audio_path}")
+    real_path = os.path.realpath(audio_path)
+    allowed_prefixes = (tempfile.gettempdir(), os.getcwd())
+    if not any(real_path.startswith(os.path.realpath(p) + os.sep) or real_path == os.path.realpath(p) for p in allowed_prefixes):
+        raise ValueError(f"Audio path not in allowed directory: {audio_path}")
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    data = aiohttp.FormData()
+    file_handle = open(audio_path, "rb")
+    try:
+        data.add_field(
+            "file",
+            file_handle,
+            filename=os.path.basename(audio_path),
+        )
+        data.add_field("model", "whisper-1")
+        if language:
+            data.add_field("language", language)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                WHISPER_STT_URL,
+                headers=headers,
+                data=data,
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Whisper STT error: HTTP {resp.status} — {body[:200]}")
+
+                result = await resp.json()
+                text = result.get("text", "")
+                return TranscriptionResult(text=text, language=language)
+    finally:
+        file_handle.close()
+
+
+# ══════════════════════════════════════════════════════════
 # Unified interface (used by telegram.py)
 # ══════════════════════════════════════════════════════════
 
@@ -382,11 +498,13 @@ async def transcribe(
     Args:
         audio_path: Path to audio file.
         api_key: Provider API key.
-        provider: "muxlisa" or "kotib".
-        language: Language hint (uz/ru/en). Muxlisa auto-detects, KotibAI uses hint.
+        provider: "muxlisa" | "kotib" | "whisper".
+        language: Language hint (uz/ru/en).
     """
     if provider == "kotib":
         return await kotib_transcribe(audio_path, api_key, language)
+    if provider == "whisper":
+        return await whisper_transcribe(audio_path, api_key, language)
     return await muxlisa_transcribe(audio_path, api_key)
 
 
@@ -396,10 +514,19 @@ async def text_to_speech(
     provider: str = "muxlisa",
     language: str = "uz",
     voice: str | None = None,
+    mood: str = "neutral",
 ) -> TTSResult:
-    """Convert text to speech using the configured provider."""
+    """Convert text to speech using the configured provider.
+
+    Providers:
+        muxlisa: Uzbek native (maftuna/asomiddin voices)
+        kotib:   6 voices, multi-language (aziza/sherzod/rachel/arnold)
+        aisha:   Uzbek native with mood control (gulnoza/jaxongir)
+    """
     if provider == "kotib":
         return await kotib_tts(text, api_key, language, voice)
+    if provider == "aisha":
+        return await aisha_tts(text, api_key, language, voice, mood)
     return await muxlisa_tts(text, api_key, voice)
 
 
