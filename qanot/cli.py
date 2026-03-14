@@ -1617,6 +1617,71 @@ def _config_remove_provider(args: list[str]) -> None:
         print(f"  {_dim('Restart bot for changes to take effect: qanot restart')}")
 
 
+def cmd_update(args: list[str]) -> None:
+    """Update Qanot to the latest version and restart."""
+    import subprocess
+
+    from qanot import __version__ as current
+
+    print(LOGO)
+    print(f"  Current version: {_cyan(current)}")
+    print("  Checking for updates...", end=" ", flush=True)
+
+    # Check latest version on PyPI
+    try:
+        import urllib.request
+        req = urllib.request.Request("https://pypi.org/pypi/qanot/json", method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            latest = data.get("info", {}).get("version", "")
+    except Exception:
+        latest = ""
+
+    if latest and latest == current:
+        print(_green(f"✓ Already on latest ({current})"))
+        return
+
+    if latest:
+        print(_yellow(f"→ {latest} available"))
+    else:
+        print(_yellow("? Could not check (updating anyway)"))
+
+    # Upgrade
+    print(f"  Upgrading...", end=" ", flush=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "qanot"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0:
+        print(_red("✗ Failed"))
+        if result.stderr:
+            print(f"  {_dim(result.stderr[:200])}")
+        return
+
+    # Verify new version
+    check = subprocess.run(
+        [sys.executable, "-c", "from qanot import __version__; print(__version__)"],
+        capture_output=True, text=True,
+    )
+    new_version = check.stdout.strip() if check.returncode == 0 else "?"
+    print(_green(f"✓ Updated to {new_version}"))
+
+    # Restart if running
+    if "--no-restart" not in args:
+        config_path = _find_config([])
+        if config_path:
+            from qanot.daemon import daemon_status, daemon_restart
+            is_running, _ = daemon_status(config_path)
+            if is_running:
+                print("  Restarting bot...", end=" ", flush=True)
+                ok, msg = daemon_restart(config_path)
+                if ok:
+                    print(_green(f"✓ {msg}"))
+                else:
+                    print(_yellow(f"! {msg}"))
+    print()
+
+
 def cmd_version() -> None:
     from qanot import __version__
     print(f"qanot {__version__}")
@@ -1638,6 +1703,7 @@ def cmd_help() -> None:
     print("  backup [path]      Export workspace to .tar.gz")
     print("  plugin new <name>  Scaffold a new plugin")
     print("  plugin list        List installed plugins")
+    print("  update             Update to latest version + restart")
     print("  version            Show version")
     print()
     print("Flags:")
@@ -1667,6 +1733,7 @@ def main() -> None:
         "backup": cmd_backup,
         "plugin": cmd_plugin,
         "config": cmd_config,
+        "update": cmd_update,
     }
     # Commands with no args
     _NO_ARG_COMMANDS = {
