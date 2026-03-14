@@ -810,11 +810,11 @@ class TelegramAdapter:
                 cleanup_paths.append(ogg_path)
                 logger.info("Voice downloaded: %ds", message.voice.duration)
 
-                if provider == "muxlisa":
-                    # Muxlisa accepts OGG natively — no conversion needed!
+                if provider in ("muxlisa", "whisper"):
+                    # Muxlisa and Whisper accept OGG natively
                     audio_path = ogg_path
                 else:
-                    # KotibAI needs MP3
+                    # KotibAI and Aisha need MP3
                     audio_path = await convert_ogg_to_mp3(ogg_path)
                     cleanup_paths.append(audio_path)
 
@@ -824,7 +824,7 @@ class TelegramAdapter:
                 cleanup_paths.append(mp4_path)
                 logger.info("Video note downloaded: %ds", message.video_note.duration)
 
-                if provider == "muxlisa":
+                if provider in ("muxlisa", "whisper"):
                     audio_path = await convert_video_to_ogg(mp4_path)
                 else:
                     audio_path = await convert_video_to_mp3(mp4_path)
