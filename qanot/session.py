@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # Windows — file locking not available
 import json
 import logging
 from datetime import datetime, timezone
@@ -112,11 +115,13 @@ class SessionWriter:
         """Append a JSON entry to the session file with file locking."""
         line = json.dumps(entry, ensure_ascii=False) + "\n"
         with open(self.session_path, "a", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 f.write(line)
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     def new_session(self, session_id: str | None = None) -> None:
         """Start a new session with an optional custom ID."""

@@ -408,6 +408,10 @@ class ToolRegistry:
             error_msg = re.sub(r'(?:key|token|secret|password|auth)[=:]\s*\S+', '[credential redacted]', error_msg, flags=re.IGNORECASE)
             return json.dumps({"error": error_msg})
 
+    def get_handler(self, name: str):
+        """Get a tool handler by name. Returns None if not found."""
+        return self._handlers.get(name)
+
     @property
     def tool_names(self) -> list[str]:
         return list(self._tools.keys())

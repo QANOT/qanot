@@ -334,23 +334,25 @@ def register_agent_manager_tools(
 
     async def restart_self(params: dict) -> str:
         """Restart the entire bot process (self-healing)."""
-        import sys
+        import signal
         reason = params.get("reason", "manual restart")
         logger.info("Self-restart requested: %s", reason)
 
-        # Schedule exit after short delay so the response gets sent first.
-        # systemd Restart=always will bring us back automatically.
+        # Schedule graceful exit after short delay so the response gets sent first.
+        # sys.exit allows cleanup (finally blocks, atexit, session flush).
+        # systemd/launchd Restart=always will bring us back automatically.
         async def _do_restart():
-            import os
             await asyncio.sleep(2)
-            logger.info("Exiting for restart (systemd will respawn)...")
-            os._exit(0)
+            logger.info("Graceful exit for restart (daemon will respawn)...")
+            # SIGTERM triggers graceful shutdown in main.py
+            import os
+            os.kill(os.getpid(), signal.SIGTERM)
 
         asyncio.create_task(_do_restart())
         return json.dumps({
             "status": "restarting",
             "reason": reason,
-            "message": "Bot 2 soniyadan keyin qayta ishga tushadi (systemd qayta tiklaydi).",
+            "message": "Bot 2 soniyadan keyin qayta ishga tushadi.",
         })
 
     # ── Register tools ──

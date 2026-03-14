@@ -393,7 +393,7 @@ def register_web_tools(
         max_chars = int(params.get("max_chars", FETCH_DEFAULT_MAX_CHARS))
 
         # Validate URL scheme
-        ssrf_error = _validate_url(url)
+        ssrf_error = await asyncio.to_thread(_validate_url, url)
         if ssrf_error:
             return json.dumps({"error": ssrf_error})
 
@@ -418,7 +418,7 @@ def register_web_tools(
                     # Check final URL after redirects for SSRF
                     final_url = str(resp.url)
                     if final_url != url:
-                        redirect_error = _validate_url(final_url)
+                        redirect_error = await asyncio.to_thread(_validate_url, final_url)
                         if redirect_error:
                             return json.dumps({"error": redirect_error})
 

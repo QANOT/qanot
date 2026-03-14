@@ -57,6 +57,29 @@ _activity_log: dict[str, list[dict]] = {}
 # Notification callback — set by main.py to push live updates to Telegram
 _notify_callback: dict[str, object] = {}  # user_id → async callable(text)
 
+# Last access time per user — for TTL eviction of stale data
+_user_last_access: dict[str, float] = {}
+_EVICTION_TTL = 3600 * 6  # 6 hours — evict user data not accessed in this time
+
+
+def _touch_user(user_id: str) -> None:
+    """Record user access time for TTL eviction."""
+    _user_last_access[user_id] = time.time()
+
+
+def _evict_stale_users() -> None:
+    """Remove data for users who haven't been active in _EVICTION_TTL seconds."""
+    now = time.time()
+    stale = [uid for uid, ts in _user_last_access.items() if now - ts > _EVICTION_TTL]
+    for uid in stale:
+        _project_boards.pop(uid, None)
+        _agent_sessions.pop(uid, None)
+        _activity_log.pop(uid, None)
+        _notify_callback.pop(uid, None)
+        _user_last_access.pop(uid, None)
+    if stale:
+        logger.info("Evicted stale delegation data for %d users", len(stale))
+
 
 def set_notify_callback(user_id: str, callback) -> None:
     """Set notification callback for live agent monitoring."""
@@ -75,6 +98,10 @@ def _log_activity(
     depth: int = 0,
 ) -> None:
     """Log an agent activity event."""
+    _touch_user(user_id)
+    # Periodic eviction (every 100th call, lightweight)
+    if len(_user_last_access) > 10 and hash(user_id) % 100 == 0:
+        _evict_stale_users()
     log = _activity_log.setdefault(user_id, [])
     entry = {
         "event": event,
@@ -127,9 +154,16 @@ def _send_notification(callback, event: str, entry: dict) -> None:
 
     try:
         import asyncio
-        asyncio.create_task(callback(text))
-    except Exception:
-        pass  # Non-fatal
+        import inspect
+        if inspect.iscoroutinefunction(callback):
+            asyncio.create_task(callback(text))
+        elif callable(callback):
+            # Sync callback — wrap in coroutine
+            result = callback(text)
+            if inspect.isawaitable(result):
+                asyncio.create_task(result)
+    except Exception as e:
+        logger.debug("Notification send failed (non-fatal): %s", e)
 
 
 def _check_for_loop(user_id: str, agent_id: str, task: str) -> str | None:
@@ -434,7 +468,7 @@ def _build_delegate_registry(
             continue
         if name in denied:
             continue
-        handler = parent_registry._handlers.get(name)
+        handler = parent_registry.get_handler(name)
         if handler:
             child.register(
                 name=name,
