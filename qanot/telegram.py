@@ -669,13 +669,28 @@ class TelegramAdapter:
         provider = self.agent.provider
         provider_info = f"Provider: {self.config.provider}\nModel: {self.config.model}"
         if hasattr(provider, "status"):
-            lines = []
-            for ps in provider.status():
-                icon = "🟢" if ps["available"] else "🔴"
-                active = " ◀" if ps["active"] else ""
-                err = f" ({ps['last_error']})" if ps["last_error"] else ""
-                lines.append(f"{icon} {ps['name']} — {ps['model']}{err}{active}")
-            provider_info = "Providers:\n" + "\n".join(lines)
+            try:
+                ps_data = provider.status()
+                if isinstance(ps_data, list):
+                    # FailoverProvider returns list of provider statuses
+                    lines = []
+                    for ps in ps_data:
+                        icon = "🟢" if ps.get("available") else "🔴"
+                        active = " ◀" if ps.get("active") else ""
+                        err = f" ({ps['last_error']})" if ps.get("last_error") else ""
+                        lines.append(f"{icon} {ps['name']} — {ps['model']}{err}{active}")
+                    provider_info = "Providers:\n" + "\n".join(lines)
+                elif isinstance(ps_data, dict):
+                    # RoutingProvider returns dict with stats
+                    stats = ps_data.get("stats", {})
+                    provider_info = (
+                        f"Routing: {ps_data.get('cheap_model', '?')} / "
+                        f"{ps_data.get('primary_model', '?')}\n"
+                        f"Savings: {stats.get('savings_pct', 0)}% "
+                        f"({stats.get('routed_cheap', 0)} cheap / {stats.get('total', 0)} total)"
+                    )
+            except Exception:
+                pass
 
         status_text = (
             f"**Session Status**\n\n"
