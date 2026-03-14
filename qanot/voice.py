@@ -507,16 +507,22 @@ async def aisha_tts(
                 body = await resp.text()
                 raise RuntimeError(f"Aisha TTS error: HTTP {resp.status} — {body[:200]}")
 
-            result = await resp.json()
-            audio_url = result.get("audio_path", "") or result.get("audio_url", "")
-            if audio_url:
-                return TTSResult(
-                    audio_url=audio_url,
-                    character_count=len(text),
-                )
-            # Fallback: maybe raw audio returned
+            # Read body once, then try JSON or raw audio
+            raw = await resp.read()
+            try:
+                import json as _json
+                result = _json.loads(raw)
+                audio_url = result.get("audio_path", "") or result.get("audio_url", "")
+                if audio_url:
+                    return TTSResult(
+                        audio_url=audio_url,
+                        character_count=len(text),
+                    )
+            except (ValueError, UnicodeDecodeError):
+                pass
+            # Raw audio bytes
             return TTSResult(
-                audio_data=await resp.read(),
+                audio_data=raw,
                 character_count=len(text),
             )
 
@@ -627,7 +633,19 @@ async def text_to_speech(
 
 
 async def download_audio(url: str) -> str:
-    """Download audio file from URL to a temp file."""
+    """Download audio file from URL to a temp file.
+
+    Only allows HTTPS URLs from known voice provider CDNs.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("https", "http"):
+        raise ValueError(f"Invalid audio URL scheme: {parsed.scheme}")
+    # Allow only known voice provider CDNs
+    _ALLOWED_HOSTS = {"cdn.aisha.group", "service.muxlisa.uz", "developer.kotib.ai", "api.openai.com"}
+    if parsed.hostname and not any(parsed.hostname.endswith(h) for h in _ALLOWED_HOSTS):
+        raise ValueError(f"Audio download blocked: untrusted host {parsed.hostname}")
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:

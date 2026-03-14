@@ -744,9 +744,10 @@ class TelegramAdapter:
         Returns True if approved, False if denied or timed out.
         """
         import hashlib
-        approval_id = hashlib.sha256(f"{user_id}:{command}:{asyncio.get_event_loop().time()}".encode()).hexdigest()[:12]
+        loop = asyncio.get_running_loop()
+        approval_id = hashlib.sha256(f"{user_id}:{command}:{loop.time()}".encode()).hexdigest()[:12]
 
-        future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[bool] = loop.create_future()
         self._pending_approvals[approval_id] = {
             "command": command,
             "user_id": user_id,
@@ -951,7 +952,7 @@ class TelegramAdapter:
             async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
                 if event.type == "text_delta" and not drafting_paused:
                     accumulated += event.text
-                    now = asyncio.get_event_loop().time()
+                    now = asyncio.get_running_loop().time()
                     if now - last_flush >= interval and accumulated != last_sent_text:
                         typing_task.cancel()
                         await self._send_draft(chat_id, draft_id, accumulated)
@@ -993,7 +994,7 @@ class TelegramAdapter:
             async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
                 if event.type == "text_delta":
                     accumulated += event.text
-                    now = asyncio.get_event_loop().time()
+                    now = asyncio.get_running_loop().time()
                     if now - last_flush >= interval and accumulated.strip():
                         if sent_msg_id is None:
                             try:
