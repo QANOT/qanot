@@ -85,7 +85,7 @@ class GeminiEmbedder(Embedder):
             base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
         )
         self.model = model
-        self.dimensions = 768
+        self.dimensions = 3072  # gemini-embedding-001 returns 3072 dims
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using Gemini's OpenAI-compatible endpoint."""
