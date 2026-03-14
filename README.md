@@ -21,58 +21,75 @@
 Most agent frameworks give you building blocks and say "good luck." Qanot gives you a **flying agent** in one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QANOT/qanotai/main/install.sh | bash
+pip install qanot && qanot init
 ```
-
-Then just run `qanot init` — the wizard sets up your bot and starts it automatically.
 
 ---
 
 ## What You Get
 
 ### 🤖 Agent Loop
-Up to 25 tool-use iterations per turn. Your agent thinks, acts, observes, and repeats — autonomously.
+Up to 25 tool-use iterations per turn with circuit breaker: result-aware loop detection, no-progress detection, alternating pattern detection, and deterministic error handling.
+
+### 🧭 3-Tier Model Routing
+Automatically routes messages to the right model based on complexity:
+```
+"salom"                     → Haiku  ($0.003/turn)
+"bugun ob-havo qanday?"     → Sonnet ($0.006/turn)
+"menga REST API yozib ber"  → Opus   ($0.029/turn)
+```
+Context-aware: "ha" after Opus tool calling stays on Opus. Saves 50-60% on API costs.
 
 ### 🤝 Multi-Agent System
 Agents that talk to each other. Delegate tasks, hold multi-turn conversations between agents, spawn background workers — with real-time monitoring in a Telegram group.
 
-```
-User → Main Agent
-         ├── delegate_to_agent("researcher", "find market data")
-         ├── converse_with_agent("advisor", "review this plan", rounds=3)
-         └── spawn_sub_agent("writer", "draft the report")
-```
-
 ### 🔀 Multi-Provider Failover
-Claude, GPT, Gemini, Groq. If one goes down, Qanot switches automatically with smart cooldowns. Zero downtime.
+Claude, GPT, Gemini, Groq, Ollama. If one goes down, Qanot switches automatically with smart cooldowns and thinking level downgrade.
 
-### 🧠 3-Tier Memory
+### 🧠 3-Tier Memory + Self-Learning
 | Tier | What it does |
 |------|-------------|
 | **WAL** | Captures corrections, preferences, decisions in real-time |
-| **Daily Notes** | Summarizes each day's context automatically |
-| **Long-term** | Distilled knowledge that persists forever |
+| **Daily Notes** | Logs each conversation automatically |
+| **Long-term** | Agent curates MEMORY.md — distilled knowledge that persists |
+
+The agent **learns from mistakes**: errors are logged to daily notes, and the agent evolves its own SOUL.md, IDENTITY.md, and MEMORY.md over time.
 
 ### 🔍 Built-in RAG
-Hybrid search (70% semantic + 30% keyword) with sqlite-vec. Your agent remembers documents, not just conversations.
+Hybrid search (vector + FTS5 keyword) with FastEmbed CPU embedder. Works with Ollama without VRAM conflict.
 
-### 🎨 Image Generation
-Gemini-powered image creation with workspace storage. Your agent can generate images on demand.
-
-### 🧭 Model Routing
-Automatically routes simple queries to cheaper models, complex tasks to powerful ones. Saves 40-60% on API costs.
-
-### 🧪 Extended Thinking
-Anthropic thinking mode with configurable budget for complex reasoning tasks.
-
-### 🎙️ Voice I/O
-Speech-to-text and text-to-speech with Muxlisa & KotibAI. Send a voice note, get a voice reply.
+### 🎙️ 4 Voice Providers
+| Provider | STT | TTS | Languages |
+|----------|-----|-----|-----------|
+| **Muxlisa** | ✅ | ✅ | Uzbek (native OGG) |
+| **KotibAI** | ✅ | ✅ | uz/ru/en (6 voices) |
+| **Aisha AI** | ✅ | ✅ | uz/en/ru (mood control) |
+| **Whisper** | ✅ | — | 50+ languages |
 
 ### ⚡ Streaming Responses
-Native Telegram draft updates (Bot API 9.5) — your users see the agent thinking in real-time.
+Native Telegram `sendMessageDraft` (Bot API 9.5) — real-time streaming, not edit-message hack.
 
-### 🌐 Web Search
-Brave API integration for real-time information. Your agent can research topics and verify facts.
+### 🔐 Security
+- **3-tier exec security**: `open` / `cautious` / `strict` with inline approval buttons
+- **Per-user rate limiting**: sliding window + lockout (OpenClaw-inspired)
+- **Safe file write**: blocks system dirs, symlinks, path traversal
+- **SecretRef**: load API keys from env vars or files, not plain config
+- **SSRF protection**: on web fetch and voice download
+- **Command blocklist**: 30+ dangerous patterns
+
+### 🏠 Ollama / Local LLM
+Zero-config local model support:
+```bash
+qanot init    # Select "Ollama" → auto-detects models
+```
+- Ollama native API with `think=false` (30x faster for Qwen)
+- FastEmbed CPU embedder (no VRAM conflict)
+- Works offline, 100% private
+
+### 🌐 Web & Links
+- **Web search** (Brave API)
+- **Web fetch** with SSRF protection
+- **Link understanding**: auto-fetches URLs in messages and injects previews
 
 ### 🔌 Plugin System
 ```python
@@ -85,106 +102,19 @@ class QanotPlugin(Plugin):
     async def my_tool(self, params: dict) -> str:
         return '{"result": "done"}'
 ```
-Drop it in the plugins folder. Auto-discovered, hot-loadable, zero config.
+
+### 📁 File Sharing
+Agent can send files to users via Telegram — workspace files, generated reports, anything.
 
 ### 🩺 Self-Healing
-Autonomous heartbeat every 4 hours: checks pending tasks, validates workspace integrity, consolidates memory, fixes issues silently. You sleep, your agent maintains itself.
-
-### 👥 Group Chat Support
-Mention-gated responses in groups, per-group conversation isolation, multi-bot coordination.
+Autonomous heartbeat, workspace backup rotation, daily briefing, memory consolidation.
 
 ### ⏰ Cron Scheduler
-Schedule tasks with natural cron syntax. Runs in isolated agent mode — no interference with user conversations.
-
-### 💾 Backup System
-Automatic workspace snapshots with configurable rotation. Never lose your agent's memory.
-
-### 📡 Agent Monitoring
-Real-time monitoring group where each agent posts as its own bot. See your agents collaborate like a real team chat.
+Schedule tasks with cron syntax. Runs in isolated agent mode.
 
 ---
 
-## Multi-Agent Setup
-
-```json
-{
-  "agents": [
-    {
-      "id": "researcher",
-      "name": "Research Agent",
-      "prompt": "You research topics thoroughly",
-      "bot_token": "123:ABC",
-      "model": "claude-sonnet-4-6",
-      "tools_allow": ["web_search", "memory_read"]
-    },
-    {
-      "id": "advisor",
-      "name": "Business Advisor",
-      "prompt": "You provide strategic business advice"
-    }
-  ],
-  "monitor_group_id": -1001234567890
-}
-```
-
-| Tool | What it does |
-|------|-------------|
-| `delegate_to_agent` | Send a one-shot task to another agent |
-| `converse_with_agent` | Multi-turn conversation between agents |
-| `spawn_sub_agent` | Fire-and-forget background task |
-| `view_agent_activity` | Real-time activity log |
-| `create_agent` / `update_agent` / `delete_agent` | Manage agents at runtime |
-
----
-
-## Architecture
-
-```
-User → Telegram → Agent Loop (25 iterations max)
-                      ├── LLM Provider (Claude / GPT / Gemini / Groq)
-                      ├── Tool Registry (built-in + plugins)
-                      ├── Memory System (WAL → daily notes → long-term)
-                      ├── RAG Engine (vector + BM25 hybrid search)
-                      ├── Agent Delegation (delegate / converse / spawn)
-                      └── Context Tracker (auto-compaction at 70%)
-
-Agent Bots → Per-agent Telegram bots (independent polling)
-    → Dedicated Agent instance per bot
-    → Cross-agent delegation + group filtering
-
-Heartbeat (every 4h) → Self-healing checks → Silent fixes → Report
-```
-
----
-
-## Quick Start
-
-### One-line install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/QANOT/qanotai/main/install.sh | bash
-```
-
-Or with pip/pipx:
-
-```bash
-pipx install qanot    # macOS recommended
-pip install qanot      # Linux / venv
-```
-
-### Start
-
-```bash
-qanot init
-```
-
-The wizard walks you through setup and starts your bot automatically:
-- Telegram bot token (validates via API)
-- AI provider selection + API key validation
-- Voice provider setup
-- User access control
-
-### CLI Commands
+## CLI Commands
 
 ```bash
 qanot init               # Interactive setup wizard
@@ -193,6 +123,7 @@ qanot stop               # Stop bot
 qanot restart            # Restart bot
 qanot status             # Check if running
 qanot logs               # Tail bot logs
+qanot update             # Self-update from PyPI + restart
 qanot config show        # Show current configuration
 qanot config set <k> <v> # Change a config value
 qanot config add-provider # Add a backup AI provider
@@ -201,62 +132,22 @@ qanot backup             # Export workspace to .tar.gz
 qanot plugin new <name>  # Scaffold a new plugin
 ```
 
-`qanot start` automatically installs an OS-native service (systemd on Linux, launchd on macOS, schtasks on Windows). The bot auto-restarts on crash and starts on boot.
-
-### Docker
-
-```bash
-docker build -t qanot .
-docker run -v /path/to/data:/data qanot
-```
-
 ---
 
-## Configuration
+## Architecture
 
-All config lives in a single `config.json`. See [`config.example.json`](config.example.json) for all options.
-
-<details>
-<summary><strong>Core options</strong></summary>
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `bot_token` | — | Telegram bot token |
-| `provider` | `anthropic` | Primary LLM provider |
-| `model` | `claude-sonnet-4-6` | Model identifier |
-| `providers` | `[]` | Multi-provider failover chain |
-| `allowed_users` | `[]` | Telegram user IDs (empty = public) |
-| `response_mode` | `stream` | `stream` / `partial` / `blocked` |
-| `rag_enabled` | `true` | Enable RAG semantic search |
-| `voice_mode` | `inbound` | `off` / `inbound` / `always` |
-| `heartbeat_enabled` | `true` | Enable self-healing |
-| `heartbeat_interval` | `0 */4 * * *` | Heartbeat cron schedule |
-
-</details>
-
-<details>
-<summary><strong>Multi-agent options</strong></summary>
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `agents` | `[]` | Agent definitions |
-| `monitor_group_id` | `0` | Telegram group for monitoring |
-
-</details>
-
-<details>
-<summary><strong>Feature flags</strong></summary>
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `routing_enabled` | `false` | Enable model routing |
-| `routing_model` | — | Cheap model for simple queries |
-| `thinking_level` | `off` | `off` / `low` / `medium` / `high` |
-| `backup_enabled` | `true` | Enable workspace backups |
-| `brave_api_key` | — | Brave API key for web search |
-| `image_api_key` | — | Gemini key for image generation |
-
-</details>
+```
+User → Telegram → Agent Loop (25 iterations max)
+                      ├── Model Router (Haiku / Sonnet / Opus)
+                      ├── LLM Provider (Claude / GPT / Gemini / Groq / Ollama)
+                      ├── Tool Registry (35+ built-in tools + plugins)
+                      ├── Memory System (WAL → daily notes → long-term)
+                      ├── RAG Engine (FastEmbed + FTS5 hybrid)
+                      ├── Voice Pipeline (4 providers: STT + TTS)
+                      ├── Agent Delegation (delegate / converse / spawn)
+                      ├── Security (rate limit + exec approval + file jail)
+                      └── Context Tracker (auto-compaction at 60%)
+```
 
 ---
 
@@ -264,17 +155,17 @@ All config lives in a single `config.json`. See [`config.example.json`](config.e
 
 | Tool | Description |
 |------|-------------|
-| `memory_read` / `memory_write` | Long-term memory |
-| `daily_note` | Daily notes |
-| `memory_search` | Search all memory |
-| `session_state` | Session state management |
-| `workspace_list` | List workspace files |
+| `read_file` / `write_file` / `list_files` | File operations |
+| `send_file` | Send files to user via Telegram |
+| `run_command` | Shell execution (3-tier security) |
+| `memory_search` | Search memory and daily notes |
+| `session_status` / `cost_status` | Session and cost info |
 | `web_search` / `web_fetch` | Web search & fetch |
-| `generate_image` | Image generation |
-| `rag_search` | Semantic search |
+| `generate_image` / `edit_image` | Image generation |
+| `rag_search` / `rag_index` | RAG semantic search |
 | `cron_create` / `cron_list` / `cron_update` / `cron_delete` | Cron jobs |
-| `delegate_to_agent` / `converse_with_agent` / `spawn_sub_agent` | Delegation |
-| `create_agent` / `update_agent` / `delete_agent` / `list_agents` | Agent management |
+| `delegate_to_agent` / `converse_with_agent` / `spawn_sub_agent` | Multi-agent |
+| `create_agent` / `update_agent` / `delete_agent` | Agent management |
 | `doctor` | System diagnostics |
 
 ---
@@ -284,21 +175,23 @@ All config lives in a single `config.json`. See [`config.example.json`](config.e
 | Feature | Qanot | OpenClaw | LangChain |
 |---------|-------|----------|-----------|
 | Telegram-native | ✅ | ✅ | ❌ |
-| 3-command setup | ✅ | ✅ | ❌ |
+| 2-command setup | ✅ | ✅ | ❌ |
 | Multi-agent delegation | ✅ | ✅ | ❌ |
 | Multi-provider failover | ✅ | ✅ | ✅ |
 | Built-in RAG | ✅ | ✅ | ✅ |
 | 3-tier memory (WAL+daily+long-term) | ✅ | ⚠️ 2-tier | ❌ |
-| Model routing | ✅ auto | ✅ alias | ❌ |
-| Image generation | ✅ | ✅ skill | ❌ |
-| Self-healing | ✅ | ⚠️ heartbeat | ❌ |
-| Voice I/O | ✅ | ✅ | ❌ |
+| 3-tier model routing | ✅ Haiku/Sonnet/Opus | ✅ alias | ❌ |
+| Self-learning (workspace evolve) | ✅ | ✅ | ❌ |
+| Voice I/O (4 providers) | ✅ | ✅ | ❌ |
 | Streaming (native draft) | ✅ | ✅ | ❌ |
-| Plugin system | ✅ | ✅ 40+ | ✅ |
-| Lazy tool loading | ✅ | ✅ | ❌ |
+| Exec security + inline approval | ✅ | ✅ | ❌ |
+| Per-user rate limiting | ✅ | ✅ | ❌ |
+| Safe file write (jail) | ✅ | ✅ | ❌ |
+| SecretRef (env/file) | ✅ | ✅ | ❌ |
 | Per-user cost tracking | ✅ | ❌ | ❌ |
-| Cross-platform daemon | ✅ | ✅ | ❌ |
-| Lightweight (pure Python) | ✅ | ❌ Node.js | ❌ |
+| Ollama zero-config | ✅ | ❌ | ❌ |
+| File sharing via Telegram | ✅ | ❌ | ❌ |
+| Lightweight (143MB RAM) | ✅ | ❌ (1.9GB) | ❌ |
 | Uzbek voice support | ✅ | ❌ | ❌ |
 
 ---
@@ -311,7 +204,7 @@ Contributions are welcome! Please read the existing code patterns before submitt
 git clone https://github.com/sirli-ai/qanotai.git
 cd qanotai
 pip install -e .
-python -m pytest tests/ -v
+python -m pytest tests/ -v   # 757 tests
 ```
 
 ---
