@@ -89,11 +89,7 @@ async def _hot_launch_agent_bot(
     from qanot.agent_bot import AgentBot
 
     # Stop existing bot if running
-    if agent_def.id in _active_agent_bots:
-        try:
-            await _active_agent_bots[agent_def.id].stop()
-        except Exception as e:
-            logger.warning("Error stopping existing agent bot '%s': %s", agent_def.id, e)
+    await _stop_agent_bot(agent_def.id)
 
     agent_bot = AgentBot(
         agent_def=agent_def,
