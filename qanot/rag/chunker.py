@@ -153,17 +153,16 @@ class BM25Index:
         if not self._docs:
             return []
 
-        query_tokens = _tokenize(query)
+        query_tokens = set(_tokenize(query))
         if not query_tokens:
             return []
 
         scores: list[tuple[str, float]] = []
-        unique_query_tokens = set(query_tokens)
 
         for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
 
-            for token in unique_query_tokens:
+            for token in query_tokens:
                 if token not in freq:
                     continue
                 tf = freq[token]
