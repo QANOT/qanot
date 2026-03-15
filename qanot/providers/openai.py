@@ -85,8 +85,9 @@ def _convert_messages(messages: list[dict], system: str | None) -> list[dict]:
                         result.append({"role": "user", "content": content_parts})
                     else:
                         # Text-only: join as string
-                        text_parts_str = [p["text"] for p in parts if isinstance(p, dict) and p.get("type") == "text"]
-                        result.append({"role": "user", "content": "\n".join(text_parts_str)})
+                        result.append({"role": "user", "content": "\n".join(
+                            p["text"] for p in parts if isinstance(p, dict) and p.get("type") == "text"
+                        )})
 
         elif role == "assistant":
             if isinstance(content, str):
