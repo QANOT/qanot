@@ -57,14 +57,10 @@ def _ensure_user_first(messages: list[dict]) -> list[dict]:
         return messages
 
     # Find the index of the first non-system message
-    insert_idx = 0
-    for i, msg in enumerate(messages):
-        if msg.get("role") != "system":
-            insert_idx = i
-            break
-    else:
-        # All messages are system messages
-        insert_idx = len(messages)
+    insert_idx = next(
+        (i for i, msg in enumerate(messages) if msg.get("role") != "system"),
+        len(messages),
+    )
 
     # Check if the first non-system message is already a user message
     if insert_idx < len(messages) and messages[insert_idx].get("role") == "user":
