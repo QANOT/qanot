@@ -931,7 +931,7 @@ class Agent:
         )
 
         if self.context.buffer_active:
-            summary = final_text[:200] + "..." if len(final_text) > 200 else final_text
+            summary = final_text if len(final_text) <= 200 else final_text[:200] + "..."
             self.context.append_to_buffer(user_message, summary)
 
         write_daily_note(
