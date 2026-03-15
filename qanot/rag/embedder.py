@@ -121,10 +121,10 @@ class OpenAIEmbedder(Embedder):
     def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: str | None = None):
         import openai
 
-        kwargs: dict = {"api_key": api_key}
-        if base_url:
-            kwargs["base_url"] = base_url
-        self.client = openai.AsyncOpenAI(**kwargs)
+        self.client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url or None,
+        )
         self.model = model
         self.dimensions = _OPENAI_MODEL_DIMS.get(model, 768 if base_url and "11434" in base_url else 1536)
 
