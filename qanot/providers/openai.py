@@ -248,6 +248,10 @@ class OpenAIProvider(LLMProvider):
         prices = PRICING.get(self.model, DEFAULT_PRICING)
         return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
 
+    @staticmethod
+    def _stop_reason(tool_calls: list) -> str:
+        return "tool_use" if tool_calls else "end_turn"
+
     def _prepare_messages(self, messages: list[dict], system: str | None) -> list[dict]:
         """Convert messages to OpenAI format. Override in subclasses for custom preprocessing."""
         return _convert_messages(messages, system)
