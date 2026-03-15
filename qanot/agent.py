@@ -108,11 +108,19 @@ def _strip_verbose_result(result: str) -> str:
     Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
     from JSON results while preserving the core data.
     """
+_VERBOSE_KEYS = frozenset({"details", "debug", "trace", "raw", "stacktrace", "verbose", "raw_response"})
+
+
+def _strip_verbose_result(result: str) -> str:
+    """Strip verbose fields from tool results to save context tokens.
+
+    Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
+    from JSON results while preserving the core data.
+    """
     try:
         data = json.loads(result)
         if not isinstance(data, dict):
             return result
-        _VERBOSE_KEYS = {"details", "debug", "trace", "raw", "stacktrace", "verbose", "raw_response"}
         stripped = False
         for key in _VERBOSE_KEYS:
             if key in data:
