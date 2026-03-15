@@ -89,7 +89,7 @@ def classify_complexity(message: str) -> float:
         score += 0.05
 
     # Multiple sentences
-    sentence_count = len(re.split(r"[.!?]+", text))
+    sentence_count = len([s for s in re.split(r"[.!?]+", text) if s.strip()])
     if sentence_count > 3:
         score += 0.1
 
