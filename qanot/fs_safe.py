@@ -30,6 +30,11 @@ class SafeWriteError(Exception):
         super().__init__(f"Write blocked ({reason}): {path}")
 
 
+def _is_under(path: str, directory: str) -> bool:
+    """Return True if *path* equals *directory* or is directly beneath it."""
+    return path == directory or path.startswith(directory + os.sep)
+
+
 def is_path_within_root(root: str, path: str) -> bool:
     """Check if a resolved path is inside the root directory.
 
@@ -38,8 +43,7 @@ def is_path_within_root(root: str, path: str) -> bool:
     try:
         real_root = os.path.realpath(root)
         real_path = os.path.realpath(path)
-        # Must be inside root or equal to root
-        return real_path == real_root or real_path.startswith(real_root + os.sep)
+        return _is_under(real_path, real_root)
     except (OSError, ValueError):
         return False
 
