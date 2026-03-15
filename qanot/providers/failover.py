@@ -198,6 +198,7 @@ class FailoverProvider(LLMProvider):
         available = self._get_available_indices()
         if not available:
             available = [0]
+            logger.warning("All providers in cooldown, forcing first provider")
 
         order = self._build_try_order(available)
 
