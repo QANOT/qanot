@@ -72,7 +72,7 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
 
     # Jail mode: must be inside root
     if root and not is_path_within_root(root, path):
-        return f"Path outside workspace root"
+        return "Path outside workspace root"
 
     return None  # Allowed
 
