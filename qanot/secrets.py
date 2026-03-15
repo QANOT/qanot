@@ -65,11 +65,11 @@ def _read_secret_file(path: str) -> str:
     """
     p = Path(path)
 
-    if not p.exists():
-        raise FileNotFoundError(f"Secret file not found: {path}")
-
     if p.is_symlink():
         raise ValueError(f"Secret file is a symlink (security risk): {path}")
+
+    if not p.exists():
+        raise FileNotFoundError(f"Secret file not found: {path}")
 
     if not p.is_file():
         raise ValueError(f"Secret path is not a regular file: {path}")
