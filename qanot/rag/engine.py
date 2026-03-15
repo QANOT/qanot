@@ -134,16 +134,8 @@ class RAGEngine:
             logger.debug("Embedding cache: all %d texts cached", len(texts))
 
         # Reassemble in original order
-        result: list[list[float]] = []
-        miss_idx = 0
-        for i, h in enumerate(hashes):
-            if h in cached:
-                result.append(cached[h])
-            else:
-                result.append(new_embeddings[miss_idx])
-                miss_idx += 1
-
-        return result
+        miss_iter = iter(new_embeddings)
+        return [cached[h] if h in cached else next(miss_iter) for h in hashes]
 
     # Maximum allowed lengths for string inputs (defense-in-depth)
     _MAX_SOURCE_LEN = 1024
