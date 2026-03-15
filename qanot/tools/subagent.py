@@ -261,12 +261,10 @@ def register_sub_agent_tools(
         if not tasks:
             return json.dumps({"active": 0, "message": "No active sub-agents."})
 
-        agents = []
-        for tid, t in tasks.items():
-            agents.append({
-                "task_id": tid[:8],
-                "status": "running" if not t.done() else "completed",
-            })
+        agents = [
+            {"task_id": tid[:8], "status": "running"}
+            for tid in tasks
+        ]
 
         return json.dumps({
             "active": len(agents),
