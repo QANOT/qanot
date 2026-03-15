@@ -17,6 +17,8 @@ class MemoryIndexer:
     re-indexing them when content changes.
     """
 
+    _MAX_DAILY_NOTES = 30
+
     def __init__(self, engine: RAGEngine, workspace_dir: str = "/data/workspace"):
         self.engine = engine
         self.workspace_dir = Path(workspace_dir)
