@@ -92,9 +92,8 @@ class AgentBot:
             return
         if not self._is_allowed(message.from_user.id):
             return
-        name = self.agent_def.name or self.agent_def.id
         await message.answer(
-            f"Salom! Men <b>{name}</b> agentiman. Menga vazifa bering.\n\n"
+            f"Salom! Men <b>{self.agent_def.name or self.agent_def.id}</b> agentiman. Menga vazifa bering.\n\n"
             f"/reset — suhbatni tozalash",
             parse_mode=ParseMode.HTML,
         )
