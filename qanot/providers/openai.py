@@ -24,17 +24,17 @@ DEFAULT_PRICING = {"input": 2.0, "output": 8.0}
 
 def _anthropic_tools_to_openai(tools: list[dict]) -> list[dict]:
     """Convert Anthropic-style tool definitions to OpenAI function calling format."""
-    result = []
-    for t in tools:
-        result.append({
+    return [
+        {
             "type": "function",
             "function": {
                 "name": t["name"],
                 "description": t.get("description", ""),
                 "parameters": t.get("input_schema", {"type": "object", "properties": {}}),
             },
-        })
-    return result
+        }
+        for t in tools
+    ]
 
 
 def _convert_messages(messages: list[dict], system: str | None) -> list[dict]:
