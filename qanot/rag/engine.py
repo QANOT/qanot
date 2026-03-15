@@ -195,24 +195,18 @@ class RAGEngine:
 
         if self.embedder is not None:
             embeddings = await self._embed_with_cache(chunks)
-            chunk_ids = await self.store.async_add(
-                chunks,
-                embeddings,
-                source=source,
-                user_id=user_id,
-                metadatas=metadatas,
-            )
         else:
             # FTS-only mode: store with zero embeddings matching store dimensions
-            zero_embs = [[0.0] * self.store.dimensions for _ in chunks]
-            chunk_ids = await self.store.async_add(
-                chunks,
-                zero_embs,
-                source=source,
-                user_id=user_id,
-                metadatas=metadatas,
-            )
+            embeddings = [[0.0] * self.store.dimensions for _ in chunks]
             logger.debug("FTS-only ingest: %d chunks (no embeddings)", len(chunks))
+
+        chunk_ids = await self.store.async_add(
+            chunks,
+            embeddings,
+            source=source,
+            user_id=user_id,
+            metadatas=metadatas,
+        )
 
         # Update in-memory BM25 as fallback
         if not self._use_fts5:
