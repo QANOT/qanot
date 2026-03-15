@@ -147,6 +147,8 @@ def validate_tool_params(params: dict, schema: dict) -> list[str]:
         properties = {}
     if not isinstance(required, list):
         required = []
+    else:
+        required = [k for k in required if isinstance(k, str)]
 
     # Check required fields
     for key in required:
