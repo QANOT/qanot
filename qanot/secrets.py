@@ -38,8 +38,7 @@ def resolve_secret(value) -> str:
             var_name = value["env"]
             if not isinstance(var_name, str) or not var_name.strip():
                 raise ValueError("Secret env var name must be a non-empty string")
-            result = os.environ.get(var_name, "")
-            if not result:
+            if not (result := os.environ.get(var_name, "")):
                 logger.warning("Secret env var %s is empty or not set", var_name)
             return result
 
