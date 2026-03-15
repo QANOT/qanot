@@ -659,7 +659,6 @@ async def download_audio(url: str) -> str:
     elif ".ogg" in url:
         suffix = ".ogg"
 
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    tmp.write(data)
-    tmp.close()
-    return tmp.name
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        return tmp.name
