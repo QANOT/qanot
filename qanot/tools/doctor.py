@@ -120,8 +120,8 @@ def _check_memory(config: "Config") -> tuple[dict, list[str]]:
     mem_path = ws / "MEMORY.md"
     if mem_path.is_file():
         try:
-            mem_path.read_text(encoding="utf-8")
-            details.append(f"MEMORY.md: readable ({_file_size_str(mem_path.stat().st_size)})")
+            size = mem_path.stat().st_size
+            details.append(f"MEMORY.md: readable ({_file_size_str(size)})")
         except Exception as e:
             details.append(f"MEMORY.md: read error ({e})")
             status = "warning"
