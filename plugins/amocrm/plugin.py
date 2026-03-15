@@ -411,20 +411,39 @@ class QanotPlugin(Plugin):
             }})
 
         # ── EVENTS (Hodisalar) ──
-        _simple("amocrm_get_events", "So'nggi hodisalar ro'yxati.", "/events", {
+        async def get_events(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {}
+                if p.get("page"): params["page"] = p["page"]
+                if p.get("limit"): params["limit"] = p["limit"]
+                if p.get("event_type"): params["filter[type]"] = p["event_type"]
+                return self._ok(await c.get("/events", params))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_events", "So'nggi hodisalar ro'yxati.", {
             "type": "object", "properties": {
                 "page": {"type": "number"}, "limit": {"type": "number"},
-                "filter[type]": {"type": "string", "description": "Hodisa turi filtri (incoming_chat_message, outgoing_chat_message, lead_added, lead_status_changed)"},
-            }})
+                "event_type": {"type": "string", "description": "Hodisa turi: incoming_chat_message, outgoing_chat_message, lead_added, lead_status_changed"},
+            }}, get_events))
 
         # ── TALKS (Chatlar) ──
-        _simple("amocrm_get_talks", "Chatlar (suhbatlar) ro'yxati. Mijozlar bilan yozishmalar.", "/talks", {
+        async def get_talks(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {}
+                if p.get("limit"): params["limit"] = p["limit"]
+                if p.get("page"): params["page"] = p["page"]
+                if p.get("is_read") is not None: params["filter[is_read]"] = str(p["is_read"]).lower()
+                if p.get("status"): params["filter[status]"] = p["status"]
+                return self._ok(await c.get("/talks", params))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_talks", "Chatlar (suhbatlar) ro'yxati. Mijozlar bilan yozishmalar.", {
             "type": "object", "properties": {
                 "limit": {"type": "number", "description": "Natijalar soni (max 250)"},
                 "page": {"type": "number"},
-                "filter[is_read]": {"type": "string", "description": "O'qilgan/o'qilmagan: true yoki false"},
-                "filter[status]": {"type": "string", "description": "Holat: opened yoki in_work"},
-            }})
+                "is_read": {"type": "boolean", "description": "O'qilgan (true) yoki o'qilmagan (false)"},
+                "status": {"type": "string", "description": "Holat: opened yoki in_work"},
+            }}, get_talks))
         _simple("amocrm_get_talk", "Bitta chat tafsilotlari.", "/talks/{talk_id}", {
             "type": "object", "required": ["talk_id"], "properties": {
                 "talk_id": {"type": "number", "description": "Chat ID"},
