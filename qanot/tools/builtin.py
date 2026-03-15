@@ -277,6 +277,12 @@ def register_builtin_tools(
             reason = _needs_approval(command)
             if reason and not params.get("approved"):
                 # Try inline button approval if callback available
+                approval_required_response = json.dumps({
+                    "needs_approval": True,
+                    "reason": reason,
+                    "command": command,
+                    "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
+                })
                 if approval_callback:
                     user_id = get_user_id() if get_user_id else ""
                     try:
@@ -291,19 +297,9 @@ def register_builtin_tools(
                     except Exception as e:
                         logger.warning("Approval callback failed: %s", e)
                         # Fallback to text-based approval
-                        return json.dumps({
-                            "needs_approval": True,
-                            "reason": reason,
-                            "command": command,
-                            "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
-                        })
+                        return approval_required_response
                 else:
-                    return json.dumps({
-                        "needs_approval": True,
-                        "reason": reason,
-                        "command": command,
-                        "instruction": "Ask the user to approve this command. If they say yes, call run_command again with approved=true.",
-                    })
+                    return approval_required_response
 
         timeout = params.get("timeout", COMMAND_TIMEOUT)
         cwd = params.get("cwd", workspace_dir)
