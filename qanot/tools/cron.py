@@ -145,11 +145,10 @@ def register_cron_tools(
             return json.dumps({"error": "name is required"})
 
         jobs = _load_jobs()
-        new_jobs = [j for j in jobs if j["name"] != name]
-
-        if len(new_jobs) == len(jobs):
+        if not any(j["name"] == name for j in jobs):
             return json.dumps({"error": f"Job '{name}' not found"})
 
+        new_jobs = [j for j in jobs if j["name"] != name]
         _save_jobs(new_jobs)
 
         await _reload_scheduler()
