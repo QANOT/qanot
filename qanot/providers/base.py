@@ -27,10 +27,17 @@ class ToolCall:
     name: str
     input: dict
 
+    _NAME_RE = __import__('re').compile(r'^[A-Za-z0-9_-]+$')
+
     def __post_init__(self) -> None:
         for attr in ('id', 'name'):
             if not isinstance(val := getattr(self, attr), str) or not val:
                 raise ValueError(f"ToolCall.{attr} must be a non-empty string, got {val!r}")
+        if not self._NAME_RE.match(self.name):
+            raise ValueError(
+                f"ToolCall.name contains invalid characters: {self.name!r}. "
+                "Only [A-Za-z0-9_-] are allowed."
+            )
         if not isinstance(self.input, dict):
             raise TypeError(f"ToolCall.input must be a dict, got {type(self.input).__name__}")
 
