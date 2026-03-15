@@ -80,7 +80,7 @@ class GeminiProvider(OpenAIProvider):
         import openai
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
-        prices = GEMINI_PRICING.get(model, {"input": 0.15, "output": 0.60})
+        prices = GEMINI_PRICING.get(model, GEMINI_PRICING["gemini-2.5-flash"])
         self._pricing = (prices["input"], prices["output"])
 
     def _calc_cost(self, inp: int, out: int) -> float:
