@@ -1457,17 +1457,15 @@ def _config_set(args: list[str]) -> None:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
 
     # Type coercion
-    value_lower = value.lower()
-    if value_lower == "true":
+    if value.lower() == "true":
         value = True
-    elif value_lower == "false":
+    elif value.lower() == "false":
         value = False
     else:
-        try:
-            value = int(value)
-        except ValueError:
+        for _converter in (int, float):
             try:
-                value = float(value)
+                value = _converter(value)
+                break
             except ValueError:
                 pass  # Keep as string
 
