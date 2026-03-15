@@ -280,8 +280,7 @@ def _strip_injection(text: str) -> str:
     These are added dynamically per-turn and should not be persisted in history.
     """
     for marker in ("\n\n---\n[MEMORY CONTEXT", "\n\n---\n\n[COMPACTION RECOVERY]"):
-        idx = text.find(marker)
-        if idx != -1:
+        if (idx := text.find(marker)) != -1:
             text = text[:idx]
     return text.strip()
 
