@@ -493,16 +493,14 @@ class SqliteVecStore(VectorStore):
         assert conn is not None, "Database not initialized"
 
         with self._lock:
-            if self._vec_available or self._fts_available:
-                rows = conn.execute(
-                    "SELECT rowid, id FROM chunks WHERE source = ?", (source,)
+            if self._vec_available:
+                rowids = conn.execute(
+                    "SELECT rowid FROM chunks WHERE source = ?", (source,)
                 ).fetchall()
-                if self._vec_available:
-                    for rowid, _ in rows:
-                        conn.execute("DELETE FROM chunks_vec WHERE rowid = ?", (rowid,))
-                if self._fts_available:
-                    for _, cid in rows:
-                        conn.execute("DELETE FROM chunks_fts WHERE id = ?", (cid,))
+                for (rowid,) in rowids:
+                    conn.execute("DELETE FROM chunks_vec WHERE rowid = ?", (rowid,))
+            if self._fts_available:
+                conn.execute("DELETE FROM chunks_fts WHERE source = ?", (source,))
 
             cursor = conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
             count = cursor.rowcount
