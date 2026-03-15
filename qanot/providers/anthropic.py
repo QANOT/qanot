@@ -168,16 +168,11 @@ class AnthropicProvider(LLMProvider):
                     input=block.input,
                 ))
 
-        # Extract usage
-        usage_dict = self._extract_usage_dict(response.usage)
-
-        usage = self._build_usage(usage_dict)
-
         return ProviderResponse(
             content="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=response.stop_reason or "end_turn",
-            usage=usage,
+            usage=self._build_usage(self._extract_usage_dict(response.usage)),
         )
 
     async def chat_stream(
