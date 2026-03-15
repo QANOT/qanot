@@ -220,31 +220,29 @@ def _check_rag(config: "Config") -> dict:
 
         # Check FTS5 and cache count
         try:
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
+            with sqlite3.connect(str(db_path)) as conn:
+                cursor = conn.cursor()
 
-            # Check FTS5
-            fts5_available = False
-            try:
-                cursor.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
-                )
-                fts5_available = cursor.fetchone() is not None
-            except sqlite3.OperationalError:
-                pass
-            details.append(f"FTS5: {'available' if fts5_available else 'not available'}")
+                # Check FTS5
+                fts5_available = False
+                try:
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+                    )
+                    fts5_available = cursor.fetchone() is not None
+                except sqlite3.OperationalError:
+                    pass
+                details.append(f"FTS5: {'available' if fts5_available else 'not available'}")
 
-            # Embedding cache count
-            try:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM embedding_cache"
-                )
-                cache_count = cursor.fetchone()[0]
-                details.append(f"embedding cache: {cache_count} entries")
-            except sqlite3.OperationalError:
-                details.append("embedding cache: table not found")
-
-            conn.close()
+                # Embedding cache count
+                try:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM embedding_cache"
+                    )
+                    cache_count = cursor.fetchone()[0]
+                    details.append(f"embedding cache: {cache_count} entries")
+                except sqlite3.OperationalError:
+                    details.append("embedding cache: table not found")
         except Exception as e:
             details.append(f"db inspection error: {e}")
             status = "warning"
