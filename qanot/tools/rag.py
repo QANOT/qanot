@@ -61,7 +61,10 @@ def register_rag_tools(
         if not path_str:
             return json.dumps({"error": "path is required"})
 
-        full_path = _resolve_path(path_str)
+        try:
+            full_path = _resolve_path(path_str)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
 
         if not full_path.exists():
             return json.dumps({"error": f"File not found: {path_str}"})
