@@ -21,6 +21,8 @@ GEMINI_PRICING = {
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
 }
 
+_DEFAULT_MODEL = "gemini-2.5-flash"
+
 # JSON Schema keywords that Gemini does not support in tool definitions.
 _UNSUPPORTED_SCHEMA_KEYS = frozenset({"patternProperties", "additionalProperties", "$ref"})
 
