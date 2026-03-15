@@ -752,10 +752,8 @@ def cmd_status(args: list[str]) -> None:
 def cmd_doctor(args: list[str]) -> None:
     """Run health checks on a Qanot installation."""
     fix_mode = "--fix" in args or "--repair" in args
-    remaining = [a for a in args if a not in ("--fix", "--repair")]
-
     # Find config
-    config_path = _find_config(remaining)
+    config_path = _find_config([a for a in args if a not in ("--fix", "--repair")])
     if not config_path:
         print(_red("✗ No config.json found."))
         print("  Run 'qanot init' first, or pass the path.")
