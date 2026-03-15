@@ -21,13 +21,12 @@ def _extract_pdf_text(path: Path) -> str:
     """Extract text from a PDF file using PyMuPDF."""
     import fitz  # PyMuPDF
 
-    doc = fitz.open(str(path))
-    pages = []
-    for page in doc:
-        text = page.get_text()
-        if text.strip():
-            pages.append(text)
-    doc.close()
+    with fitz.open(str(path)) as doc:
+        pages = []
+        for page in doc:
+            text = page.get_text()
+            if text.strip():
+                pages.append(text)
     return "\n\n".join(pages)
 
 
