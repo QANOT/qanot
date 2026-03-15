@@ -51,10 +51,9 @@ class RateLimiter:
             del self._locked_until[user_id]
 
         # Slide window: remove old timestamps
-        timestamps = self._requests.get(user_id, [])
         cutoff = now - self.window
-        timestamps = [t for t in timestamps if t > cutoff]
-        self._requests[user_id] = timestamps
+        timestamps = self._requests.setdefault(user_id, [])
+        timestamps[:] = [t for t in timestamps if t > cutoff]
 
         # Check limit
         if len(timestamps) >= self.max_requests:
