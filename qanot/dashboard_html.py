@@ -263,10 +263,10 @@ async function load(){
     }else{ri.innerHTML='<div class="big-sub">Routing disabled</div>';}
 
     // Config
-    var ci=document.getElementById('cfg');ci.innerHTML='';
-    Object.entries(cf).forEach(function(e){
-      ci.innerHTML+='<div class="row"><span class="row-k">'+e[0]+'</span><span class="row-v">'+e[1]+'</span></div>';
-    });
+    var ci=document.getElementById('cfg');
+    ci.innerHTML=Object.entries(cf).map(function(e){
+      return '<div class="row"><span class="row-k">'+e[0]+'</span><span class="row-v">'+e[1]+'</span></div>';
+    }).join('');
 
     // Tools
     document.getElementById('t-count').textContent=t.count;
