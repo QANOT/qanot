@@ -99,7 +99,7 @@ def safe_write_file(path: str, content: str, root: str | None = None) -> str:
     if error:
         raise SafeWriteError(error, path)
 
-    resolved = os.path.realpath(path) if os.path.exists(os.path.dirname(path)) else path
+    resolved = os.path.realpath(path)
 
     # Create parent directories
     parent = os.path.dirname(resolved)
