@@ -1,0 +1,8 @@
+{
+    "name": "onec",
+    "version": "1.0.0",
+    "description": "1C Enterprise integration — contractors, products, sales, purchases, balances",
+    "author": "Qanot AI",
+    "dependencies": ["aiohttp"],
+    "required_config": ["base_url", "username", "password"]
+}
