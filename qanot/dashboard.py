@@ -127,7 +127,7 @@ class Dashboard:
         path = ws / filename
         if not path.exists():
             path = ws / "memory" / filename
-        if not path.exists() or not path.suffix == ".md":
+        if not path.exists() or path.suffix != ".md":
             return web.json_response({"error": "not found"}, status=404)
 
         content = path.read_text(encoding="utf-8")
