@@ -224,6 +224,14 @@ class SessionWriter:
         return entries
 
 
+def _extract_text_blocks(content: list) -> str:
+    """Join text blocks from a structured content list, skipping non-text entries."""
+    return "\n".join(
+        block.get("text", "") for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
 def _entries_to_messages(entries: list[dict]) -> list[dict]:
     """Convert JSONL session entries to conversation message format.
 
@@ -250,11 +258,7 @@ def _entries_to_messages(entries: list[dict]) -> list[dict]:
                     messages.append({"role": "user", "content": clean})
             elif isinstance(content, list):
                 # Structured content — extract text blocks only
-                text = "\n".join(
-                    block.get("text", "") for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-                clean = _strip_injection(text)
+                clean = _strip_injection(_extract_text_blocks(content))
                 if clean:
                     messages.append({"role": "user", "content": clean})
 
@@ -264,10 +268,7 @@ def _entries_to_messages(entries: list[dict]) -> list[dict]:
                     messages.append({"role": "assistant", "content": content})
             elif isinstance(content, list):
                 # Extract only text blocks from assistant (skip tool_use blocks)
-                text = "\n".join(
-                    block.get("text", "") for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
+                text = _extract_text_blocks(content)
                 if text.strip():
                     messages.append({"role": "assistant", "content": text})
 
