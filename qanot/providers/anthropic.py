@@ -200,7 +200,7 @@ class AnthropicProvider(LLMProvider):
         # Track partial tool_use blocks being built
         current_tool_id = ""
         current_tool_name = ""
-        current_tool_json = ""
+        current_tool_json_parts: list[str] = []
         # Track whether current block is a thinking block (skip its deltas)
         _in_thinking_block = False
 
@@ -215,7 +215,7 @@ class AnthropicProvider(LLMProvider):
                             _in_thinking_block = False
                             current_tool_id = block.id
                             current_tool_name = block.name
-                            current_tool_json = ""
+                            current_tool_json_parts = []
                         else:
                             _in_thinking_block = False
 
@@ -228,13 +228,14 @@ class AnthropicProvider(LLMProvider):
                             text_parts.append(delta.text)
                             yield StreamEvent(type="text_delta", text=delta.text)
                         elif delta.type == "input_json_delta":
-                            current_tool_json += delta.partial_json
+                            current_tool_json_parts.append(delta.partial_json)
 
                     elif event.type == "content_block_stop":
                         if _in_thinking_block:
                             _in_thinking_block = False
                             continue
                         if current_tool_id:
+                            current_tool_json = "".join(current_tool_json_parts)
                             # Guard against unbounded tool JSON accumulation
                             if len(current_tool_json) > 1_000_000:
                                 logger.warning(
