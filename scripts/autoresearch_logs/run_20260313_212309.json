@@ -1,0 +1,310 @@
+{
+  "timestamp": "20260313_212309",
+  "rounds": 50,
+  "focus": "all",
+  "kept": 33,
+  "failed": 0,
+  "skipped": 17,
+  "duration_seconds": 655.8,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_212309_all",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "The `_tool_call_fingerprint` function uses `json.dumps` on untrusted `input_data` which could contain specially crafted values. More critically, the `execute` method in `ToolRegistry` imports `re` on every exception, which is wasteful. But the real security concern is that tool names from LLM responses are not sanitized — they could contain control characters or very long strings that could cause issues in logging and dictionary lookups. Adding a strict tool name validation with length limits and character restrictions prevents potential injection via crafted tool names.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "The _handle_message method calls _resolve_bot_username which makes an API call (bot.get_me()), and then _is_mentioned also calls bot.get_me() separately for reply checking. This is redundant and also means two API calls per group message. Additionally, if _resolve_bot_username fails silently (returns empty string), the bot mention check in _is_mentioned will also call get_me() again. The _is_mentioned method should reuse the cached username instead of calling bot.get_me() again for the reply-to check.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "The `_rotate_backups` function imports `re` and recompiles the timestamp pattern on every invocation. Moving the import and pattern compilation to module level avoids redundant work on each backup rotation call, improving performance and code clarity.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "In `split_messages_by_token_share`, we call `estimate_messages_tokens(messages)` which iterates over all messages to sum their tokens, but then the chunking lambda calls `estimate_message_tokens` again for each message individually. By precomputing per-message token counts once and using them for both total calculation and chunk splitting, we avoid estimating each message's tokens twice, reducing CPU work especially for large histories.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.58
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "The webhook_port field accepts any integer from JSON without validation, which could allow binding to privileged ports (< 1024) or invalid port numbers (negative, zero, or > 65535). Adding port range validation prevents misconfiguration and potential security issues with binding to unexpected ports.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.55
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "The `recover_from_compaction` method reads files from disk without limiting their size, which could lead to reading extremely large files into memory (e.g., a bloated working buffer or session state). Adding a size limit prevents unbounded memory consumption and ensures the recovery context stays within reasonable bounds for injection into the conversation.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "The extract_urls function doesn't handle the edge case where the URL regex matches a string that is only a scheme (e.g., 'http://' with nothing after it). After stripping trailing punctuation, such a URL could become just 'http://' which is not a valid URL but would pass all current checks. Additionally, _should_skip_url doesn't handle URLs with uppercase extensions or mixed-case edge cases properly since it lowercases the URL but the frozenset already has lowercase entries. The main improvement is adding validation that the extracted URL has a meaningful host component after the scheme, preventing empty/incomplete URLs from being processed and fetched.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.1
+    },
+    {
+      "round": 14,
+      "file": "qanot/plugins/base.py",
+      "hypothesis": "The `from_file` method in `PluginManifest` doesn't validate the types of parsed JSON values. If the JSON file contains unexpected types (e.g., `dependencies` is a string instead of a list, or `name` is an integer), this could cause subtle downstream errors. Adding defensive type checking for critical fields ensures robustness against malformed plugin.json files.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 15,
+      "file": "qanot/plugins/loader.py",
+      "hypothesis": "The _load_from_path function adds the plugin directory to sys.path and removes it in the finally block, but if the same directory was already in sys.path before the function was called, the finally block will incorrectly remove it. We should track whether we actually added it and only remove it if we did, preventing accidental removal of pre-existing path entries.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 16,
+      "file": "qanot/prompt.py",
+      "hypothesis": "The _read_file function truncates content to max_chars, and then _add() truncates it again via _truncate_content. This double-truncation is redundant — _read_file already returns truncated content, so _add() re-truncates unnecessarily. Removing the truncation from _read_file and letting _add() handle all truncation (with budget awareness) is cleaner, or alternatively removing the redundant truncation in _add() for content that already passed through _read_file. The cleanest fix: remove truncation from _read_file since _add() already handles it with proper budget tracking. This also means _read_file's max_chars parameter becomes unused and can be removed.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.4
+    },
+    {
+      "round": 18,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "In chat_stream, the content_block_stop handler checks `if current_tool_id` to determine if a tool block just ended, but this check is fragile — if two text blocks appear in sequence, the second content_block_stop won't reset properly. More importantly, if the API returns a tool_use block with an empty id (malformed response), the tool call would be silently skipped. The real security issue is that `current_tool_json` is parsed via json.loads without any size limit, meaning a malicious or buggy API response could send an extremely large JSON string that consumes excessive memory. Adding a size limit on the accumulated tool JSON prevents unbounded memory consumption from malformed streaming responses.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 19,
+      "file": "qanot/providers/base.py",
+      "hypothesis": "The StreamEvent dataclass doesn't validate its 'type' field, allowing arbitrary or misspelled event types that could cause silent bugs downstream. Adding validation to ensure the type is one of the known event types ('text_delta', 'tool_use', 'done') provides early error detection and prevents subtle issues where an invalid event type passes through the system unnoticed.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.75
+    },
+    {
+      "round": 20,
+      "file": "qanot/providers/errors.py",
+      "hypothesis": "The classify_error function doesn't handle the case where `error` is None or not an Exception subclass gracefully, and more importantly, it doesn't check for ConnectionError/TimeoutError Python built-in exceptions which would be classified as ERROR_UNKNOWN instead of ERROR_TIMEOUT. Adding isinstance checks for common Python network exception types ensures proper classification without relying solely on message string matching.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.73
+    },
+    {
+      "round": 22,
+      "file": "qanot/providers/gemini.py",
+      "hypothesis": "The _ensure_user_first function iterates through messages with a for/else construct, but the else clause only triggers when the loop completes without breaking. However, if messages is non-empty, the loop will always execute at least once. The issue is that `insert_idx` is initialized to 0 but never updated if the very first message is not a system message (the break happens immediately with insert_idx=0). The real performance improvement is in _strip_unsupported_keys: for dicts that contain no unsupported keys, we currently rebuild the entire dict unnecessarily. By checking first whether any keys need stripping, we can return the original dict as-is, avoiding allocations for the common case where tools don't contain unsupported keys.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 23,
+      "file": "qanot/providers/groq.py",
+      "hypothesis": "The model parameter is not validated in __init__, allowing arbitrary or empty model strings to be passed to the Groq API. Adding validation ensures a non-empty string model name is provided, preventing silent misconfiguration or injection of unexpected values into API requests.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.54
+    },
+    {
+      "round": 24,
+      "file": "qanot/providers/openai.py",
+      "hypothesis": "In chat_stream, the partial_tools accumulator for tool call arguments has no size limit. A malicious or buggy API response could stream an extremely large arguments string, consuming unbounded memory. Adding a size limit on accumulated tool arguments (consistent with the same fix applied to the Anthropic provider) prevents this. Additionally, tool calls with empty id or name should be logged as warnings since they indicate malformed responses.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 27,
+      "file": "qanot/rag/embedder.py",
+      "hypothesis": "The OpenAIEmbedder.embed method doesn't handle the empty input case and also doesn't pre-allocate the result list like GeminiEmbedder does. More importantly, it builds an intermediate list comprehension for each batch and then extends, causing extra allocations. Pre-allocating and using index-based assignment (like GeminiEmbedder) avoids repeated list resizing from extend(), and adding the empty-input short-circuit avoids an unnecessary API call.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.79
+    },
+    {
+      "round": 28,
+      "file": "qanot/rag/engine.py",
+      "hypothesis": "The `query` method doesn't validate its inputs (query string, top_k, user_id, source), unlike `ingest` which has proper validation. A malicious or malformed query string could be excessively long, top_k could be negative or unreasonably large, and user_id/source bypass validation. Adding input validation to `query` consistent with `ingest` hardens against injection and resource abuse.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.6
+    },
+    {
+      "round": 30,
+      "file": "qanot/rag/store.py",
+      "hypothesis": "The delete_source method queries chunks twice (once for rowids for vec deletion, once for ids for FTS deletion) when both vec and FTS are available. This is inefficient — we can fetch both rowid and id in a single query and reuse the results, reducing database round-trips.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 31,
+      "file": "qanot/routing.py",
+      "hypothesis": "The _assess_context method has duplicated logic for checking tool-related content in messages. The 'has_tool_result' loop at the end re-iterates over recent messages checking for tool_result blocks, but it also redundantly checks for role='tool' which is a separate pattern. More importantly, the method uses a boolean flag `has_tool_result` with a loop-then-check pattern that can be simplified using the `any()` builtin for the role='tool' check, and the overall method can be made more readable by extracting the tool_result detection into a helper expression. However, the most impactful readability improvement is replacing the manual `has_tool_result` flag pattern with a cleaner approach using `any()` with a generator, which is more Pythonic and eliminates the mutable flag variable.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 32,
+      "file": "qanot/scheduler.py",
+      "hypothesis": "In _run_isolated, reading HEARTBEAT.md uses a list comprehension that allocates a full list just to check if it's non-empty. Using a generator with any() avoids allocating the list and short-circuits on the first non-comment, non-empty line, saving memory and CPU for large HEARTBEAT.md files.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 33,
+      "file": "qanot/session.py",
+      "hypothesis": "The _read_user_messages method doesn't validate or sanitize the user_id parameter. A malicious or malformed user_id could potentially contain path traversal characters or excessively long strings. Additionally, the method doesn't validate that the 'timestamp' field used for sorting is actually a string, which could cause sorting failures. Adding input validation for user_id prevents potential abuse and ensures robust operation.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.46
+    },
+    {
+      "round": 34,
+      "file": "qanot/telegram.py",
+      "hypothesis": "The _download_photo method accesses message.photo[-1] without checking if message.photo is non-empty first. While the handler checks F.photo, the method is also called on quoted messages (reply_to_message) where .photo could be an empty list. Adding an empty-list guard prevents an IndexError.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.76
+    },
+    {
+      "round": 38,
+      "file": "qanot/tools/cron.py",
+      "hypothesis": "The cron_create function doesn't validate the length or content of name, prompt, schedule, at, and timezone fields, allowing excessively long strings or potentially dangerous input. Adding input validation with length limits and basic sanitization prevents resource abuse and injection of malformed data into the jobs.json file. The cron_update function already has some validation (schedule max 200, prompt max 10000) but cron_create lacks these same checks.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 39,
+      "file": "qanot/tools/delegate.py",
+      "hypothesis": "The delegate_to_agent and converse_with_agent functions don't validate the length of task/message and context strings, allowing excessively long inputs that could consume unbounded tokens and memory when passed to the LLM. Adding length validation prevents resource abuse, consistent with similar validation patterns already applied in other tools (e.g., cron_create, RAG engine query).",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 40,
+      "file": "qanot/tools/doctor.py",
+      "hypothesis": "The _check_context method has a confusing ternary expression that spans multiple lines and duplicates most of the string. The conditional only affects the 'compaction_mode' suffix. Refactoring to compute the compaction_mode string separately and then build the details string once improves readability and eliminates duplication.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.57
+    },
+    {
+      "round": 41,
+      "file": "qanot/tools/image.py",
+      "hypothesis": "The _build_success function's first parameter is named 'image_data' but it actually receives a full Gemini response object, not image data. This is confusing because _extract_image_from_response is then called on it. Renaming to 'response' makes the data flow clear and consistent with how it's used inside the function and at call sites.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.53
+    },
+    {
+      "round": 42,
+      "file": "qanot/tools/jobs_io.py",
+      "hypothesis": "load_jobs reads the entire file into a string with read_text, then parses it with json.loads. Using json.load with an open file handle avoids creating the intermediate string, reducing memory allocation for large jobs files.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.47
+    },
+    {
+      "round": 43,
+      "file": "qanot/tools/rag.py",
+      "hypothesis": "The rag_search function doesn't validate or cap the top_k parameter, allowing arbitrarily large values that could cause excessive resource consumption (memory and CPU) during vector search. Similarly, the query string has no length limit, allowing injection of extremely long strings. Adding bounds validation prevents resource abuse, consistent with validation patterns in other tools like delegate and cron.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.57
+    },
+    {
+      "round": 44,
+      "file": "qanot/tools/subagent.py",
+      "hypothesis": "The spawn_sub_agent function doesn't validate the length of the 'task' parameter, allowing excessively long strings that could consume unbounded tokens and memory when passed to the LLM as a prompt. Adding a length limit (consistent with validation patterns in delegate.py and cron.py) prevents resource abuse. Also, user_id and chat_id should be validated more defensively — chat_id could be a non-integer type if get_chat_id() misbehaves.",
+      "category": "robustness",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.64
+    },
+    {
+      "round": 45,
+      "file": "qanot/tools/web.py",
+      "hypothesis": "The web_search function doesn't validate the length of the query parameter, allowing excessively long search queries that could abuse the Brave API and consume cache memory. Additionally, the count parameter isn't validated for negative or zero values. Adding input validation is consistent with the validation patterns already applied across other tools (cron, delegate, rag, subagent).",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 47,
+      "file": "qanot/utils.py",
+      "hypothesis": "The truncate_with_marker function computes `int(max_chars * head_ratio)` and `int(max_chars * tail_ratio)` on every call, even when the text is short enough to return early. Additionally, the marker string `\\n\\n... [truncated {removed} chars] ...\\n\\n` is constructed in two branches. Pre-computing the marker length and accounting for it in the head/tail budget ensures the returned string actually fits within max_chars (currently it can exceed max_chars by the length of the marker). This is both a correctness fix and a minor performance improvement by avoiding oversized returns.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.51
+    },
+    {
+      "round": 48,
+      "file": "qanot/voice.py",
+      "hypothesis": "The kotib_transcribe function opens a file handle with open() inside aiohttp.FormData but never explicitly closes it, leading to a resource leak. The file handle is passed directly to add_field without any try/finally or context manager. This mirrors the pattern that was already fixed in muxlisa_transcribe. Adding proper file handle management prevents resource leaks.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.6
+    }
+  ]
+}

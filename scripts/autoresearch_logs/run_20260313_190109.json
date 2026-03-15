@@ -1,0 +1,85 @@
+{
+  "timestamp": "20260313_190109",
+  "rounds": 10,
+  "focus": "quality",
+  "kept": 8,
+  "failed": 0,
+  "skipped": 2,
+  "duration_seconds": 110.8,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_190109_quality",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "The _evict_stale method is called on every _get_messages call, iterating over all conversations each time. Extract the stale user IDs into a list comprehension is fine, but the three separate .pop() calls for each stale user can be consolidated into a helper method that also handles reset(), reducing code duplication between _evict_stale() and reset().",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.59
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "The _send_response method has duplicated logic for sending a message with HTML formatting and plain-text fallback. Extracting this into a small helper method improves DRY and readability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.72
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "The file and directory collection logic in backup_workspace uses repetitive patterns that can be simplified with list comprehensions, improving readability and reducing boilerplate.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.58
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "The cmd_backup function has repetitive code for collecting directories to back up — each directory follows the same pattern of resolving a path from config with a fallback, checking existence, and appending. Extracting this into a loop over a list of (config_key, default_name) tuples improves DRY and readability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.57
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "The chunk_messages_by_max_tokens and split_messages_by_token_share functions share nearly identical chunking logic: iterate over messages, accumulate tokens, flush when a threshold is exceeded. Extracting a common helper reduces duplication and improves maintainability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.7
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "The parsing of providers and agents uses repetitive dict.get() patterns that mirror the dataclass field defaults. Using a helper function that maps a dict to a dataclass by matching field names and defaults reduces boilerplate and improves DRY/maintainability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.54
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "The recover_from_compaction method has three nearly identical blocks that read a file, check if it has content, and append a formatted section. Extracting this into a small helper loop over (path, heading) tuples eliminates the repetition and improves DRY/readability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "The _should_skip_url function iterates over all extensions in _SKIP_EXTENSIONS with a linear loop. Since _SKIP_EXTENSIONS is a frozenset, we can extract the extension from the path using os.path.splitext (or simple string slicing) and do a single O(1) set lookup instead of O(n) iteration. This improves both performance and readability.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.43
+    }
+  ]
+}

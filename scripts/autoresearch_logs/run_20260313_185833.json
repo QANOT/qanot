@@ -1,0 +1,102 @@
+{
+  "timestamp": "20260313_185833",
+  "rounds": 10,
+  "focus": "quality",
+  "kept": 9,
+  "failed": 1,
+  "skipped": 0,
+  "duration_seconds": 87.3,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_185833_quality",
+  "experiments": [
+    {
+      "round": 1,
+      "file": "qanot/__init__.py",
+      "hypothesis": "Add __all__ to explicitly define the public API and improve import clarity",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.53
+    },
+    {
+      "round": 2,
+      "file": "qanot/__main__.py",
+      "hypothesis": "Add proper if __name__ == '__main__' guard to prevent unintended execution when imported and follow Python best practices",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.55
+    },
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "Replace magic number 6 with a named constant for minimum messages threshold used in compaction logic",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.6
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "Extract repeated bot information retrieval into a cached property to eliminate duplicate async calls and improve performance",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "Extract repeated Path.is_file() checks into a helper function to reduce code duplication and improve readability",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.57
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "Extract ANSI color codes into a class to improve organization and make the color functionality more discoverable and maintainable",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.54
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "Extract repeated error handling pattern into a reusable helper function to reduce code duplication and improve maintainability",
+      "category": "quality",
+      "kept": false,
+      "reason": "apply_failed"
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "Extract repeated dataclass field construction pattern into a helper function to reduce code duplication and improve maintainability",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.39
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "Extract repeated boolean condition logic for checking specific strings in content into a helper function to reduce code duplication and improve readability",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "Extract repeated URL extension checking logic into a helper function to reduce code duplication and improve readability",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.15
+    }
+  ]
+}

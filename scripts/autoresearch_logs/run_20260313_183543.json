@@ -1,0 +1,102 @@
+{
+  "timestamp": "20260313_183543",
+  "rounds": 10,
+  "focus": "quality",
+  "kept": 8,
+  "failed": 2,
+  "skipped": 0,
+  "duration_seconds": 270.6,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_183543_quality",
+  "experiments": [
+    {
+      "round": 1,
+      "file": "qanot/__init__.py",
+      "hypothesis": "Replace hardcoded __version__ with dynamic lookup using importlib.metadata. This improves reliability by ensuring the package's reported version always matches the installed metadata, preventing potential discrepancies and simplifying version management.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.38
+    },
+    {
+      "round": 2,
+      "file": "qanot/__main__.py",
+      "hypothesis": "Wrap the `main()` function call in an `if __name__ == \"__main__\":` block. This is a standard Python idiom that explicitly indicates the entry point of a script, improving code quality and robustness by ensuring the `main()` function is only called when the module is executed directly, not when imported.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.43
+    },
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "Change `MEMORY_FLUSH_TOOL_NAMES` from a mutable set to an immutable frozenset. This improves code quality by clearly indicating that the collection is intended to be constant and prevents accidental modification, aligning with Python's best practices for defining constant collections.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "Refactor the `_send_response` method to use a nested helper function `_send_chunk`. This improves code quality by removing duplication in the message sending logic (HTML parsing with plain text fallback) and enhances readability by encapsulating this specific concern within the method.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "Replace explicit loops with list comprehensions for collecting files and directories to backup. This simplifies the code, making it more concise and Pythonic, improving readability and adhering to common idioms for filtering and transforming lists.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.56
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "Declare `LOGO` as a `Final` constant with type annotation. This improves code quality and readability by explicitly indicating that `LOGO` is an immutable, globally defined string, making its intent clearer for developers.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.5
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "Refactor `estimate_message_tokens` to centralize and de-duplicate the 'role overhead' token calculation. This improves code quality by making the token estimation logic more explicit and adhering to DRY principles.",
+      "category": "quality",
+      "kept": false,
+      "reason": "apply_failed"
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "Simplify the parsing of `AgentDefinition` objects in `load_config` by using dictionary unpacking and leveraging dataclass default values. This reduces repetitive `.get()` calls, improves code readability, and adheres to DRY principles by letting the dataclass manage its own defaults.",
+      "category": "quality",
+      "kept": false,
+      "reason": "5 tests failed",
+      "test_output": "=============\nFAILED tests/test_config.py::TestConfig::test_load_minimal - UnboundLocalErro...\nFAILED tests/test_config.py::TestConfig::test_load_with_plugins - UnboundLoca...\nFAILED tests/test_config.py::TestConfig::test_defaults - UnboundLocalError: c...\nFAILED tests/test_config.py::TestConfig::test_load_multi_provider - UnboundLo...\nFAILED tests/test_voice.py::TestVoiceConfig::test_config_load - UnboundLocalE...\n============= 5 failed, 661 passed, 45 skipped, 1 warning in 1.66s =============\n"
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "Improve consistency and reliability of compaction logic by aligning `extract_compaction_text` with `compact_messages`. Currently, `extract_compaction_text` defaults to `keep_recent=4`, while `compact_messages` dynamically calculates `keep_recent = min(4, len(messages) // 2)`. This change ensures both methods use the same logic to determine which messages would be compacted, preventing discrepancies where the summarizer might process a different set of messages than the compactor actually removes.",
+      "category": "unknown",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "Reduce repetitive calculation of combined link preview length in `fetch_link_previews` by storing it in a variable, improving readability and adhering to DRY principles.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.7
+    }
+  ]
+}

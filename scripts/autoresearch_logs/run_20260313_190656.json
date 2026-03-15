@@ -1,0 +1,67 @@
+{
+  "timestamp": "20260313_190656",
+  "rounds": 10,
+  "focus": "performance",
+  "kept": 6,
+  "failed": 0,
+  "skipped": 4,
+  "duration_seconds": 141.6,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_190656_performance",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "ToolRegistry.get_definitions() creates a new list copy on every call via list(). Since tool definitions don't change during a turn, and the method is called in _prepare_iteration which already caches the result, the method itself should cache the list to avoid repeated allocations when called from other places (e.g., _memory_flush which calls it every flush). We can cache the definitions list and invalidate on register.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.56
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "In _rotate_backups, using pop(0) on a list in a while loop is O(n^2) due to list shifting. Instead, we can slice the list once to get the items to remove, which is O(n) and avoids repeated list element shifting.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.8
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "In cmd_backup, using rglob('*') iterates all entries then filters with is_file(). Using rglob with a more targeted approach isn't possible here, but the list comprehension for dirs_to_backup creates intermediate Path objects for every spec entry even when the directory doesn't exist. More importantly, in cmd_doctor's session scanning, sum() with a generator over stat() is fine, but the stale session check calls stat() again for every file that was already stat'd for size. We can avoid the double stat() calls by caching stat results.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.59
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "In estimate_messages_tokens(), using a generator with sum() avoids creating an intermediate list, but the function is called repeatedly in hot paths like prune_history_for_context's while loop and split_messages_by_token_share. More importantly, in prune_history_for_context, estimate_messages_tokens(kept) is called every iteration of the while loop, re-scanning all remaining messages. We can avoid redundant re-estimation by computing the total once and subtracting the dropped chunk's tokens.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.55
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "In detect_compaction(), the marker list is recreated on every call and for each of the first 3 messages. By hoisting it to a module-level frozenset/tuple constant, we avoid repeated list allocation. Additionally, the inner loop can short-circuit more efficiently.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.7
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "In fetch_url_preview, body_bytes is built by repeatedly concatenating bytes with +=, which creates a new bytes object on each iteration (O(n^2) allocations for large responses). Using a list of chunks and joining once at the end is O(n) and reduces memory allocations significantly, especially for responses close to the 512KB limit.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.64
+    }
+  ]
+}

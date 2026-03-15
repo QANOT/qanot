@@ -1,3 +1,3 @@
 """Qanot AI — Lightweight Python agent framework."""
 
-__version__ = "1.9.1"
+__version__ = "2.0.0"

@@ -1,0 +1,133 @@
+{
+  "timestamp": "20260313_214044",
+  "rounds": 24,
+  "focus": "quality",
+  "kept": 0,
+  "failed": 0,
+  "skipped": 24,
+  "duration_seconds": 401.2,
+  "baseline_tests": 666,
+  "branch": null,
+  "experiments": [
+    {
+      "round": 1,
+      "file": "qanot/agent.py",
+      "hypothesis": "In _run_turn_stream_impl, when response is None and tool_calls is empty (e.g., stream completed without a 'done' event), the code breaks without yielding a 'done' StreamEvent and without saving the accumulated text to conversation history. This causes the caller to never receive the completion signal and loses the assistant's response from history.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 2,
+      "file": "qanot/telegram.py",
+      "hypothesis": "The _proactive_loop task created in start() is never stored, so it becomes a fire-and-forget task. If it raises an unexpected exception or if the bot needs to shut down, the task is lost (no reference to cancel it). More critically, if the task is garbage collected before completion, Python will log 'Task was destroyed but it is pending!' warnings. But the real bug is: _user_locks and _pending_messages dicts grow unboundedly — one entry per unique user/group that ever messages the bot, and they are never cleaned up, causing a memory leak over the bot's lifetime.",
+      "category": "memory",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 4,
+      "file": "qanot/memory.py",
+      "hypothesis": "The dedup check in _append_to_memory uses `entry.detail[:80].lower() in existing.lower()` which is a substring search that can produce false positives (e.g., a short detail like 'Ali' matching 'Alisher' or common words matching unrelated lines). More critically, there's a logic bug: after checking for duplicates against the original `existing` content, the code rewrites the entire file with `open(memory_path, 'w')`. If two concurrent calls to _append_to_memory happen (e.g., rapid messages), the second call reads `existing` before the first call writes, then the first call writes, then the second call overwrites with its stale `existing` — losing the first call's data. This is a data loss race condition. Switching to append mode for new lines avoids the rewrite and eliminates the race.",
+      "category": "concurrency",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 6,
+      "file": "qanot/compaction.py",
+      "hypothesis": "messages_to_text truncates each message to 1000 chars during sanitization, silently dropping content before summarization. Long assistant messages (common with code/explanations) lose most of their content, producing poor summaries that miss key decisions and context. The truncation should match the tool_result truncation limit (200 chars) only for the sanitization scan, but preserve the full text for the summary.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 8,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "In chat(), text_parts are joined with '\\n' but in chat_stream() they're joined with ''. This means multi-block text responses produce different content between streaming and non-streaming paths, causing inconsistent behavior for callers that switch between modes or compare results.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 9,
+      "file": "qanot/agent.py",
+      "hypothesis": "When streaming completes without a 'done' event (response is None) and there are no tool_calls, accumulated text_parts are lost from conversation history and the caller gets a misleading 'max iterations' message instead of the actual streamed content. This happens when the stream ends abruptly or the provider doesn't emit a 'done' event.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 11,
+      "file": "qanot/context.py",
+      "hypothesis": "compact_messages uses keep_recent=min(4, len//2) but extract_compaction_text defaults to keep_recent=4. When len(messages) is 7, compact_messages removes messages[2:4] (2 messages) but extract_compaction_text only extracts messages[2:3] (1 message). The summary sent to the LLM is missing a message that gets removed, causing silent data loss. Fix by making compact_messages use the same keep_recent=4 as extract_compaction_text.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 12,
+      "file": "qanot/memory.py",
+      "hypothesis": "Race condition in _append_to_memory: it reads the entire file, modifies the string in memory, then rewrites with 'w' mode. If two concurrent calls happen (e.g., rapid user messages), the second call reads before the first writes, then the first writes, then the second overwrites — losing the first call's data. Switching to append mode for new lines eliminates the read-modify-write race and avoids data loss.",
+      "category": "concurrency",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 14,
+      "file": "qanot/compaction.py",
+      "hypothesis": "In prune_history_for_context, when _repair_orphaned_tool_results removes tool_result blocks from within messages (but doesn't remove the whole message), the length-based check `new_len != expected_len` doesn't detect the change, so kept_tokens uses the stale subtraction value instead of re-estimating. This causes kept_tokens to be overestimated, potentially causing unnecessary extra pruning rounds that drop more history than needed.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 16,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "If an anthropic.APIError occurs during streaming, the code re-raises it, but if any other exception occurs inside the `async with` block (e.g., json.JSONDecodeError not caught, network timeout, CancelledError), execution falls through to `final = await stream.get_final_message()` which may also fail, or if the stream context exits abnormally, `final` is never set and `final.usage` raises UnboundLocalError. More concretely: the `raise` in the except block means APIError is fine, but the `final` variable is used outside the try block — if a non-APIError exception propagates from the stream iteration (e.g., httpx.ReadTimeout which is not an anthropic.APIError), `final` would be unbound.",
+      "category": "bug",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 17,
+      "file": "qanot/agent.py",
+      "hypothesis": "When streaming ends without a 'done' event (response is None, no tool_calls), accumulated text_parts are lost from conversation history and caller gets misleading 'max iterations' message. The streamed text should be saved to history and a proper done event yielded.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 19,
+      "file": "qanot/context.py",
+      "hypothesis": "compact_messages uses keep_recent=min(4, len//2) but extract_compaction_text defaults to keep_recent=4. When len(messages) is 6-7, the mismatch means extract_compaction_text returns fewer messages than compact_messages actually removes, causing the LLM summary to miss removed messages — silent data loss. Fix by making compact_messages pass its computed keep_recent to extract_compaction_text, and adding a class method that computes it consistently.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 20,
+      "file": "qanot/memory.py",
+      "hypothesis": "Race condition and data loss in _append_to_memory: it reads the entire file, modifies in memory, then rewrites with 'w' mode. If two concurrent calls happen (e.g., rapid user messages triggering wal_write), the second call reads before the first writes, then both write — the second overwrites the first's data. Additionally, the dedup check `entry.detail[:80].lower() in existing.lower()` only checks against the original file content, not against new_lines being added in the same batch, so duplicate entries within one batch pass through. Fix: use append mode instead of read-modify-write, and ensure the section header exists separately.",
+      "category": "concurrency",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 22,
+      "file": "qanot/compaction.py",
+      "hypothesis": "messages_to_text truncates every message to 1000 chars before summarization, silently dropping content from long assistant messages (code, explanations). This produces poor summaries that miss key decisions. The truncation was intended for sanitization scanning but inadvertently limits the text sent to the LLM. The sanitization scan should run on the full text, not truncate it.",
+      "category": "logic",
+      "kept": false,
+      "dry_run": true
+    },
+    {
+      "round": 24,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "In chat_stream(), if a non-anthropic.APIError exception occurs during streaming (e.g., httpx.ReadTimeout, asyncio.CancelledError, or any other exception), the except block only catches anthropic.APIError. The exception propagates out, but then execution continues to `usage_dict = self._extract_usage_dict(final.usage)` where `final` is never bound, causing an UnboundLocalError that masks the real error. Even if the exception propagates correctly in most Python versions, there's a more concrete bug: if `stream.get_final_message()` itself raises (e.g., stream was interrupted before completion), `final` is also unbound. The fix is to move the final message usage extraction inside the try block and handle the case where final may not be available.",
+      "category": "bug",
+      "kept": false,
+      "dry_run": true
+    }
+  ]
+}

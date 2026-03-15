@@ -1,0 +1,12 @@
+{
+  "timestamp": "20260315_054907",
+  "rounds": 30,
+  "focus": "quality",
+  "kept": 0,
+  "failed": 0,
+  "skipped": 30,
+  "duration_seconds": 17.0,
+  "baseline_tests": 757,
+  "branch": null,
+  "experiments": []
+}

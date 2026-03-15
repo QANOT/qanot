@@ -1,0 +1,130 @@
+{
+  "timestamp": "20260313_214809",
+  "rounds": 24,
+  "focus": "quality",
+  "kept": 13,
+  "failed": 0,
+  "skipped": 11,
+  "duration_seconds": 467.0,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_214809_core",
+  "experiments": [
+    {
+      "round": 4,
+      "file": "qanot/memory.py",
+      "hypothesis": "The dedup check in _append_to_memory uses `entry.detail[:80].lower() in existing.lower()` which is a substring search — it can produce false positives (e.g., a short detail like 'Ali' matching 'Alisher' or any other unrelated text containing that substring). More critically, `existing.lower()` is recomputed for every entry in the loop, which is O(n*m) where n=entries and m=file size. But the real logic bug is: after the dedup check, the function rewrites the entire MEMORY.md file using `existing` (the content read at the start), but `existing` is mutated to add the section header. If two concurrent calls to `_append_to_memory` happen (e.g., from different messages processed simultaneously), the second call reads the file before the first finishes writing, and when it writes, it overwrites the first call's additions. This is a data loss race condition. Fix by using append mode instead of rewriting the whole file.",
+      "category": "concurrency",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 6,
+      "file": "qanot/compaction.py",
+      "hypothesis": "In messages_to_text(), the prompt-injection sanitization truncates ALL messages to 1000 chars via `sanitized = text[:1000]`, but the sanitization markers being checked are short known strings. This means long assistant messages with important decisions/context get silently truncated to 1000 chars before summarization, causing the LLM to miss critical information. The truncation should be much higher (or the sanitization should operate on the full text) since the 48K cap in _generate_summary already handles overall size.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 8,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "Anthropic API reports input_tokens as the count of non-cached input tokens, while cache_read and cache_creation tokens are reported separately. The current code subtracts cache tokens from input_tokens, which double-subtracts them, resulting in underreported costs. For example, if input_tokens=100, cache_read=50, cache_creation=30, the real non-cached input is 100 (already excludes cached), but the code computes max(0, 100-50-30)=20, charging for only 20 tokens at the input rate instead of 100.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.96
+    },
+    {
+      "round": 9,
+      "file": "qanot/agent.py",
+      "hypothesis": "When streaming fails mid-stream with a transient error and falls back to non-streaming chat, partial text deltas already yielded to the client are not accounted for. The fallback response's full text is then yielded again, causing the user to see duplicate/garbled output (partial stream text + full fallback text).",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.58
+    },
+    {
+      "round": 10,
+      "file": "qanot/telegram.py",
+      "hypothesis": "The _user_locks and _pending_messages dicts grow unboundedly — every unique conversation key (user_id or group chat_id) that ever messages the bot gets an entry that is never cleaned up. The _user_locks dict is particularly problematic because asyncio.Lock objects are never removed. For bots in many group chats or serving many users over time, this is a memory leak. Fix by cleaning up the lock entry when the lock is released and no more pending messages exist for that key.",
+      "category": "memory",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.45
+    },
+    {
+      "round": 11,
+      "file": "qanot/context.py",
+      "hypothesis": "extract_compaction_text uses fixed keep_recent=4 while compact_messages uses min(4, len(messages)//2), causing the summary to cover different messages than what actually gets removed. This means the LLM summarizes wrong messages — some removed messages are missed from the summary, losing context permanently.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 12,
+      "file": "qanot/memory.py",
+      "hypothesis": "Dedup substring check causes false positives: short details like 'Ali' match unrelated words like 'specialist' anywhere in MEMORY.md, silently dropping legitimate new facts (data loss). Also existing.lower() is recomputed per entry. Fix by comparing against individual lines instead of the whole file blob.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 16,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "Anthropic's input_tokens includes all input tokens (cached + non-cached). The cost calculation charges cached tokens twice: once at full input rate (as part of inp) and again at the cache rate. Fix by subtracting cache tokens from input_tokens before applying the input price.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 17,
+      "file": "qanot/agent.py",
+      "hypothesis": "When streaming detects a tool loop, it yields a done event and returns, but never appends the loop message to conversation history. This leaves messages ending with a user tool_result and no assistant response, which corrupts the conversation for the next turn (orphaned tool_result, wrong alternation). The non-streaming path correctly appends to messages before breaking.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.79
+    },
+    {
+      "round": 18,
+      "file": "qanot/telegram.py",
+      "hypothesis": "Race condition: after releasing the async lock, another coroutine may have already acquired a reference to the same lock object via setdefault. Popping it from _user_locks means a subsequent coroutine creates a NEW lock, breaking mutual exclusion — two agent turns run concurrently for the same conversation, corrupting history. Remove the unsafe cleanup.",
+      "category": "concurrency",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 20,
+      "file": "qanot/memory.py",
+      "hypothesis": "When needs_rewrite is True (no existing file or missing section header), the function writes the entire file content. Two concurrent calls can both see needs_rewrite=True, and the second write obliterates the first's entries. Fix by always appending the section header as part of the append operation using a single open, eliminating the rewrite path entirely.",
+      "category": "concurrency",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 22,
+      "file": "qanot/compaction.py",
+      "hypothesis": "In prune_history_for_context, when _repair_orphaned_tool_results removes messages but the count happens to equal expected_len (e.g., repair removes a tool_result block from a message's content list but doesn't remove the message itself), kept_tokens uses subtraction instead of re-estimation. But the subtraction is also wrong in a different way: after repair removes orphaned tool_results, the actual token count of remaining messages decreases, but kept_tokens only subtracts dropped_tokens. This can cause kept_tokens to overestimate, leading to unnecessary extra pruning rounds that drop more conversation history than needed. Fix by always re-estimating kept_tokens after repair, which is cheap.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.57
+    },
+    {
+      "round": 24,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "Anthropic API reports input_tokens as non-cached input count, with cache_read and cache_creation reported separately. Subtracting cache tokens from input_tokens double-subtracts, causing significant cost underreporting. For a request with input_tokens=1000, cache_read=800, cache_creation=0, the code charges for max(0,1000-800)=200 tokens at input rate instead of the correct 1000, underreporting cost by 80%.",
+      "category": "logic",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.59
+    }
+  ]
+}

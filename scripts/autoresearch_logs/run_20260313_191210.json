@@ -1,0 +1,85 @@
+{
+  "timestamp": "20260313_191210",
+  "rounds": 10,
+  "focus": "reliability",
+  "kept": 8,
+  "failed": 0,
+  "skipped": 2,
+  "duration_seconds": 114.2,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_191210_reliability",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "In _call_provider_with_retry, if max_retries is 0 and the call fails with a non-permanent, non-transient error, last_error could theoretically be None when re-raised (though unlikely in practice). More critically, if the loop completes all retries without raising, the final 'raise last_error' could raise None. Adding a defensive check ensures a clear error is always raised.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.71
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "The _handle_message method does not handle voice messages or photos that lack text/caption - it silently drops them after stripping empty text. Additionally, the _typing_loop catches all exceptions with a bare pass, which could silently swallow unexpected errors. More importantly, _handle_message imports 're' inside the function on every message - this should be a top-level import. But the most impactful robustness fix: _send_response splits long text by hard character boundaries which can break HTML entities and multi-byte characters mid-sequence, potentially causing send failures. A safer approach is to use the existing _send_chunk with proper error handling per chunk and add a defensive check for empty chunks.",
+      "category": "robustness",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.7
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "The _rotate_backups function removes old backup directories using shutil.rmtree, but if a non-directory entry (e.g., a stray file) exists in the backups_root, it is silently excluded from the directory listing but still counts toward disk usage. More critically, the backup_workspace function doesn't handle the case where the backup_dir already exists with content from a previous failed attempt in the same second — while `exist_ok=True` handles the mkdir, leftover files could contaminate the new backup. Additionally, if shutil.copytree is called with a destination that already has files, `dirs_exist_ok=True` silently merges. But the most impactful robustness issue: the `_rotate_backups` function filters only directories with `d.is_dir()`, but symlinks pointing to directories would pass `is_dir()` and `shutil.rmtree` follows symlinks, potentially deleting data outside the backups directory. Using `d.is_dir() and not d.is_symlink()` prevents this.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "The _validate_api_key function embeds the Gemini API key directly in the URL query string. If the URL is logged or leaked, the key is exposed. More critically from an error-handling perspective, the function catches a broad Exception but doesn't distinguish network timeouts from actual auth failures - a timeout would incorrectly report the key as invalid. Additionally, the function returns False on any unexpected exception, which could mislead users into thinking their valid key is broken when it's just a transient network issue. Adding specific timeout handling and clearer feedback improves robustness.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.91
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "The prune_history_for_context function can enter an infinite loop if split_messages_by_token_share returns multiple chunks but dropping the first chunk doesn't reduce kept_tokens (e.g., due to estimation rounding or repair adding back messages). Adding a progress check ensures the loop terminates if no tokens were actually dropped in an iteration.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.82
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "The load_config function doesn't validate that required fields like 'name' in PluginConfig dicts or 'id' in AgentDefinition dicts actually exist, which would cause confusing KeyError exceptions. Additionally, the _dict_to_dataclass helper silently drops unknown fields and doesn't raise on missing required fields (those without defaults), which could lead to TypeError on construction with an unhelpful message. Adding defensive validation with clear error messages improves robustness.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.5
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "The recover_from_compaction method reads files with path.read_text() but doesn't handle potential I/O errors (permission denied, encoding errors, corrupted files). If any recovery file is corrupted or has encoding issues, the entire recovery fails with an unhandled exception. Adding defensive error handling per-file ensures partial recovery succeeds even if one file is unreadable.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.62
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "The fetch_link_previews function catches exceptions from asyncio.gather via return_exceptions=True, but when checking results it only checks for Exception instances. BaseException subclasses like KeyboardInterrupt or SystemExit would slip through and be treated as valid LinkPreview dicts, causing a crash when accessing dict keys. Additionally, the per_url_chars calculation can raise ZeroDivisionError if all URLs are filtered out between the empty check and the division (though unlikely due to the guard). More importantly, if resp.content_type is None and resp.headers lack Content-Type entirely, the 'html' / 'text' check on content_type will fail to match legitimate pages. The most impactful robustness fix: the HTTP response status code is never checked — a 404, 500, or other error page would be processed as valid content, wasting resources and injecting error page text as 'link context' into the conversation.",
+      "category": "robustness",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.91
+    }
+  ]
+}

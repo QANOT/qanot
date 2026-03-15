@@ -1,0 +1,85 @@
+{
+  "timestamp": "20260313_190933",
+  "rounds": 10,
+  "focus": "security",
+  "kept": 7,
+  "failed": 1,
+  "skipped": 2,
+  "duration_seconds": 114.5,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_190933_security",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "The ToolRegistry.execute method passes user-supplied tool input_data directly to handlers. The error handler uses str(e) which could leak sensitive internal details (file paths, stack traces, credentials in environment) back to the LLM and potentially to the user. Sanitizing the error message prevents information disclosure.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "The _handle_message method strips @bot_username from text but only handles the exact case and uppercase variants, missing mixed-case mentions. More importantly, the text is used unsanitized as input to agent.run_turn. Additionally, the _is_mentioned method constructs a bot mention check that could be bypassed. The key security issue is that strip of @username is case-sensitive (only exact and ALL CAPS), so a mixed-case @BotUsername would remain in the text sent to the agent. Using case-insensitive replacement fixes this.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "The _find_config_path function follows QANOT_CONFIG env var and parent directory paths without validating they are within expected boundaries. A malicious QANOT_CONFIG value could cause the backup system to copy arbitrary files (e.g., /etc/shadow) into the backup directory, which may later be accessible. Adding path traversal validation ensures we only back up config files from reasonable locations and prevents directory traversal attacks via the environment variable.",
+      "category": "security",
+      "kept": false,
+      "reason": "1 tests failed",
+      "test_output": "# Non-fatal\n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_backup.py::TestFindConfigPath::test_from_env - AssertionErr...\n============= 1 failed, 665 passed, 45 skipped, 1 warning in 1.60s =============\n"
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "The _validate_bot_token and _validate_api_key functions pass user-supplied tokens/keys directly into URLs without any sanitization. A malicious bot token containing newlines or special characters could enable HTTP header injection or SSRF via crafted URL paths. Adding input validation to reject tokens with dangerous characters prevents these injection vectors.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 7,
+      "file": "qanot/compaction.py",
+      "hypothesis": "The messages_to_text function truncates individual message text to 1000 chars but does not sanitize or limit the total assembled text before it's passed to _generate_summary. While _generate_summary caps the prompt at 48K chars, the messages_to_text function itself can produce unbounded output that could be used to craft injection attacks via tool results or content blocks. Additionally, tool_result content in messages_to_text truncates at 200 chars but doesn't strip potential prompt injection markers. Adding sanitization to strip common prompt injection patterns (like fake system messages or role markers embedded in content) improves security.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 8,
+      "file": "qanot/config.py",
+      "hypothesis": "The load_config function reads and parses a JSON config file but does not validate sensitive fields like bot_token, api_key, webhook_url, etc. for dangerous characters (newlines, null bytes, control characters). These values are later used in HTTP requests, file paths, and Telegram API calls. Adding input sanitization for string fields prevents injection attacks via malicious config values (e.g., CRLF injection in tokens/URLs, null byte injection in paths).",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.62
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "The append_to_buffer method writes user messages directly to a file without any sanitization. A malicious user could inject markdown headers, fake timestamps, or misleading agent summaries into the working buffer file, potentially confusing the agent during compaction recovery. Sanitizing the human_msg input prevents injection of fake structural elements (headers, horizontal rules, fake agent summaries) into the working buffer.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.72
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "The _URL_PATTERN regex is too permissive and can match URLs containing characters that could be used for injection or SSRF via encoded payloads. Additionally, extract_urls does not validate extracted URLs against SSRF rules early, allowing potentially malicious URLs (e.g., with encoded internal IPs, null bytes, or control characters) to propagate through the system. Adding early sanitization in extract_urls to reject URLs with control characters, null bytes, and excessively long URLs prevents injection attacks and resource abuse.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.64
+    }
+  ]
+}

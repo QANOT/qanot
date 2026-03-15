@@ -1,0 +1,328 @@
+{
+  "timestamp": "20260313_211036",
+  "rounds": 50,
+  "focus": "all",
+  "kept": 35,
+  "failed": 0,
+  "skipped": 15,
+  "duration_seconds": 630.6,
+  "baseline_tests": 666,
+  "branch": "autoresearch/20260313_211036_all",
+  "experiments": [
+    {
+      "round": 3,
+      "file": "qanot/agent.py",
+      "hypothesis": "The `execute` method in `ToolRegistry` imports `re` on every exception, which is wasteful. More importantly, the tool `name` parameter passed to `execute` is not validated against injection — a malicious or malformed tool name could bypass the registry lookup. While `get` returns None for unknown names, we should also validate that `input_data` is actually a dict to prevent type confusion attacks where a crafted non-dict input could cause unexpected behavior in handlers or schema validation.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.61
+    },
+    {
+      "round": 4,
+      "file": "qanot/agent_bot.py",
+      "hypothesis": "The _handle_message method lacks protection against concurrent message processing for the same user, and more critically, _handle_start and _handle_reset don't guard against missing message.text (e.g., if aiogram routes a message where text is None due to edge cases). But the most impactful robustness fix is in _ensure_agent: if _create_agent_provider or _build_tool_registry raises, self._agent remains None but partial state may leak. Also, the stop() method calls stop_polling() which may raise if polling wasn't started, and bot.session.close() is called twice (in both start's finally and stop). Let's fix stop() to be idempotent and handle the case where polling wasn't started.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.66
+    },
+    {
+      "round": 5,
+      "file": "qanot/backup.py",
+      "hypothesis": "The _rotate_backups function only filters by is_dir() and not is_symlink(), but doesn't validate that directory names actually match the expected timestamp format. Non-backup directories (e.g., created manually or by other tools) inside the backups/ folder could be incorrectly counted toward the MAX_BACKUPS limit or even deleted during rotation. Adding a regex check on the directory name ensures only timestamp-formatted backup directories are considered for rotation.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 6,
+      "file": "qanot/cli.py",
+      "hypothesis": "The cmd_backup function has duplicated logic for resolving directory paths from config. Extracting the backup_dirs_spec list comprehension to be clearer and also simplifying the main() dispatch using a command dictionary instead of a long if/elif chain improves readability and DRY.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.77
+    },
+    {
+      "round": 9,
+      "file": "qanot/context.py",
+      "hypothesis": "The append_to_buffer method opens the file for appending but doesn't handle OSError (e.g., disk full, permission denied), which would cause an unhandled exception and potentially crash the agent mid-conversation. Adding error handling ensures robustness when the filesystem is unavailable or the buffer file becomes inaccessible.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.03
+    },
+    {
+      "round": 10,
+      "file": "qanot/links.py",
+      "hypothesis": "The extract_urls function doesn't handle empty or whitespace-only input strings, and _should_skip_url doesn't handle URLs with only a scheme (e.g., 'http://'). More importantly, the fetch_link_previews function passes max_urls and max_total_chars parameters but doesn't validate them — if max_urls is 0 or negative, it leads to a ZeroDivisionError at `per_url_chars = max_total_chars // len(urls)` when urls list is non-empty but gets sliced to empty. Also, if max_urls is passed as 0, urls[:0] yields empty list and we return early, but a negative max_urls would still give a non-empty slice. Adding input validation prevents this edge case crash.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 11,
+      "file": "qanot/main.py",
+      "hypothesis": "The `register_rag_tools` import is duplicated — once at the top of the RAG initialization block and again inside the `if rag_engine is not None` block later. The first import is unused since `register_rag_tools` is only called in the second block. Removing the redundant import improves code clarity and avoids confusion about where RAG tools are actually registered.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.47
+    },
+    {
+      "round": 14,
+      "file": "qanot/plugins/base.py",
+      "hypothesis": "The validate_tool_params function doesn't handle the case where `params` is not a dict or `schema` is not a dict, which could cause AttributeError crashes. Also, `_check_type` incorrectly validates booleans as integers since `isinstance(True, int)` is True in Python. Adding defensive type checks and fixing the bool/int ambiguity improves robustness.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.63
+    },
+    {
+      "round": 15,
+      "file": "qanot/plugins/loader.py",
+      "hypothesis": "The _deploy_plugin_files function accesses plugin.soul_append.strip().splitlines()[0] without checking if splitlines() returns a non-empty list. If soul_append is entirely whitespace (e.g., '   \\n\\n'), strip() returns '' and splitlines() returns [], causing an IndexError. Adding a guard prevents this edge case crash.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 18,
+      "file": "qanot/providers/anthropic.py",
+      "hypothesis": "The _calc_cost method can produce negative costs if cache_read + cache_write tokens exceed total input tokens (e.g., due to API reporting inconsistencies). The expression `(inp - cr - cw)` could go negative, leading to an incorrect negative cost. Using max(0, ...) prevents this and ensures cost is never negative.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.67
+    },
+    {
+      "round": 19,
+      "file": "qanot/providers/base.py",
+      "hypothesis": "The Usage and ToolCall dataclasses accept any values without validation. Negative token counts or negative cost would indicate corrupted data and could cause downstream accounting errors. Adding __post_init__ validation to Usage ensures all token counts and cost are non-negative, and ToolCall validates that id and name are non-empty strings and input is a dict, preventing type confusion issues from malformed provider responses.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.79
+    },
+    {
+      "round": 20,
+      "file": "qanot/providers/errors.py",
+      "hypothesis": "The classify_error function doesn't handle non-Exception inputs gracefully (e.g., if someone passes None or a non-Exception object), and more importantly, when status is 0 or a falsy non-None value (like 0), the `if status and status in _STATUS_MAP` check silently skips it. However, the most impactful improvement is that classify_error doesn't handle the case where the error has a nested/wrapped exception (common with httpx, aiohttp, etc.) that contains the actual status code. Also, is_context_overflow_error redundantly calls .lower() when the message from classify_error is already lowered. But the clearest bug is: if `status` is an integer `0`, `if status and ...` evaluates to False, which is correct. But if `status` is a string like '429' (some libraries return string status), the `in _STATUS_MAP` check fails since the keys are ints. Adding int coercion for status makes the function more robust against different provider library behaviors.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 22,
+      "file": "qanot/providers/gemini.py",
+      "hypothesis": "The _calc_cost method performs a dictionary lookup via GEMINI_PRICING.get() on every call, which involves hashing and comparison. By caching the pricing tuple for the model on first use, we avoid repeated dict lookups and dict value accesses on each cost calculation. Additionally, the fallback default dict allocation {'input': 0.15, 'output': 0.60} creates a new dict object on every call when the model isn't found. Pre-computing and caching the pricing pair eliminates both the repeated lookup and the transient allocation.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.1
+    },
+    {
+      "round": 23,
+      "file": "qanot/providers/groq.py",
+      "hypothesis": "The GroqProvider.__init__ does not validate or sanitize the api_key and base_url parameters. An empty api_key would lead to confusing downstream errors, and a base_url that doesn't start with https:// could be a security risk (e.g., sending the API key over plain HTTP or to an attacker-controlled endpoint). Adding input validation prevents credential leakage via non-HTTPS endpoints and provides clear error messages for misconfiguration.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 2.12
+    },
+    {
+      "round": 24,
+      "file": "qanot/providers/openai.py",
+      "hypothesis": "The chat() method accesses response.choices[0] without checking if choices is non-empty. If the API returns an empty choices list (e.g., due to content filtering, rate limiting edge cases, or unexpected API behavior), this causes an IndexError crash. Adding a guard with a clear error message improves robustness.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.85
+    },
+    {
+      "round": 26,
+      "file": "qanot/rag/chunker.py",
+      "hypothesis": "The BM25Index stores five parallel lists (_docs, _doc_ids, _doc_freqs, _doc_lens) that must be kept in sync, which is fragile and hard to read. Replacing them with a single list of named tuples improves readability, reduces the chance of index misalignment bugs, and simplifies iteration in search(). However, that would be a large refactor. A more focused improvement: _recompute_stats rebuilds the entire IDF dictionary from scratch every time add() is called, even for incremental additions. Also, there's no duplicate doc_id detection — adding the same document twice silently creates duplicates. But the simplest high-value DRY/quality improvement is extracting the repeated pattern of iterating parallel lists into cleaner code using enumerate + zip. Actually, the most impactful small change: the `search` method iterates over all documents even when scores are zero, and uses `zip(self._doc_ids, self._doc_freqs)` while separately indexing `self._doc_lens[i]`. This can be simplified by zipping all three together, eliminating the separate index variable and making the code more readable and less error-prone.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.72
+    },
+    {
+      "round": 27,
+      "file": "qanot/rag/embedder.py",
+      "hypothesis": "The embed() methods in both GeminiEmbedder and OpenAIEmbedder create a new list comprehension `[d.embedding for d in response.data]` for each batch, then extend into all_embeddings. When texts list is empty, the method still initializes an empty list and returns it after a no-op loop. More importantly, the response.data embeddings may not be in the same order as the input (the API returns objects with an `index` field). Sorting by index ensures correctness. Also, pre-allocating the result list and using slicing instead of extend avoids repeated list growth reallocations for large inputs.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.69
+    },
+    {
+      "round": 28,
+      "file": "qanot/rag/engine.py",
+      "hypothesis": "The `ingest` method does not validate or sanitize the `source` and `user_id` parameters, which are passed directly into SQL queries in the store layer. Additionally, `metadata` values are passed through without validation. While SqliteVecStore likely uses parameterized queries, validating inputs at the engine boundary provides defense-in-depth against injection. The `query` method also accepts `source` and `user_id` without validation. Adding input sanitization (length limits and type checks) prevents excessively large inputs that could cause memory issues or unexpected behavior, and ensures type safety before data reaches the storage layer.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 30,
+      "file": "qanot/rag/store.py",
+      "hypothesis": "The add() method does not validate that each embedding has the correct number of dimensions matching self.dimensions. If a caller passes embeddings with mismatched dimensions, this would cause silent data corruption in the vector index (wrong bytes stored) or cryptic errors during search. Adding a dimension check at ingestion time provides a clear, early error message and prevents corrupted vector data.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.77
+    },
+    {
+      "round": 31,
+      "file": "qanot/routing.py",
+      "hypothesis": "The _assess_context method has duplicated logic for checking tool-related blocks in assistant content and in the last-6 messages loop. The inner loop over messages[-6:] checks for both role=='tool' and content blocks with type=='tool_result', but doesn't break out of the outer loop after finding a match in the content blocks, leading to potential double-counting. Additionally, the method mixes multiple concerns in a long function. The most concrete bug: when checking content blocks in the last-6 messages loop for 'tool_result', the inner `break` only exits the inner for-loop, but the outer loop continues checking more messages. This means score += 0.5 could be added multiple times (once per message with tool_result blocks), despite the apparent intent to add it only once. Fixing this with a flag or restructuring prevents over-counting.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.85
+    },
+    {
+      "round": 32,
+      "file": "qanot/scheduler.py",
+      "hypothesis": "The _ensure_builtin_jobs method uses linear scans with `any()` over the jobs list for each builtin job check. By extracting the set of job names once, we avoid iterating the list twice and reduce allocations from generator expressions. This is a small performance improvement that also makes the code slightly cleaner.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 33,
+      "file": "qanot/session.py",
+      "hypothesis": "The _read_user_messages method reads JSONL files and parses arbitrary JSON from disk without any validation of the entry structure. A maliciously crafted or corrupted session file could inject unexpected data types (e.g., non-dict entries, extremely large strings) that propagate into restore_history and eventually into API calls. Adding type validation on parsed entries and size limits on content fields provides defense-in-depth against injection via tampered session files.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.59
+    },
+    {
+      "round": 34,
+      "file": "qanot/telegram.py",
+      "hypothesis": "The _respond_stream method lacks a try/finally around the async for loop, so if an exception occurs during streaming (e.g., network error, agent crash), the typing_task is cancelled but no error message is sent to the user and the final message is never delivered. Additionally, the 'finally' block only cancels typing_task but if the agent.run_turn_stream raises before yielding any events, accumulated stays empty and '(No response)' is sent without context. More critically, the _respond_partial method does not wrap the async for loop in try/finally, so if an exception occurs mid-stream, typing_task is never cancelled, leaking the background task indefinitely.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.58
+    },
+    {
+      "round": 36,
+      "file": "qanot/tools/agent_manager.py",
+      "hypothesis": "The _save_agents_to_config function has repetitive if-checks for each optional field of AgentDefinition when building agent_dict. This violates DRY and is error-prone when new fields are added. Replacing with a data-driven approach that iterates over optional fields with their defaults simplifies the code significantly.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.83
+    },
+    {
+      "round": 37,
+      "file": "qanot/tools/builtin.py",
+      "hypothesis": "The _DANGEROUS_PATTERNS list has many nearly-duplicate regex pairs that only differ in the order of 'r' and 'f' flags (e.g., -rf vs -fr). These can be consolidated using a single pattern with alternation, reducing the list size, cutting the number of regex compilations in half for those entries, and making the code easier to maintain.",
+      "category": "performance",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.7
+    },
+    {
+      "round": 38,
+      "file": "qanot/tools/cron.py",
+      "hypothesis": "The cron_update handler does not validate the 'mode' and 'schedule' fields, allowing arbitrary values to be written to the jobs file. Similarly, 'enabled' is not type-checked, so a string or object could be injected. Adding input validation (mode whitelist, schedule/prompt length limits, enabled type check) hardens against injection and data corruption via malicious tool parameters.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.59
+    },
+    {
+      "round": 39,
+      "file": "qanot/tools/delegate.py",
+      "hypothesis": "The set_monitor_group handler does not validate or sanitize the group_id parameter. It accepts any value and casts it with int(), which could raise ValueError for non-numeric strings. It also writes directly to config.json without validating the group_id is a reasonable Telegram group ID (should be a negative integer for groups). Additionally, the config file read/write has no error handling for malformed JSON or write failures, which could corrupt the config file. Adding input validation and proper error handling prevents crashes and config corruption.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.45
+    },
+    {
+      "round": 40,
+      "file": "qanot/tools/doctor.py",
+      "hypothesis": "The _check_context function has a logic bug in the status assignment: it checks `pct > 80` first (sets 'warning'), then checks `pct > 95` (sets 'error'). But if pct is 96, the first condition `pct > 80` is True so status becomes 'warning' and the elif for `pct > 95` is never reached. The conditions should be checked in reverse order (higher threshold first) so that 'error' is correctly assigned for pct > 95.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.42
+    },
+    {
+      "round": 41,
+      "file": "qanot/tools/image.py",
+      "hypothesis": "The generate_image and edit_image handlers share a large amount of duplicated code: model validation, response extraction, save-and-queue, error handling, and JSON result formatting. Extracting the common model validation and result-building logic into helper functions reduces duplication and improves maintainability.",
+      "category": "quality",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.72
+    },
+    {
+      "round": 42,
+      "file": "qanot/tools/jobs_io.py",
+      "hypothesis": "save_jobs performs a non-atomic write: if the process crashes or is interrupted mid-write, the jobs.json file can be left truncated or corrupted. Using atomic write (write to a temp file then rename) prevents data loss. This is a reliability improvement for a file that stores scheduled job state.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.65
+    },
+    {
+      "round": 43,
+      "file": "qanot/tools/rag.py",
+      "hypothesis": "The _resolve_path function does not validate against path traversal attacks. A malicious agent parameter like '../../etc/passwd' or an absolute path outside the workspace could allow reading arbitrary files on the system. Adding a check that the resolved path stays within the workspace directory prevents directory traversal and unauthorized file access.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 4.45
+    },
+    {
+      "round": 44,
+      "file": "qanot/tools/subagent.py",
+      "hypothesis": "The send_callback in _run_sub_agent's except/timeout blocks can itself raise an exception, which would prevent the finally block's cleanup from executing properly if the exception propagates. Additionally, the task description included in error messages is not truncated, potentially allowing very long task strings to create oversized messages. Wrapping send_callback calls in try/except and truncating task descriptions in error messages improves robustness.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.68
+    },
+    {
+      "round": 45,
+      "file": "qanot/tools/web.py",
+      "hypothesis": "The _validate_url function performs synchronous DNS resolution (socket.getaddrinfo) which blocks the event loop. In an async context like a Telegram bot, this can cause noticeable stalls, especially with slow DNS servers or many concurrent requests. Wrapping it in asyncio's run_in_executor would require changing the function signature. Instead, a simpler improvement: the function also doesn't validate that the URL port isn't pointing to common internal services (e.g., port 6379 for Redis, 3306 for MySQL, etc.) which is a significant SSRF attack vector. Adding port validation blocks access to common internal service ports.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.77
+    },
+    {
+      "round": 47,
+      "file": "qanot/utils.py",
+      "hypothesis": "The truncate_with_marker function computes len(text) on every call, even for short strings. More importantly, when head + tail >= len(text) due to rounding (e.g., max_chars is just slightly less than len(text)), the tail slice text[-tail:] can overlap with the head slice, or 'removed' can be zero/negative, producing a misleading marker. Adding a guard ensures we only truncate when there's actually content to remove, and caching len(text) avoids redundant computation.",
+      "category": "reliability",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.74
+    },
+    {
+      "round": 48,
+      "file": "qanot/voice.py",
+      "hypothesis": "The muxlisa_transcribe and kotib_transcribe functions use open(audio_path, 'rb') directly inside FormData.add_field without closing the file handle. This leaks file descriptors, especially problematic in long-running bot processes. Additionally, the audio_path is not validated, allowing potential path traversal. Using a context manager ensures proper file cleanup, and adding path validation prevents reading arbitrary files outside expected directories.",
+      "category": "security",
+      "kept": true,
+      "tests_passed": 666,
+      "duration": 1.71
+    }
+  ]
+}
