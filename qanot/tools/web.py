@@ -88,20 +88,6 @@ def _validate_url(url: str) -> str | None:
 
     # Block common internal service ports
     port = parsed.port
-    _BLOCKED_PORTS = frozenset({
-        6379, 6380,  # Redis
-        3306, 3307,  # MySQL
-        5432,        # PostgreSQL
-        27017,       # MongoDB
-        9200, 9300,  # Elasticsearch
-        11211,       # Memcached
-        2379, 2380,  # etcd
-        5672, 15672, # RabbitMQ
-        8500,        # Consul
-        8888,        # common dev servers
-        25, 587,     # SMTP
-        22,          # SSH
-    })
     if port is not None and port in _BLOCKED_PORTS:
         return f"URL blocked: port {port} is not allowed"
 
