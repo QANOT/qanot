@@ -154,7 +154,7 @@ def _append_to_memory(
 
     new_lines: list[str] = []
     existing_lines = [line.lower().strip() for line in existing.splitlines() if line.strip()]
-    uid_tag = f" [user:{user_id}]" if user_id else ""
+    uid_tag = _uid_tag(user_id)
     for entry in entries:
         # Dedup: skip if a sufficiently similar line already exists
         detail_lower = entry.detail[:80].lower()
