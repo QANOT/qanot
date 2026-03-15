@@ -245,7 +245,6 @@ def daemon_uninstall(config_path: Path) -> tuple[bool, str]:
 
     elif plat == "macos":
         plist_path = _launchd_plist_path(name)
-        label = f"com.{name}"
         subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
         if plist_path.exists():
             plist_path.unlink()
