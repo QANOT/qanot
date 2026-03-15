@@ -38,19 +38,14 @@ def init_workspace(workspace_dir: str) -> None:
                     shutil.copy2(src, dst)
                     logger.info("Copied template: %s", rel)
 
-    # Copy SOUL.md from souls template if not present
-    soul_dst = ws / "SOUL.md"
-    soul_src = TEMPLATE_DIR / "souls" / "universal.md"
-    if not soul_dst.exists() and soul_src.exists():
-        shutil.copy2(soul_src, soul_dst)
-        logger.info("Copied SOUL.md template")
-
-    # Copy SKILL.md from skill template if not present
-    skill_src = TEMPLATE_DIR / "skills" / "proactive-agent" / "SKILL.md"
-    skill_dst = ws / "SKILL.md"
-    if not skill_dst.exists() and skill_src.exists():
-        shutil.copy2(skill_src, skill_dst)
-        logger.info("Copied SKILL.md template")
+    _single_files = [
+        (TEMPLATE_DIR / "souls" / "universal.md", ws / "SOUL.md", "SOUL.md"),
+        (TEMPLATE_DIR / "skills" / "proactive-agent" / "SKILL.md", ws / "SKILL.md", "SKILL.md"),
+    ]
+    for src, dst, label in _single_files:
+        if not dst.exists() and src.exists():
+            shutil.copy2(src, dst)
+            logger.info("Copied %s template", label)
 
     logger.info("Workspace initialized at %s", workspace_dir)
 
