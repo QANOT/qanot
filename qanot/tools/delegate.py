@@ -401,16 +401,16 @@ def _get_session_history(
 def _get_active_sessions(user_id: str) -> list[dict]:
     """List all agent sessions with metadata for a user."""
     sessions = _agent_sessions.get(user_id, {})
-    result = []
-    for agent_id, history in sessions.items():
-        if not history:
-            continue
-        result.append({
+    result = [
+        {
             "agent_id": agent_id,
             "message_count": len(history),
             "last_active": history[-1]["timestamp"],
             "last_message_preview": history[-1]["content"][:100],
-        })
+        }
+        for agent_id, history in sessions.items()
+        if history
+    ]
     # Sort by last_active descending
     result.sort(key=lambda x: x["last_active"], reverse=True)
     return result
