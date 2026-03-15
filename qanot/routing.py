@@ -74,8 +74,7 @@ def classify_complexity(message: str) -> float:
         score += 0.4
 
     # Word count factor
-    words = text.split()
-    word_count = len(words)
+    word_count = len(text.split())
     if word_count > 30:
         score += 0.2
     elif word_count > 15:
