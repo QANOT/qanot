@@ -966,8 +966,8 @@ def cmd_doctor(args: list[str]) -> None:
 
     heartbeat_md = ws_dir / "HEARTBEAT.md"
     if heartbeat_md.exists():
-        lines = [l for l in heartbeat_md.read_text(encoding="utf-8").splitlines()
-                 if l.strip() and not l.strip().startswith("#")]
+        lines = [s for l in heartbeat_md.read_text(encoding="utf-8").splitlines()
+                 if (s := l.strip()) and not s.startswith("#")]
         if lines:
             _ok(f"HEARTBEAT.md has {len(lines)} check items")
         else:
