@@ -51,9 +51,9 @@ VERSION=$("$QANOT_HOME/venv/bin/python" -c "from qanot import __version__; print
 
 # Create wrapper script
 mkdir -p "$QANOT_HOME/bin"
-cat > "$QANOT_HOME/bin/qanot" << 'WRAPPER'
+cat > "$QANOT_HOME/bin/qanot" << WRAPPER
 #!/usr/bin/env bash
-exec "$HOME/.qanot/venv/bin/qanot" "$@"
+exec "$QANOT_HOME/venv/bin/qanot" "\$@"
 WRAPPER
 chmod +x "$QANOT_HOME/bin/qanot"
 
@@ -81,9 +81,18 @@ else
 fi
 echo -e "  ${GREEN}✓${NC} CLI ready"
 
+# Check for Ollama
+OLLAMA_MSG=""
+if command -v ollama &>/dev/null; then
+    OLLAMA_MSG="  ${GREEN}✓${NC} Ollama detected — local AI available"
+fi
+
 # Done
 echo ""
 echo -e "  ${GREEN}${BOLD}Qanot AI v${VERSION} installed!${NC}"
+if [ -n "$OLLAMA_MSG" ]; then
+    echo -e "$OLLAMA_MSG"
+fi
 echo ""
 if [ "$ADDED_PATH" = true ]; then
     echo -e "  Run: ${CYAN}source ${SHELL_RC}${NC}  ${DIM}(one time only)${NC}"
