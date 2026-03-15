@@ -31,8 +31,7 @@ class ToolCall:
 
     def __post_init__(self) -> None:
         for attr in ('id', 'name'):
-            val = getattr(self, attr)
-            if not isinstance(val, str) or not val:
+            if not isinstance(val := getattr(self, attr), str) or not val:
                 raise ValueError(f"ToolCall.{attr} must be a non-empty string, got {val!r}")
         if not isinstance(self.input, dict):
             raise TypeError(f"ToolCall.input must be a dict, got {type(self.input).__name__}")
