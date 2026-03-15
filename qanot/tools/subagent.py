@@ -32,9 +32,8 @@ def _get_active_count(user_id: str) -> int:
     """Get number of active sub-agent tasks for a user."""
     tasks = _active_tasks.get(user_id, {})
     # Clean up completed tasks
-    done = [tid for tid, t in tasks.items() if t.done()]
-    for tid in done:
-        tasks.pop(tid, None)
+    for tid in [tid for tid, t in tasks.items() if t.done()]:
+        tasks.pop(tid)
     return len(tasks)
 
 
