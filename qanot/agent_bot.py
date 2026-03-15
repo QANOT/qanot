@@ -168,7 +168,6 @@ class AgentBot:
         # Strip @bot_username from the text (case-insensitive)
         username = await self._resolve_bot_username()
         if username:
-            import re
             text = re.sub(rf"@{re.escape(username)}", "", text, flags=re.IGNORECASE).strip()
 
         if not text.strip():
