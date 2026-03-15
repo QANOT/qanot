@@ -228,7 +228,7 @@ def split_messages_by_token_share(
         total_tokens = _precomputed_total
     else:
         total_tokens = 0
-        for i, msg in enumerate(messages):
+        for msg in messages:
             t = estimate_message_tokens(msg)
             msg_token_cache[id(msg)] = t
             total_tokens += t
