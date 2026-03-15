@@ -159,6 +159,7 @@ class BM25Index:
 
         scores: list[tuple[str, float]] = []
 
+        k1_plus_1 = self.k1 + 1
         for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
 
@@ -167,7 +168,7 @@ class BM25Index:
                     continue
                 tf = freq[token]
                 idf = self._idf.get(token, 0.0)
-                numerator = tf * (self.k1 + 1)
+                numerator = tf * k1_plus_1
                 denominator = tf + self.k1 * (1 - self.b + self.b * dl / self._avg_dl)
                 score += idf * numerator / denominator
 
