@@ -130,8 +130,7 @@ def wal_write(
     logger.debug("WAL wrote %d entries to SESSION-STATE.md", len(entries))
 
     # Save durable facts to MEMORY.md (names, preferences, explicit "remember" requests)
-    durable = [e for e in entries if e.category in DURABLE_CATEGORIES]
-    if durable:
+    if durable := [e for e in entries if e.category in DURABLE_CATEGORIES]:
         _append_to_memory(durable, workspace_dir, user_id)
 
     # Notify hooks with combined content
