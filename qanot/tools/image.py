@@ -21,6 +21,7 @@ SUPPORTED_MODELS = {
     "gemini-3.1-flash-image-preview",  # Nano Banana 2 (fast)
     "gemini-2.5-flash-image",          # Nano Banana (speed optimized)
 }
+_SUPPORTED_MODELS_LIST = list(SUPPORTED_MODELS)
 
 
 def _save_and_queue(
