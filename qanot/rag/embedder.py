@@ -72,6 +72,15 @@ class FastEmbedEmbedder(Embedder):
         return await asyncio.to_thread(_sync_embed)
 
 
+_EMBED_BATCH_SIZE = 100
+
+_OPENAI_MODEL_DIMS: dict[str, int] = {
+    "nomic-embed-text": 768,
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+}
+
+
 class GeminiEmbedder(Embedder):
     """Google Gemini embedding via OpenAI-compatible endpoint (free tier)."""
 
