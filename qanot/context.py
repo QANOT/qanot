@@ -220,7 +220,6 @@ class ContextTracker:
         Prevents users from injecting fake headers, agent summaries,
         or structural markers that could mislead recovery.
         """
-        import re
         # Remove markdown headers that could fake structural elements
         sanitized = re.sub(r'^#{1,6}\s', '> ', text, flags=re.MULTILINE)
         # Remove horizontal rules that could fake section breaks
