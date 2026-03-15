@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 # Cooldown period for failed providers (seconds)
 COOLDOWN_SECONDS = 120
 
+# Thinking-level downgrade ladder: when a provider keeps failing, reduce thinking cost
+_THINKING_DOWNGRADE: dict[str, str] = {
+    "high": "low",
+    "low": "off",
+}
+
 
 @dataclass
 class ProviderProfile:
