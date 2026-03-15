@@ -303,11 +303,11 @@ async def fetch_link_previews(
     # Format output
     sections: list[str] = []
     for p in previews:
-        section = f"**{p['url']}**"
+        lines = [f"**{p['url']}**"]
         if p["title"]:
-            section += f"\nTitle: {p['title']}"
-        section += f"\nPreview: {p['preview']}"
-        sections.append(section)
+            lines.append(f"Title: {p['title']}")
+        lines.append(f"Preview: {p['preview']}")
+        sections.append("\n".join(lines))
 
     return (
         "[LINK CONTEXT — auto-fetched from URLs in your message]\n\n"
