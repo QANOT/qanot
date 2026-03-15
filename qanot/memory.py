@@ -158,13 +158,11 @@ def _append_to_memory(
     for entry in entries:
         # Dedup: skip if a sufficiently similar line already exists
         detail_lower = entry.detail[:80].lower()
-        if len(detail_lower) < 10:
-            is_dup = any(
-                detail_lower in eline and len(detail_lower) >= len(eline) * 0.3
-                for eline in existing_lines
-            )
-        else:
-            is_dup = any(detail_lower in eline for eline in existing_lines)
+        is_dup = any(
+            detail_lower in eline
+            and (len(detail_lower) >= 10 or len(detail_lower) >= len(eline) * 0.3)
+            for eline in existing_lines
+        )
         if is_dup:
             logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
             continue
