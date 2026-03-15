@@ -121,16 +121,18 @@ class CronScheduler:
             save_jobs(self._jobs_path, jobs)
         return jobs
 
-    def start(self) -> None:
-        """Load jobs and start the scheduler."""
+    def _load_and_add_jobs(self) -> list[dict]:
+        """Load jobs from disk, ensure builtins, and register all enabled jobs."""
         jobs = self._load_jobs()
         jobs = self._ensure_builtin_jobs(jobs)
-
         for job in jobs:
-            if not job.get("enabled", True):
-                continue
-            self._add_job(job)
+            if job.get("enabled", True):
+                self._add_job(job)
+        return jobs
 
+    def start(self) -> None:
+        """Load jobs and start the scheduler."""
+        jobs = self._load_and_add_jobs()
         self.scheduler.start()
         logger.info("Cron scheduler started with %d jobs", len(jobs))
 
