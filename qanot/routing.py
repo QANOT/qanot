@@ -189,22 +189,21 @@ class RoutingProvider(LLMProvider):
             self.stats.routed_cheap += 1
             selected = self._cheap_model
             logger.info("Routing → %s (greeting: msg=%.2f)", selected, msg_score)
-        elif msg_score < 0.1 and ctx_score >= 0.5:
-            # Short reply in active context ("ha", "yo'q" after tool use)
-            # → stay on previous model (continuation)
-            selected = self._last_model or self._mid_model
-            self.stats.routed_primary += 1
-            logger.info("Routing → %s (continuation: msg=%.2f, ctx=%.2f)", selected, msg_score, ctx_score)
-        elif msg_score < 0.4:
-            # Moderate message → Sonnet
-            self.stats.routed_primary += 1
-            selected = self._mid_model
-            logger.info("Routing → %s (moderate: msg=%.2f)", selected, msg_score)
         else:
-            # Complex message → Opus
             self.stats.routed_primary += 1
-            selected = self._primary_model
-            logger.info("Routing → %s (complex: msg=%.2f)", selected, msg_score)
+            if msg_score < 0.1:
+                # Short reply in active context ("ha", "yo'q" after tool use)
+                # → stay on previous model (continuation)
+                selected = self._last_model or self._mid_model
+                logger.info("Routing → %s (continuation: msg=%.2f, ctx=%.2f)", selected, msg_score, ctx_score)
+            elif msg_score < 0.4:
+                # Moderate message → Sonnet
+                selected = self._mid_model
+                logger.info("Routing → %s (moderate: msg=%.2f)", selected, msg_score)
+            else:
+                # Complex message → Opus
+                selected = self._primary_model
+                logger.info("Routing → %s (complex: msg=%.2f)", selected, msg_score)
 
         self._last_model = selected
         return selected
