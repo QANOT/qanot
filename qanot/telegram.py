@@ -1283,10 +1283,8 @@ class TelegramAdapter:
             logger.warning("No allowed_users configured — proactive message dropped")
             return
 
-        if source:
-            formatted = f"#agent #{source}\n{text}"
-        else:
-            formatted = f"#agent\n{text}"
+        source_tag = f" #{source}" if source else ""
+        formatted = f"#agent{source_tag}\n{text}"
 
         owner_id = self.config.allowed_users[0]
         try:
