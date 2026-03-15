@@ -19,5 +19,6 @@ def save_jobs(jobs_path: Path, jobs: list[dict]) -> None:
     """Save jobs to JSON file (atomic write to prevent corruption)."""
     jobs_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = jobs_path.with_name(jobs_path.name + ".tmp")
-    tmp_path.write_text(json.dumps(jobs, indent=2, ensure_ascii=False), encoding="utf-8")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(jobs, f, indent=2, ensure_ascii=False)
     tmp_path.replace(jobs_path)
