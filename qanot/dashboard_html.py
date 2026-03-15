@@ -217,7 +217,10 @@ tick();setInterval(tick,1000);
 
 // Data loader
 function api(p){return fetch(p).then(function(x){return x.json()})}
+var _loading=false;
 async function load(){
+  if(_loading)return;
+  _loading=true;
   try{
     var[s,c,r,cf,t,m]=await Promise.all([
       api('/api/status'),
