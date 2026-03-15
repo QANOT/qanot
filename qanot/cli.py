@@ -1655,7 +1655,7 @@ def cmd_update(args: list[str]) -> None:
         print(_yellow("? Could not check (updating anyway)"))
 
     # Upgrade
-    print(f"  Upgrading...", end=" ", flush=True)
+    print("  Upgrading...", end=" ", flush=True)
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", "qanot"],
         capture_output=True, text=True, timeout=120,
