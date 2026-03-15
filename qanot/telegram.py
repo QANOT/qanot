@@ -399,11 +399,7 @@ class TelegramAdapter:
             else:
                 texts = [t for _, t, _, _ in batch]
                 text = "\n\n".join(texts)
-                all_images: list[dict] = []
-                for _, _, imgs, _ in batch:
-                    if imgs:
-                        all_images.extend(imgs)
-                images = all_images or None
+                images = [img for _, _, imgs, _ in batch if imgs for img in imgs] or None
                 msg = batch[-1][0]  # Use last message for reactions/chat_id
                 voice_req = any(vr for _, _, _, vr in batch)
                 logger.info(
