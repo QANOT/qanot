@@ -220,7 +220,7 @@ class RoutingProvider(LLMProvider):
         - Previous assistant response length (long response = complex topic)
         """
         # Only look at the LAST 2 messages (immediate context, not history)
-        recent = messages[-2:] if len(messages) >= 2 else messages
+        recent = messages[-2:]
         if not recent:
             return 0.0
 
