@@ -301,10 +301,5 @@ def _is_heartbeat_ok(text: str) -> bool:
     Handles variations: "HEARTBEAT_OK", "heartbeat_ok", with surrounding text.
     """
     stripped = text.strip().upper()
-    # Exact match or the only meaningful content
-    if stripped == HEARTBEAT_OK_TOKEN:
-        return True
-    # Allow minor surrounding text (e.g. "Everything is fine. HEARTBEAT_OK")
-    if HEARTBEAT_OK_TOKEN in stripped and len(stripped) < 300:
-        return True
-    return False
+    # Exact match or with minor surrounding text (e.g. "Everything is fine. HEARTBEAT_OK")
+    return HEARTBEAT_OK_TOKEN in stripped and len(stripped) < 300
