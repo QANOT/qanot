@@ -472,7 +472,8 @@ async def summarize_in_stages(
             # Try to get text from the chunk directly
             text = messages_to_text(strip_tool_result_details(splits[i]))
             if text:
-                valid_summaries.append(text[:2000] + "... [summarization failed, raw excerpt]")
+                excerpt = text if len(text) <= 2000 else text[:2000] + "..."
+                valid_summaries.append(excerpt + " [summarization failed, raw excerpt]")
         elif result:
             valid_summaries.append(result)
 
