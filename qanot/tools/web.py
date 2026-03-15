@@ -42,6 +42,20 @@ _BLOCKED_HOSTNAMES = frozenset({
     "metadata.google.internal.",
 })
 
+# Blocked ports for SSRF protection (common internal services)
+_BLOCKED_PORTS = frozenset({
+    22,    # SSH
+    25,    # SMTP
+    110,   # POP3
+    143,   # IMAP
+    3306,  # MySQL
+    5432,  # PostgreSQL
+    6379,  # Redis
+    27017, # MongoDB
+    9200,  # Elasticsearch
+    2375,  # Docker daemon
+})
+
 # Private/reserved IP networks to block
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
