@@ -29,10 +29,7 @@ def _text_similarity(a: str, b: str) -> float:
 
 def _is_redundant(text: str, seen_texts: list[str]) -> bool:
     """Check if text is too similar to any already-selected result."""
-    for seen in seen_texts:
-        if _text_similarity(text, seen) > MMR_SIMILARITY_THRESHOLD:
-            return True
-    return False
+    return any(_text_similarity(text, seen) > MMR_SIMILARITY_THRESHOLD for seen in seen_texts)
 
 
 @dataclass
