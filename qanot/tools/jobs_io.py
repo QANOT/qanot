@@ -6,12 +6,18 @@ import json
 from pathlib import Path
 
 
+# Maximum jobs file size: 10 MB (legitimate job lists are never this large)
+_MAX_JOBS_FILE_BYTES = 10 * 1024 * 1024
+
+
 def load_jobs(jobs_path: Path) -> list[dict]:
     """Load jobs from JSON file."""
     try:
+        if jobs_path.stat().st_size > _MAX_JOBS_FILE_BYTES:
+            return []
         with jobs_path.open(encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
         return []
 
 
