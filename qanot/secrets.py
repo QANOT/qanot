@@ -94,18 +94,19 @@ def _read_secret_file(path: str) -> str:
     return content
 
 
+_SECRET_FIELDS = frozenset({
+    "api_key", "bot_token", "brave_api_key",
+    "voice_api_key", "image_api_key",
+})
+
+
 def resolve_config_secrets(raw: dict) -> dict:
     """Resolve all SecretRef values in a config dict.
 
     Processes known secret fields: api_key, bot_token, brave_api_key,
-    voice_api_key, image_api_key, and provider api_keys.
+    voice_api_key, image_api_key, provider api_keys, and voice_api_keys dict.
     """
-    secret_fields = {
-        "api_key", "bot_token", "brave_api_key",
-        "voice_api_key", "image_api_key",
-    }
-
-    for field in secret_fields:
+    for field in _SECRET_FIELDS:
         if field in raw:
             try:
                 raw[field] = resolve_secret(raw[field])
