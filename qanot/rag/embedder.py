@@ -198,8 +198,7 @@ def create_embedder(config) -> Embedder | None:
             logger.warning("FastEmbed init failed: %s — trying next", e)
 
     # Priority 1: Gemini (free embedding tier)
-    if "gemini" in providers:
-        info = providers["gemini"]
+    if info := providers.get("gemini"):
         if info.get("api_key"):
             try:
                 embedder = GeminiEmbedder(
@@ -215,8 +214,7 @@ def create_embedder(config) -> Embedder | None:
             errors.append("gemini: empty API key")
 
     # Priority 2: OpenAI (or Ollama via OpenAI-compatible API)
-    if "openai" in providers:
-        info = providers["openai"]
+    if info := providers.get("openai"):
         if info.get("api_key"):
             base_url = info.get("base_url", "")
             via_ollama = "ollama" in info.get("api_key", "").lower() or "11434" in base_url
