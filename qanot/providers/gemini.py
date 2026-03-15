@@ -93,4 +93,4 @@ class GeminiProvider(OpenAIProvider):
 
     def _prepare_tools(self, tools: list[dict]) -> list[dict]:
         """Convert tools and strip Gemini-unsupported JSON Schema keys."""
-        return _sanitize_gemini_tools(tools)
+        return _strip_unsupported_keys(_anthropic_tools_to_openai(tools))
