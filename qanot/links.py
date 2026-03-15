@@ -132,10 +132,7 @@ def _should_skip_url(url: str) -> bool:
         return True
 
     # Check URL patterns
-    if _SKIP_URL_PATTERNS.search(url_lower):
-        return True
-
-    return False
+    return _SKIP_URL_PATTERNS.search(url_lower) is not None
 
 
 async def fetch_url_preview(
