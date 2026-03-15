@@ -226,7 +226,7 @@ def register_builtin_tools(
             entries = []
             for item in sorted(Path(full).iterdir()):
                 kind = "dir" if item.is_dir() else "file"
-                size = item.stat().st_size if kind == "file" else 0
+                size = item.stat().st_size if not item.is_dir() else 0
                 entries.append({"name": item.name, "type": kind, "size": size})
             return json.dumps(entries, indent=2)
         except FileNotFoundError:
