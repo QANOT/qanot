@@ -251,7 +251,7 @@ def daemon_uninstall(config_path: Path) -> tuple[bool, str]:
         return True, f"Removed: {plist_path}"
 
     elif plat == "windows":
-        task_name = f"Qanot_{name}"
+        task_name = _task_name(name)
         subprocess.run(
             ["schtasks", "/delete", "/tn", task_name, "/f"],
             check=False,
