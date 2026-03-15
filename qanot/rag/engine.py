@@ -283,7 +283,7 @@ class RAGEngine:
 
         # Apply temporal decay: boost recent memories over old ones
         now = time.time()
-        for chunk_id, base_score in list(fused_scores.items()):
+        for chunk_id in fused_scores:
             result = result_map.get(chunk_id)
             if result is None:
                 continue
@@ -292,7 +292,7 @@ class RAGEngine:
                 # Gentle decay: score * (1 / (1 + age_days/30))
                 # 1 day old → 0.97x, 7 days → 0.81x, 30 days → 0.50x, 90 days → 0.25x
                 decay = 1.0 / (1.0 + max((now - created_at) / 86400, 0) / 30.0)
-                fused_scores[chunk_id] = base_score * decay
+                fused_scores[chunk_id] *= decay
 
         # Sort by fused score (with temporal decay applied)
         ranked_ids = sorted(fused_scores, key=lambda x: fused_scores[x], reverse=True)
