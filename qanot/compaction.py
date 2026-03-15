@@ -531,8 +531,7 @@ def prune_history_for_context(
             break
 
         # Drop oldest chunk, keep rest
-        dropped = chunks[0]
-        if not dropped:
+        if not (dropped := chunks[0]):
             # Safety: if the oldest chunk is empty, avoid infinite loop
             break
         prev_kept_len = len(kept)
