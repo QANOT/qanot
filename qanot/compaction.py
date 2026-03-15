@@ -242,7 +242,7 @@ def split_messages_by_token_share(
         current_tokens = 0
 
         for msg in messages:
-            msg_tokens = msg_token_cache.get(id(msg), estimate_message_tokens(msg))
+            msg_tokens = msg_token_cache[id(msg)]
             can_split = len(chunks) < parts - 1
             if can_split and current and current_tokens + msg_tokens > target_tokens:
                 chunks.append(current)
