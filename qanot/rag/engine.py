@@ -283,7 +283,7 @@ class RAGEngine:
 
         # Apply temporal decay: boost recent memories over old ones
         now = time.time()
-        for chunk_id, base_score in fused_scores.items():
+        for chunk_id, base_score in list(fused_scores.items()):
             result = result_map.get(chunk_id)
             if result is None:
                 continue
