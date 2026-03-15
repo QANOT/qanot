@@ -56,6 +56,11 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
     if not path or not path.strip():
         return "Empty path"
 
+    # Reject null bytes — some C-backed fs code treats them as string terminators,
+    # and they can be used for path truncation / injection attacks.
+    if "\x00" in path:
+        return "Null byte in path"
+
     resolved = os.path.realpath(path)
 
     # Block system directories
