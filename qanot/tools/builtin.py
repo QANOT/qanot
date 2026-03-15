@@ -111,26 +111,22 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def _is_dangerous_command(command: str) -> str | None:
-    """Check if a shell command matches known dangerous patterns.
-
-    Returns an error message string if dangerous, None if safe.
-    """
-    for pattern, description in _DANGEROUS_PATTERNS:
+def _first_match(command: str, patterns: list[tuple[re.Pattern[str], str]]) -> str | None:
+    """Return the description of the first pattern that matches command, or None."""
+    for pattern, description in patterns:
         if pattern.search(command):
             return description
     return None
+
+
+def _is_dangerous_command(command: str) -> str | None:
+    """Return description if command matches a dangerous pattern, else None."""
+    return _first_match(command, _DANGEROUS_PATTERNS)
 
 
 def _needs_approval(command: str) -> str | None:
-    """Check if command needs user approval in cautious mode.
-
-    Returns description if approval needed, None if safe.
-    """
-    for pattern, description in _CAUTIOUS_PATTERNS:
-        if pattern.search(command):
-            return description
-    return None
+    """Return description if command needs user approval in cautious mode, else None."""
+    return _first_match(command, _CAUTIOUS_PATTERNS)
 
 
 def _matches_allowlist(command: str, allowlist: list[str]) -> bool:
