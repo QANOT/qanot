@@ -471,17 +471,15 @@ class SqliteVecStore(VectorStore):
             logger.debug("FTS5 query failed: %s", e)
             return []
 
-        results = []
-        for chunk_id, text, source, rank, created_at in rows:
-            results.append(
-                SearchResult(
-                    chunk_id=chunk_id,
-                    text=text,
-                    metadata={"source": source, "created_at": created_at},
-                    score=_bm25_rank_to_score(rank),
-                )
+        return [
+            SearchResult(
+                chunk_id=chunk_id,
+                text=text,
+                metadata={"source": source, "created_at": created_at},
+                score=_bm25_rank_to_score(rank),
             )
-        return results
+            for chunk_id, text, source, rank, created_at in rows
+        ]
 
     @property
     def fts_available(self) -> bool:
