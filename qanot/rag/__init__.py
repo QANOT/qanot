@@ -14,17 +14,17 @@ from qanot.rag.indexer import MemoryIndexer
 from qanot.rag.store import SearchResult, SqliteVecStore, VectorStore
 
 __all__ = [
+    "BM25Index",
     "Embedder",
     "EmbedderHardError",
     "EmbedderSoftError",
     "GeminiEmbedder",
-    "OpenAIEmbedder",
-    "create_embedder",
-    "VectorStore",
-    "SqliteVecStore",
-    "SearchResult",
-    "chunk_text",
-    "BM25Index",
-    "RAGEngine",
     "MemoryIndexer",
+    "OpenAIEmbedder",
+    "RAGEngine",
+    "SearchResult",
+    "SqliteVecStore",
+    "VectorStore",
+    "chunk_text",
+    "create_embedder",
 ]
