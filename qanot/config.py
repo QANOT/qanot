@@ -233,8 +233,7 @@ def load_config(path: str | None = None) -> Config:
     ]
     for _field, _lo, _hi in _INT_BOUNDS:
         if _field in simple:
-            _v = simple[_field]
-            if not isinstance(_v, int) or _v < _lo or _v > _hi:
+            if not isinstance(_v := simple[_field], int) or _v < _lo or _v > _hi:
                 raise ValueError(
                     f"Config field '{_field}' must be an integer between {_lo} and {_hi}, got {_v!r}"
                 )
