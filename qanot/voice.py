@@ -198,9 +198,10 @@ async def muxlisa_tts(
     # Resolve speaker ID (0=female, 1=male)
     speaker = 0
     if voice:
-        speaker = MUXLISA_VOICES.get(voice.lower(), 0)
         if voice.isdigit():
             speaker = int(voice)
+        else:
+            speaker = MUXLISA_VOICES.get(voice.lower(), 0)
 
     payload = {
         "text": text[:5000],
