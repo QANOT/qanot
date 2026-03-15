@@ -1,0 +1,1 @@
+from plugins.cloud_reporter.reporter import CloudReporterPlugin
