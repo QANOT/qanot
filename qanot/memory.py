@@ -130,8 +130,7 @@ def wal_write(
         _append_to_memory(durable, workspace_dir, user_id)
 
     # Notify hooks with combined content
-    combined = "".join(lines)
-    _notify_hooks(combined, "SESSION-STATE.md")
+    _notify_hooks("".join(lines), "SESSION-STATE.md")
 
 
 def _append_to_memory(
