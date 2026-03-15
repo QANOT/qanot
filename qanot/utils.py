@@ -16,6 +16,11 @@ def truncate_with_marker(
 
     Default: keeps first 70% and last 20%, with a gap marker.
     """
+    if head_ratio < 0 or tail_ratio < 0 or head_ratio + tail_ratio >= 1.0:
+        raise ValueError(
+            f"head_ratio and tail_ratio must be non-negative and sum to less than 1.0, "
+            f"got head_ratio={head_ratio}, tail_ratio={tail_ratio}"
+        )
     text_len = len(text)
     if text_len <= max_chars:
         return text
