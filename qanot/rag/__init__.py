@@ -15,6 +15,8 @@ from qanot.rag.store import SearchResult, SqliteVecStore, VectorStore
 
 __all__ = [
     "BM25Index",
+    "chunk_text",
+    "create_embedder",
     "Embedder",
     "EmbedderHardError",
     "EmbedderSoftError",
@@ -25,6 +27,4 @@ __all__ = [
     "SearchResult",
     "SqliteVecStore",
     "VectorStore",
-    "chunk_text",
-    "create_embedder",
 ]
