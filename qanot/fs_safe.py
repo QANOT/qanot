@@ -41,9 +41,7 @@ def is_path_within_root(root: str, path: str) -> bool:
     Handles symlinks, .., and other traversal attempts.
     """
     try:
-        real_root = os.path.realpath(root)
-        real_path = os.path.realpath(path)
-        return _is_under(real_path, real_root)
+        return _is_under(os.path.realpath(path), os.path.realpath(root))
     except (OSError, ValueError):
         return False
 
