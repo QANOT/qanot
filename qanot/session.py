@@ -284,11 +284,13 @@ def _strip_injection(text: str) -> str:
     These are added dynamically per-turn and should not be persisted in history.
     """
     # Strip memory context injection
-    if "\n\n---\n[MEMORY CONTEXT" in text:
-        text = text[:text.index("\n\n---\n[MEMORY CONTEXT")]
+    idx = text.find("\n\n---\n[MEMORY CONTEXT")
+    if idx != -1:
+        text = text[:idx]
     # Strip compaction recovery injection
-    if "\n\n---\n\n[COMPACTION RECOVERY]" in text:
-        text = text[:text.index("\n\n---\n\n[COMPACTION RECOVERY]")]
+    idx = text.find("\n\n---\n\n[COMPACTION RECOVERY]")
+    if idx != -1:
+        text = text[:idx]
     return text.strip()
 
 
