@@ -170,8 +170,10 @@ class AgentBot:
         username = await self._resolve_bot_username()
         if username:
             text = re.sub(rf"@{re.escape(username)}", "", text, flags=re.IGNORECASE).strip()
+        else:
+            text = text.strip()
 
-        if not text.strip():
+        if not text:
             return
 
         # Show typing indicator
