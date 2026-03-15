@@ -1131,8 +1131,7 @@ class TelegramAdapter:
                                 send_kwargs: dict = {"chat_id": chat_id, "text": accumulated[:MAX_MSG_LEN]}
                                 if reply_to:
                                     send_kwargs["reply_to_message_id"] = reply_to
-                                msg = await self.bot.send_message(**send_kwargs)
-                                sent_msg_id = msg.message_id
+                                sent_msg_id = (await self.bot.send_message(**send_kwargs)).message_id
                             except Exception as e:
                                 logger.warning("Partial send failed: %s", e)
                         else:
