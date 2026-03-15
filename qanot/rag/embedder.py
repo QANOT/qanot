@@ -92,8 +92,8 @@ class GeminiEmbedder(Embedder):
         if not texts:
             return []
         all_embeddings: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
-        for i in range(0, len(texts), 100):
-            batch = texts[i : i + 100]
+        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = texts[i : i + _EMBED_BATCH_SIZE]
             response = await self.client.embeddings.create(
                 input=batch,
                 model=self.model,
