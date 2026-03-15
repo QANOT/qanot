@@ -96,20 +96,22 @@ class Dashboard:
 
         # Workspace root files
         for f in sorted(ws.glob("*.md")):
+            st = f.stat()
             files.append({
                 "name": f.name,
-                "size": f.stat().st_size,
-                "modified": f.stat().st_mtime,
+                "size": st.st_size,
+                "modified": st.st_mtime,
             })
 
         # Daily notes
         mem_dir = ws / "memory"
         if mem_dir.exists():
             for f in sorted(mem_dir.glob("*.md"), reverse=True):
+                st = f.stat()
                 files.append({
                     "name": f"memory/{f.name}",
-                    "size": f.stat().st_size,
-                    "modified": f.stat().st_mtime,
+                    "size": st.st_size,
+                    "modified": st.st_mtime,
                 })
 
         return web.json_response({"files": files})
