@@ -10,133 +10,48 @@
     <a href="https://github.com/QANOT/qanot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
     <a href="https://github.com/QANOT/qanot/stargazers"><img src="https://img.shields.io/github/stars/QANOT/qanot?style=social" alt="Stars"></a>
   </p>
+  <p align="center">
+    <a href="https://plane.topkey.uz/docs/">Docs</a> · <a href="https://plane.topkey.uz/docs/uz/">O'zbekcha</a> · <a href="https://plane.topkey.uz">Website</a> · <a href="https://t.me/qanot_bot">Telegram</a>
+  </p>
 </p>
 
-> **Qanot** (Uzbek for "wing") is a lightweight Python framework for building AI-powered Telegram bots with agent loops, multi-agent delegation, persistent memory, RAG, and multi-provider failover — all out of the box.
+> **Qanot** (Uzbek for "wing") — lightweight Python framework for AI-powered Telegram agents with memory, tools, RAG, multi-agent delegation, and multi-provider failover. All out of the box.
 
 ---
 
-## Why Qanot?
-
-Most agent frameworks give you building blocks and say "good luck." Qanot gives you a **flying agent** in one command:
+## Quick Start
 
 ```bash
-pip install qanot && qanot init
+pip install qanot
+qanot init        # Interactive setup — picks provider, model, creates config
+qanot start       # Bot is live
 ```
+
+That's it. Your agent is running.
 
 ---
 
-## What You Get
+## What Makes Qanot Different
 
-### 🤖 Agent Loop
-Up to 25 tool-use iterations per turn with circuit breaker: result-aware loop detection, no-progress detection, alternating pattern detection, and deterministic error handling.
+**Agent Loop** — Up to 25 tool-use iterations per turn with circuit breaker, result-aware loop detection, and smart error recovery.
 
-### 🧭 3-Tier Model Routing
-Automatically routes messages to the right model based on complexity:
-```
-"salom"                     → Haiku  ($0.003/turn)
-"bugun ob-havo qanday?"     → Sonnet ($0.006/turn)
-"menga REST API yozib ber"  → Opus   ($0.029/turn)
-```
-Context-aware: "ha" after Opus tool calling stays on Opus. Saves 50-60% on API costs.
+**3-Tier Model Routing** — Routes messages by complexity. "salom" → Haiku ($0.003). "REST API yozib ber" → Opus ($0.029). Saves 50-60% on costs.
 
-### 🤝 Multi-Agent System
-Agents that talk to each other. Delegate tasks, hold multi-turn conversations between agents, spawn background workers — with real-time monitoring in a Telegram group.
+**Multi-Agent** — Agents that talk to each other. Delegate tasks, hold conversations between agents, spawn background workers.
 
-### 🔀 Multi-Provider Failover
-Claude, GPT, Gemini, Groq, Ollama. If one goes down, Qanot switches automatically with smart cooldowns and thinking level downgrade.
+**5 Providers** — Claude, GPT, Gemini, Groq, Ollama. Automatic failover with smart cooldowns.
 
-### 🧠 3-Tier Memory + Self-Learning
-| Tier | What it does |
-|------|-------------|
-| **WAL** | Captures corrections, preferences, decisions in real-time |
-| **Daily Notes** | Logs each conversation automatically |
-| **Long-term** | Agent curates MEMORY.md — distilled knowledge that persists |
+**3-Tier Memory** — WAL captures real-time corrections. Daily notes log conversations. Long-term memory persists in MEMORY.md. Agent evolves its own SOUL.md over time.
 
-The agent **learns from mistakes**: errors are logged to daily notes, and the agent evolves its own SOUL.md, IDENTITY.md, and MEMORY.md over time.
+**RAG** — Hybrid search (vector + FTS5) with FastEmbed CPU embedder. No GPU needed.
 
-### 🔍 Built-in RAG
-Hybrid search (vector + FTS5 keyword) with FastEmbed CPU embedder. Works with Ollama without VRAM conflict.
+**Voice** — 4 providers (Muxlisa, KotibAI, Aisha, Whisper). STT + TTS. Uzbek native.
 
-### 🎙️ 4 Voice Providers
-| Provider | STT | TTS | Languages |
-|----------|-----|-----|-----------|
-| **Muxlisa** | ✅ | ✅ | Uzbek (native OGG) |
-| **KotibAI** | ✅ | ✅ | uz/ru/en (6 voices) |
-| **Aisha AI** | ✅ | ✅ | uz/en/ru (mood control) |
-| **Whisper** | ✅ | — | 50+ languages |
+**Streaming** — Native Telegram `sendMessageDraft` (Bot API 9.5). Real-time, not edit-message hack.
 
-### ⚡ Streaming Responses
-Native Telegram `sendMessageDraft` (Bot API 9.5) — real-time streaming, not edit-message hack.
+**115+ Plugin Tools** — amoCRM (34), Bitrix24 (30), 1C Enterprise (18), AbsMarket (32). Build your own with `@tool` decorator.
 
-### 🔐 Security
-- **3-tier exec security**: `open` / `cautious` / `strict` with inline approval buttons
-- **Per-user rate limiting**: sliding window + lockout (OpenClaw-inspired)
-- **Safe file write**: blocks system dirs, symlinks, path traversal
-- **SecretRef**: load API keys from env vars or files, not plain config
-- **SSRF protection**: on web fetch and voice download
-- **Command blocklist**: 30+ dangerous patterns
-
-### 🏠 Ollama / Local LLM
-Zero-config local model support:
-```bash
-qanot init    # Select "Ollama" → auto-detects models
-```
-- Ollama native API with `think=false` (30x faster for Qwen)
-- FastEmbed CPU embedder (no VRAM conflict)
-- Works offline, 100% private
-
-### 🌐 Web & Links
-- **Web search** (Brave API)
-- **Web fetch** with SSRF protection
-- **Link understanding**: auto-fetches URLs in messages and injects previews
-
-### 🔌 Plugin System
-```python
-from qanot.plugins.base import Plugin, tool
-
-class QanotPlugin(Plugin):
-    name = "my_plugin"
-
-    @tool("Describe what this tool does")
-    async def my_tool(self, params: dict) -> str:
-        return '{"result": "done"}'
-```
-
-### 📁 File Sharing
-Agent can send files to users via Telegram — workspace files, generated reports, anything.
-
-### 📊 Web Dashboard
-Live web UI for monitoring your agent: conversation logs, cost breakdown, tool usage stats, and memory inspection. Runs on a local port alongside the bot.
-
-### 🧪 Synthetic User Testing
-`agent_eval.py` — automated evaluation harness that simulates multi-turn user conversations, measures tool accuracy, response quality, and cost per scenario. Run it before deploying to catch regressions.
-
-### 🩺 Self-Healing
-Autonomous heartbeat, workspace backup rotation, daily briefing, memory consolidation.
-
-### ⏰ Cron Scheduler
-Schedule tasks with cron syntax. Runs in isolated agent mode.
-
----
-
-## CLI Commands
-
-```bash
-qanot init               # Interactive setup wizard
-qanot start              # Start bot (auto-installs OS service)
-qanot stop               # Stop bot
-qanot restart            # Restart bot
-qanot status             # Check if running
-qanot logs               # Tail bot logs
-qanot update             # Self-update from PyPI + restart
-qanot config show        # Show current configuration
-qanot config set <k> <v> # Change a config value
-qanot config add-provider # Add a backup AI provider
-qanot doctor             # Health checks (--fix to auto-repair)
-qanot backup             # Export workspace to .tar.gz
-qanot plugin new <name>  # Scaffold a new plugin
-```
+**Security** — 3-tier exec security, per-user rate limiting, SSRF protection, safe file writes, SecretRef.
 
 ---
 
@@ -146,71 +61,75 @@ qanot plugin new <name>  # Scaffold a new plugin
 User → Telegram → Agent Loop (25 iterations max)
                       ├── Model Router (Haiku / Sonnet / Opus)
                       ├── LLM Provider (Claude / GPT / Gemini / Groq / Ollama)
-                      ├── Tool Registry (35+ built-in tools + plugins)
-                      ├── Memory System (WAL → daily notes → long-term)
+                      ├── Tool Registry (35+ built-in + 115 plugin tools)
+                      ├── Memory (WAL → daily notes → long-term)
                       ├── RAG Engine (FastEmbed + FTS5 hybrid)
-                      ├── Voice Pipeline (4 providers: STT + TTS)
-                      ├── Agent Delegation (delegate / converse / spawn)
-                      ├── Security (rate limit + exec approval + file jail)
-                      ├── Web Dashboard (live monitoring UI)
-                      └── Context Tracker (auto-compaction at 60%)
+                      ├── Voice Pipeline (4 providers)
+                      ├── Multi-Agent (delegate / converse / spawn)
+                      └── Security (rate limit + exec approval + file jail)
 ```
 
 ---
 
-## Built-in Tools
+## CLI
 
-| Tool | Description |
-|------|-------------|
-| `read_file` / `write_file` / `list_files` | File operations |
-| `send_file` | Send files to user via Telegram |
-| `run_command` | Shell execution (3-tier security) |
-| `memory_search` | Search memory and daily notes |
-| `session_status` / `cost_status` | Session and cost info |
-| `web_search` / `web_fetch` | Web search & fetch |
-| `generate_image` / `edit_image` | Image generation |
-| `rag_search` / `rag_index` | RAG semantic search |
-| `cron_create` / `cron_list` / `cron_update` / `cron_delete` | Cron jobs |
-| `delegate_to_agent` / `converse_with_agent` / `spawn_sub_agent` | Multi-agent |
-| `create_agent` / `update_agent` / `delete_agent` | Agent management |
-| `doctor` | System diagnostics |
+```bash
+qanot init                  # Setup wizard
+qanot start / stop / restart
+qanot status / logs
+qanot update                # Self-update from PyPI
+qanot doctor --fix          # Health check + auto-repair
+qanot config show / set
+qanot plugin new <name>     # Scaffold a plugin
+```
 
 ---
 
-## Compared to Alternatives
+## Plugins
 
-| Feature | Qanot | OpenClaw | LangChain/LangGraph |
-|---------|-------|----------|---------------------|
-| Telegram-native | ✅ | ✅ | ❌ (needs integration) |
-| Multi-channel (Discord, Slack, etc.) | ❌ Telegram only | ✅ 22 channels | ❌ (needs integration) |
-| 2-command setup | ✅ | ✅ | ❌ (code required) |
-| Multi-agent delegation | ✅ | ✅ | ✅ LangGraph |
-| Multi-provider failover | ✅ | ✅ | ✅ |
-| Built-in RAG | ✅ hybrid | ✅ hybrid | ✅ (via chains) |
-| Memory system | ✅ 3-tier (WAL+daily+long-term) | ✅ 2-tier | ✅ LangGraph checkpoints |
-| Model routing | ✅ 3-tier auto | ✅ alias-based | ❌ |
-| Self-learning (workspace evolve) | ✅ | ✅ | ❌ |
-| Voice I/O | ✅ 4 providers | ✅ ElevenLabs | ❌ |
-| Streaming | ✅ sendMessageDraft | ✅ partial edit | ✅ |
-| Browser automation | ❌ | ✅ CDP/Chrome | ❌ |
-| Exec security | ✅ 3-tier + inline buttons | ✅ sandbox + approvals | ❌ |
-| Web dashboard | ✅ | ✅ (Control UI) | ✅ LangSmith |
-| Per-user cost tracking | ✅ | ❌ | ✅ LangSmith |
-| Ollama / local LLM | ✅ zero-config | ❌ | ✅ (via config) |
-| Lightweight | ✅ 143MB RAM | ❌ 1.9GB RAM | ⚠️ varies |
-| Observability | ✅ dashboard + eval | ⚠️ basic logs | ✅ LangSmith |
-| Uzbek voice (Muxlisa, Aisha) | ✅ | ❌ | ❌ |
-| Community & ecosystem | 🌱 new | ✅ 313K stars, 5700 skills | ✅ 34M downloads/mo |
+Ready-made integrations:
+
+| Plugin | Tools | What it does |
+|--------|-------|-------------|
+| **amoCRM** | 34 | Leads, contacts, companies, tasks, chats, tags, pipelines |
+| **Bitrix24** | 30 | Deals, leads, contacts, invoices, quotes, products, tasks |
+| **1C Enterprise** | 18 | Contractors, products, sales, purchases, cash, balances |
+| **AbsMarket** | 32 | POS sales, purchases, inventory, customers, suppliers + SQL |
+
+Build your own:
+
+```python
+from qanot.plugins.base import Plugin, tool
+
+class QanotPlugin(Plugin):
+    name = "my_plugin"
+
+    @tool("my_tool", "What this tool does")
+    async def my_tool(self, params: dict) -> str:
+        return '{"result": "done"}'
+```
+
+---
+
+## Docs
+
+| | English | O'zbekcha |
+|---|---|---|
+| Getting Started | [docs](https://plane.topkey.uz/docs/getting-started/) | [docs](https://plane.topkey.uz/docs/uz/getting-started/) |
+| Full Guide | [docs](https://plane.topkey.uz/docs/GUIDE/) | [docs](https://plane.topkey.uz/docs/uz/GUIDE/) |
+| Configuration | [docs](https://plane.topkey.uz/docs/configuration/) | [docs](https://plane.topkey.uz/docs/uz/configuration/) |
+| Tools | [docs](https://plane.topkey.uz/docs/tools/) | [docs](https://plane.topkey.uz/docs/uz/tools/) |
+| Plugins | [docs](https://plane.topkey.uz/docs/plugins/) | [docs](https://plane.topkey.uz/docs/uz/plugins/) |
+| Architecture | [docs](https://plane.topkey.uz/docs/architecture/) | [docs](https://plane.topkey.uz/docs/uz/architecture/) |
+| API Reference | [docs](https://plane.topkey.uz/docs/api-reference/) | [docs](https://plane.topkey.uz/docs/uz/api-reference/) |
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please read the existing code patterns before submitting PRs.
-
 ```bash
 git clone https://github.com/QANOT/qanot.git
-cd qanotai
+cd qanot
 pip install -e .
 python -m pytest tests/ -v   # 757 tests
 ```
