@@ -226,11 +226,15 @@ async def _load_from_path(plugin_dir: Path, config: dict) -> Plugin | None:
         plugin_cls = getattr(module, "QanotPlugin", None)
         if plugin_cls is None:
             # Try any Plugin subclass
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if isinstance(attr, type) and issubclass(attr, Plugin) and attr is not Plugin:
-                    plugin_cls = attr
-                    break
+            plugin_cls = next(
+                (
+                    attr for attr_name in dir(module)
+                    if isinstance(attr := getattr(module, attr_name), type)
+                    and issubclass(attr, Plugin)
+                    and attr is not Plugin
+                ),
+                None,
+            )
 
         if plugin_cls is None:
             logger.error("No Plugin subclass found in %s", plugin_file)
