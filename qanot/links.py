@@ -201,7 +201,7 @@ async def fetch_url_preview(
                 charset = resp.charset or "utf-8"
                 try:
                     body = body_bytes.decode(charset, errors="replace")
-                except (LookupError, UnicodeDecodeError):
+                except LookupError:
                     body = body_bytes.decode("utf-8", errors="replace")
 
         # Extract content
