@@ -200,7 +200,7 @@ def daemon_install(config_path: Path) -> tuple[bool, str]:
     elif plat == "windows":
         qanot = _qanot_bin()
         config = str(config_path)
-        task_name = f"Qanot_{name}"
+        task_name = _task_name(name)
 
         result = subprocess.run(
             [
