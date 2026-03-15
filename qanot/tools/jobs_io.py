@@ -8,13 +8,11 @@ from pathlib import Path
 
 def load_jobs(jobs_path: Path) -> list[dict]:
     """Load jobs from JSON file."""
-    if jobs_path.exists():
-        try:
-            with jobs_path.open(encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return []
-    return []
+    try:
+        with jobs_path.open(encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
 
 def save_jobs(jobs_path: Path, jobs: list[dict]) -> None:
