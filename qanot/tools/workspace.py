@@ -70,5 +70,8 @@ def update_session_state(key: str, value: str, workspace_dir: str = "/data/works
             updated = True
             break
 
-    new_content = "\n".join(lines) + "\n" if updated else content + f"- **{key}:** {value}\n"
+    if updated:
+        new_content = "\n".join(lines) + "\n"
+    else:
+        new_content = content + f"- **{key}:** {value}\n"
     state_path.write_text(new_content, encoding="utf-8")
