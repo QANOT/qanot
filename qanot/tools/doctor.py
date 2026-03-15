@@ -208,8 +208,6 @@ def _check_rag(config: "Config") -> dict:
     details: list[str] = []
     status = "ok"
 
-    details.append(f"enabled: {config.rag_enabled}")
-
     if not config.rag_enabled:
         return {"status": "ok", "details": "RAG disabled"}
 
