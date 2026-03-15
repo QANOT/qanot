@@ -46,8 +46,8 @@ def backup_workspace(workspace_dir: str) -> str | None:
         return None
 
     # Collect files and directories that actually exist
-    files_to_backup = [ws / f for f in BACKUP_FILES if (ws / f).is_file()]
-    dirs_to_backup = [ws / d for d in BACKUP_DIRS if (ws / d).is_dir()]
+    files_to_backup = [p for f in BACKUP_FILES if (p := ws / f).is_file()]
+    dirs_to_backup = [p for d in BACKUP_DIRS if (p := ws / d).is_dir()]
 
     # Find config.json (from parent or QANOT_CONFIG env)
     config_path = _find_config_path(ws)
