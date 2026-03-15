@@ -34,9 +34,7 @@ def _save_and_queue(
     Returns (image_path, size_bytes).
     """
     images_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = int(time.time() * 1000)
-    filename = f"{prefix}_{timestamp}.png"
-    image_path = images_dir / filename
+    image_path = images_dir / f"{prefix}_{int(time.time() * 1000)}.png"
 
     image_bytes = base64.b64decode(image_data) if isinstance(image_data, str) else image_data
 
