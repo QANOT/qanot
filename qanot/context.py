@@ -19,6 +19,7 @@ COMPACTION_TARGET = 0.35
 BUFFER_THRESHOLD = 0.50
 # Max chars to keep per tool result
 MAX_TOOL_RESULT_CHARS = 8_000
+MAX_RECOVERY_FILE_CHARS = 20_000
 
 
 def truncate_tool_result(result: str, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
