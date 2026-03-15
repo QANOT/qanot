@@ -654,11 +654,8 @@ async def download_audio(url: str) -> str:
                 raise RuntimeError(f"Failed to download audio: HTTP {resp.status}")
             data = await resp.read()
 
-    suffix = ".mp3"
-    if ".wav" in url:
-        suffix = ".wav"
-    elif ".ogg" in url:
-        suffix = ".ogg"
+    _, ext = os.path.splitext(parsed.path)
+    suffix = ext.lower() if ext.lower() in (".wav", ".ogg", ".mp3") else ".mp3"
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(data)
