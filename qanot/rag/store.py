@@ -497,10 +497,11 @@ class SqliteVecStore(VectorStore):
                 rows = conn.execute(
                     "SELECT rowid, id FROM chunks WHERE source = ?", (source,)
                 ).fetchall()
-                for rowid, cid in rows:
-                    if self._vec_available:
+                if self._vec_available:
+                    for rowid, _ in rows:
                         conn.execute("DELETE FROM chunks_vec WHERE rowid = ?", (rowid,))
-                    if self._fts_available:
+                if self._fts_available:
+                    for _, cid in rows:
                         conn.execute("DELETE FROM chunks_fts WHERE id = ?", (cid,))
 
             cursor = conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
