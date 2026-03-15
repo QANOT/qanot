@@ -294,7 +294,7 @@ async function viewFile(el){
   title.textContent=name;
   content.textContent='Loading...';
   try{
-    var fn=name.indexOf('/')>=0?name.split('/').pop():name;
+    var fn=name.split('/').pop();
     var r=await fetch('/api/memory/'+fn);
     var d=await r.json();
     content.textContent=d.content||d.error||'Empty file';
