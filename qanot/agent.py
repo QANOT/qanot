@@ -403,7 +403,6 @@ class ToolRegistry:
             if len(error_msg) > 500:
                 error_msg = error_msg[:500] + "... [truncated]"
             # Strip potential file system paths from error messages
-            import re
             error_msg = re.sub(r'(/[\w./\-]+){3,}', '[path redacted]', error_msg)
             # Strip potential environment variable values or API keys
             error_msg = re.sub(r'(?:key|token|secret|password|auth)[=:]\s*\S+', '[credential redacted]', error_msg, flags=re.IGNORECASE)
