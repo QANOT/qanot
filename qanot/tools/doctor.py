@@ -79,7 +79,7 @@ def _check_config(config: "Config") -> dict:
     if ws.is_dir() and os.access(ws, os.W_OK):
         details.append(f"workspace_dir: exists, writable ({config.workspace_dir})")
     elif ws.is_dir():
-        details.append(f"workspace_dir: exists but NOT writable")
+        details.append("workspace_dir: exists but NOT writable")
         status = "error"
     else:
         details.append(f"workspace_dir: MISSING ({config.workspace_dir})")
@@ -88,9 +88,9 @@ def _check_config(config: "Config") -> dict:
     # sessions_dir
     sd = Path(config.sessions_dir)
     if sd.is_dir() and os.access(sd, os.W_OK):
-        details.append(f"sessions_dir: exists, writable")
+        details.append("sessions_dir: exists, writable")
     elif sd.is_dir():
-        details.append(f"sessions_dir: exists but NOT writable")
+        details.append("sessions_dir: exists but NOT writable")
         status = "error"
     else:
         details.append(f"sessions_dir: MISSING ({config.sessions_dir})")
