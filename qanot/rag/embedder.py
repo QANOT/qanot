@@ -215,15 +215,15 @@ def create_embedder(config) -> Embedder | None:
         info = providers["openai"]
         if info.get("api_key"):
             base_url = info.get("base_url", "")
-            is_ollama = "ollama" in info.get("api_key", "").lower() or "11434" in base_url
+            via_ollama = "ollama" in info.get("api_key", "").lower() or "11434" in base_url
             try:
-                model = "nomic-embed-text" if is_ollama else "text-embedding-3-small"
+                model = "nomic-embed-text" if via_ollama else "text-embedding-3-small"
                 embedder = OpenAIEmbedder(
                     api_key=info["api_key"],
                     model=model,
                     base_url=base_url or None,
                 )
-                label = f"Ollama {model}" if is_ollama else f"OpenAI {model}"
+                label = f"Ollama {model}" if via_ollama else f"OpenAI {model}"
                 logger.info("RAG embedder: using %s", label)
                 return embedder
             except Exception as e:
