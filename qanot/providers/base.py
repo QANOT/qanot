@@ -30,10 +30,10 @@ class ToolCall:
     input: dict
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, str) or not self.id:
-            raise ValueError(f"ToolCall.id must be a non-empty string, got {self.id!r}")
-        if not isinstance(self.name, str) or not self.name:
-            raise ValueError(f"ToolCall.name must be a non-empty string, got {self.name!r}")
+        for attr in ('id', 'name'):
+            val = getattr(self, attr)
+            if not isinstance(val, str) or not val:
+                raise ValueError(f"ToolCall.{attr} must be a non-empty string, got {val!r}")
         if not isinstance(self.input, dict):
             raise TypeError(f"ToolCall.input must be a dict, got {type(self.input).__name__}")
 
