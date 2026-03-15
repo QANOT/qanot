@@ -164,7 +164,6 @@ def register_sub_agent_tools(
         if not task:
             return json.dumps({"error": "task is required — describe what to research or do"})
 
-        MAX_TASK_CHARS = 10000
         if len(task) > MAX_TASK_CHARS:
             return json.dumps({
                 "error": f"Task too long ({len(task)} chars). Max {MAX_TASK_CHARS} chars.",
