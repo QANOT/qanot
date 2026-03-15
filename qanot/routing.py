@@ -31,7 +31,7 @@ _SIMPLE_PATTERNS: list[re.Pattern[str]] = [
 # Indicators of complex messages
 _COMPLEX_INDICATORS = [
     r"```",              # code blocks
-    r"http[s]?://",      # URLs
+    r"https?://",       # URLs
     r"\d{3,}",           # long numbers (IDs, amounts)
     r"[{}\[\]]",         # JSON/data structures
     r"\b(explain|analyze|implement|create|build|write|fix|debug|compare|design)\b",
