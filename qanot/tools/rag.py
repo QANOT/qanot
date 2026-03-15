@@ -35,6 +35,7 @@ def register_rag_tools(
     """Register RAG document management tools."""
 
     ws = Path(workspace_dir)
+    ws_resolved = ws.resolve()
 
     def _resolve_path(path: str) -> Path:
         """Resolve a path relative to workspace_dir, preventing traversal."""
@@ -43,8 +44,6 @@ def register_rag_tools(
             resolved = p.resolve()
         else:
             resolved = (ws / p).resolve()
-        # Ensure the resolved path is within the workspace directory
-        ws_resolved = ws.resolve()
         try:
             resolved.relative_to(ws_resolved)
         except ValueError:
