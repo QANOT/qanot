@@ -44,11 +44,15 @@ def resolve_secret(value) -> str:
             return result
 
         # File-based secret
-        elif "file" in value:
+        if "file" in value:
             file_path = value["file"]
             if not isinstance(file_path, str) or not file_path.strip():
                 raise ValueError("Secret file path must be a non-empty string")
             return _read_secret_file(file_path)
+
+        raise ValueError(
+            f"Unknown secret format: expected 'env' or 'file' key, got {list(value.keys())!r}"
+        )
 
     # Fallback: convert to string
     return str(value) if value else ""
