@@ -242,11 +242,11 @@ class CronScheduler:
             # Check if the agent wrote to proactive-outbox.md
             outbox_path = Path(self.config.workspace_dir) / "proactive-outbox.md"
             if outbox_path.exists():
-                content = outbox_path.read_text(encoding="utf-8").strip()
-                if content:
+                outbox_content = outbox_path.read_text(encoding="utf-8").strip()
+                if outbox_content:
                     await self.message_queue.put({
                         "type": "proactive",
-                        "text": content,
+                        "text": outbox_content,
                         "source": job_name,
                     })
                     # Clear outbox after reading
