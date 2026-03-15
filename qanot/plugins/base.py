@@ -179,21 +179,23 @@ def validate_tool_params(params: dict, schema: dict) -> list[str]:
     return errors
 
 
+_JSON_SCHEMA_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
+    "string": str,
+    "integer": int,
+    "number": (int, float),
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
 def _check_type(value: Any, expected: str) -> bool:
     """Check if value matches JSON schema type."""
     # In Python, bool is a subclass of int, so we must check bool first
     # to avoid booleans passing as integers/numbers.
     if isinstance(value, bool):
         return expected == "boolean"
-    type_map = {
-        "string": str,
-        "integer": int,
-        "number": (int, float),
-        "boolean": bool,
-        "array": list,
-        "object": dict,
-    }
-    expected_types = type_map.get(expected)
+    expected_types = _JSON_SCHEMA_TYPE_MAP.get(expected)
     if expected_types is None:
         return True  # Unknown type, skip validation
     return isinstance(value, expected_types)
