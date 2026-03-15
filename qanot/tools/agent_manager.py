@@ -37,6 +37,15 @@ def _sanitize_agent_id(raw: str) -> str:
     return cleaned[:32] or "agent"
 
 
+# Fields serialized only when truthy
+_TRUTHY_FIELDS: tuple[str, ...] = (
+    "name", "prompt", "model", "provider", "api_key",
+    "bot_token", "tools_allow", "tools_deny", "delegate_allow",
+)
+# Fields serialized only when they differ from their default value
+_DEFAULT_FIELDS: dict[str, int] = {"max_iterations": 15, "timeout": 120}
+
+
 def _save_agents_to_config(config: "Config") -> None:
     """Persist current agents list to config.json."""
     config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
@@ -48,13 +57,6 @@ def _save_agents_to_config(config: "Config") -> None:
     raw = json.loads(p.read_text(encoding="utf-8"))
 
     # Serialize agents
-    # Fields that are included when truthy
-    _TRUTHY_FIELDS = (
-        "name", "prompt", "model", "provider", "api_key",
-        "bot_token", "tools_allow", "tools_deny", "delegate_allow",
-    )
-    # Fields that are included when they differ from their default
-    _DEFAULT_FIELDS = {"max_iterations": 15, "timeout": 120}
 
     agents_data = []
     for ad in config.agents:
