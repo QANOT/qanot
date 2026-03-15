@@ -291,7 +291,7 @@ def daemon_start(config_path: Path) -> tuple[bool, str]:
         return False, f"Failed: {result.stderr.strip()}"
 
     elif plat == "windows":
-        task_name = f"Qanot_{name}"
+        task_name = _task_name(name)
         result = subprocess.run(
             ["schtasks", "/run", "/tn", task_name],
             capture_output=True, text=True,
@@ -328,7 +328,7 @@ def daemon_stop(config_path: Path) -> tuple[bool, str]:
         return False, f"Failed: {result.stderr.strip()}"
 
     elif plat == "windows":
-        task_name = f"Qanot_{name}"
+        task_name = _task_name(name)
         result = subprocess.run(
             ["schtasks", "/end", "/tn", task_name],
             capture_output=True, text=True,
