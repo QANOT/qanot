@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
