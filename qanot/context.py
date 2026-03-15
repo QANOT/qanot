@@ -298,14 +298,14 @@ class ContextTracker:
         for path, heading in sources:
             if path.exists():
                 try:
-                    # Check file size before reading to avoid loading huge files
-                    if (file_size := path.stat().st_size) > MAX_RECOVERY_FILE_CHARS * 4:  # rough UTF-8 estimate
+                    with path.open(encoding="utf-8", errors="replace") as fh:
+                        content = fh.read(MAX_RECOVERY_FILE_CHARS + 1)
+                    if len(content) > MAX_RECOVERY_FILE_CHARS:
                         logger.warning(
-                            "Recovery file %s is too large (%d bytes), truncating",
-                            path, file_size,
+                            "Recovery file %s exceeds %d chars, truncating",
+                            path, MAX_RECOVERY_FILE_CHARS,
                         )
-                    content = path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as exc:
+                except OSError as exc:
                     logger.warning("Failed to read recovery file %s: %s", path, exc)
                     parts.append(f"## {heading}\n[Error reading file: {exc}]")
                     continue
