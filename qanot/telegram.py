@@ -1031,7 +1031,6 @@ class TelegramAdapter:
                     if dl_path.endswith(".wav"):
                         voice_path = await convert_wav_to_ogg(dl_path)
                     else:
-                        from qanot.voice import convert_ogg_to_mp3
                         # MP3 → OGG (ffmpeg)
                         ogg_path = dl_path.rsplit(".", 1)[0] + ".ogg"
                         proc = await asyncio.create_subprocess_exec(
