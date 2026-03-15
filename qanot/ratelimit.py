@@ -47,11 +47,9 @@ class RateLimiter:
         unlock_time = self._locked_until.get(user_id)
         if unlock_time is not None:
             if now < unlock_time:
-                remaining = int(unlock_time - now)
-                return False, f"Rate limit: {remaining}s qoldi"
-            else:
-                del self._locked_until[user_id]
-                self._requests.pop(user_id, None)
+                return False, f"Rate limit: {int(unlock_time - now)}s qoldi"
+            self._locked_until.pop(user_id)
+            self._requests.pop(user_id, None)
 
         # Slide window: remove old timestamps
         timestamps = self._requests.get(user_id, [])
