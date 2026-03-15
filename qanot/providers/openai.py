@@ -20,6 +20,7 @@ PRICING = {
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
 }
 DEFAULT_PRICING = {"input": 2.0, "output": 8.0}
+_MAX_TOOL_JSON = 1_000_000  # 1 MB cap on accumulated tool arguments
 
 
 def _anthropic_tools_to_openai(tools: list[dict]) -> list[dict]:
