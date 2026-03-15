@@ -38,10 +38,7 @@ def _save_and_queue(
     filename = f"{prefix}_{timestamp}.png"
     image_path = images_dir / filename
 
-    if isinstance(image_data, str):
-        image_bytes = base64.b64decode(image_data)
-    else:
-        image_bytes = image_data
+    image_bytes = base64.b64decode(image_data) if isinstance(image_data, str) else image_data
 
     image_path.write_bytes(image_bytes)
     logger.info("Image saved: %s (%d bytes)", image_path, len(image_bytes))
