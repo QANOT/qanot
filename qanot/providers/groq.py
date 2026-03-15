@@ -35,12 +35,10 @@ class GroqProvider(OpenAIProvider):
         model: str = "llama-3.3-70b-versatile",
         base_url: str = "https://api.groq.com/openai/v1",
     ):
-        if not isinstance(api_key, str) or not api_key.strip():
+        if not isinstance(api_key, str) or not (api_key := api_key.strip()):
             raise ValueError("GroqProvider requires a non-empty api_key")
-        api_key = api_key.strip()
-        if not isinstance(model, str) or not model.strip():
+        if not isinstance(model, str) or not (model := model.strip()):
             raise ValueError("GroqProvider requires a non-empty model name")
-        model = model.strip()
         if len(model) > 256:
             raise ValueError(
                 f"GroqProvider model name too long ({len(model)} chars), max 256"
