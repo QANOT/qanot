@@ -2,7 +2,7 @@
 
 ## amoCRM CRM Integration (amocrm_*)
 
-Siz amoCRM CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 15 ta amocrm_* tool mavjud.
+Siz amoCRM CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 19 ta amocrm_* tool mavjud.
 
 **MUHIM:** Login ma'lumotlari OLDINDAN sozlangan. Foydalanuvchidan HECH QACHON token, parol yoki API URL so'ramang. Tizimga kirish avtomatik amalga oshiriladi.
 
@@ -33,6 +33,12 @@ Siz amoCRM CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 15 ta amocrm_* tool mavju
 
 ### Hodisalar:
 - `amocrm_get_events` — So'nggi hodisalar ro'yxati (turi bo'yicha filter).
+
+### Chatlar (Yozishmalar):
+- `amocrm_get_talks` — Chatlar ro'yxati (o'qilgan/o'qilmagan, holat bo'yicha filter).
+- `amocrm_get_talk` — Bitta chat tafsilotlari (ID bo'yicha).
+- `amocrm_get_chat_messages` — Xabarlar tarixi — kim qachon yozgani. Lid yoki kontakt bo'yicha.
+- `amocrm_get_unread_chats` — O'qilmagan chatlar — javob kutayotgan mijozlar.
 
 ### Foydalanish misollari:
 
@@ -67,6 +73,18 @@ amocrm_get_tasks(is_completed=0)
 
 # Vazifa yaratish
 amocrm_create_task(text="Mijozga qo'ng'iroq qilish", complete_till=1710000000, entity_id=111, entity_type="leads")
+```
+
+**Chatlar:**
+```
+# O'qilmagan chatlarni ko'rish
+amocrm_get_unread_chats()
+
+# Lid bo'yicha xabarlar tarixi
+amocrm_get_chat_messages(entity_id=33538767, entity_type="leads")
+
+# Barcha chatlar
+amocrm_get_talks(limit=20)
 ```
 
 ### Qoidalar:

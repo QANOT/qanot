@@ -414,7 +414,99 @@ class QanotPlugin(Plugin):
         _simple("amocrm_get_events", "So'nggi hodisalar ro'yxati.", "/events", {
             "type": "object", "properties": {
                 "page": {"type": "number"}, "limit": {"type": "number"},
-                "filter[type]": {"type": "string", "description": "Hodisa turi filtri"},
+                "filter[type]": {"type": "string", "description": "Hodisa turi filtri (incoming_chat_message, outgoing_chat_message, lead_added, lead_status_changed)"},
             }})
+
+        # ── TALKS (Chatlar) ──
+        _simple("amocrm_get_talks", "Chatlar (suhbatlar) ro'yxati. Mijozlar bilan yozishmalar.", "/talks", {
+            "type": "object", "properties": {
+                "limit": {"type": "number", "description": "Natijalar soni (max 250)"},
+                "page": {"type": "number"},
+                "filter[is_read]": {"type": "string", "description": "O'qilgan/o'qilmagan: true yoki false"},
+                "filter[status]": {"type": "string", "description": "Holat: opened yoki in_work"},
+            }})
+        _simple("amocrm_get_talk", "Bitta chat tafsilotlari.", "/talks/{talk_id}", {
+            "type": "object", "required": ["talk_id"], "properties": {
+                "talk_id": {"type": "number", "description": "Chat ID"},
+            }}, "talk_id")
+
+        # Chat messages via events (incoming + outgoing)
+        async def get_chat_messages(p: dict) -> str:
+            """Get chat messages for a contact or lead using events API."""
+            try:
+                all_messages: list = []
+                for msg_type in ("incoming_chat_message", "outgoing_chat_message"):
+                    params: dict[str, Any] = {
+                        "limit": p.get("limit", 50),
+                        "filter[type]": msg_type,
+                    }
+                    if p.get("entity_id"):
+                        params["filter[entity]"] = p["entity_id"]
+                    if p.get("entity_type"):
+                        params["filter[entity_type]"] = p["entity_type"]
+                    data = await c.get("/events", params)
+                    embedded = data.get("_embedded", {}) if isinstance(data, dict) else {}
+                    events = embedded.get("events", [])
+                    for ev in events:
+                        val = ev.get("value_after", [{}])
+                        msg_info = val[0].get("message", {}) if val else {}
+                        all_messages.append({
+                            "type": "kiruvchi" if "incoming" in ev.get("type", "") else "chiquvchi",
+                            "vaqt": ev.get("created_at", 0),
+                            "entity_id": ev.get("entity_id"),
+                            "manba": msg_info.get("origin", ""),
+                            "talk_id": msg_info.get("talk_id"),
+                            "message_id": msg_info.get("id", ""),
+                        })
+                # Sort by time
+                all_messages.sort(key=lambda m: m["vaqt"])
+                return self._ok({
+                    "jami_xabarlar": len(all_messages),
+                    "xabarlar": all_messages,
+                })
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_chat_messages",
+            "Chatdagi xabarlar tarixi — kim qachon yozgani. Lid yoki kontakt bo'yicha filter.", {
+            "type": "object", "properties": {
+                "entity_id": {"type": "number", "description": "Lid yoki kontakt ID"},
+                "entity_type": {"type": "string", "description": "leads yoki contacts"},
+                "limit": {"type": "number", "description": "Har bir tur uchun max xabarlar (default 50)"},
+            }}, get_chat_messages))
+
+        # Unread chats summary
+        async def unread_chats(p: dict) -> str:
+            """Get summary of unread chats."""
+            try:
+                data = await c.get("/talks", {"filter[is_read]": "false", "limit": 250})
+                embedded = data.get("_embedded", {}) if isinstance(data, dict) else {}
+                talks = embedded.get("talks", [])
+                result: list = []
+                for talk in talks:
+                    contact_id = talk.get("contact_id")
+                    # Fetch contact name
+                    contact_name = ""
+                    if contact_id:
+                        try:
+                            contact_data = await c.get(f"/contacts/{contact_id}")
+                            contact_name = contact_data.get("name", "") if isinstance(contact_data, dict) else ""
+                        except Exception:
+                            pass
+                    result.append({
+                        "talk_id": talk.get("talk_id"),
+                        "kontakt": contact_name or f"ID:{contact_id}",
+                        "manba": talk.get("origin", ""),
+                        "lid_id": talk.get("entity_id"),
+                        "yangilangan": talk.get("updated_at", 0),
+                    })
+                return self._ok({
+                    "oqilmagan_chatlar_soni": len(result),
+                    "chatlar": result,
+                })
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_unread_chats",
+            "O'qilmagan chatlar — javob kutayotgan mijozlar ro'yxati.", {
+            "type": "object", "properties": {}}, unread_chats))
 
         return tools
