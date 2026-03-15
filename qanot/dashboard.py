@@ -161,4 +161,4 @@ class Dashboard:
 
 # ── Inline HTML Dashboard ──
 
-from qanot.dashboard_html import DASHBOARD_HTML  # noqa: F401
+from qanot.dashboard_html import DASHBOARD_HTML  # noqa: E402
