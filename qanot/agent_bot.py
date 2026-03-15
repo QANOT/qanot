@@ -307,7 +307,7 @@ class AgentBot:
 
     async def _send_response(self, chat_id: int, text: str) -> None:
         """Send response, splitting if too long."""
-        if not text or not text.strip():
+        if not text.strip():
             return
 
         from qanot.telegram import _sanitize_response
