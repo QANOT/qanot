@@ -269,11 +269,13 @@ async def main() -> None:
     )
     _telegram_ref.append(telegram)
 
+    get_user_id = lambda: agent.current_user_id
+
     # Register sub-agent tools (needs agent + telegram for delivery)
     from qanot.tools.subagent import register_sub_agent_tools
     register_sub_agent_tools(
         tool_registry, config, provider, tool_registry,
-        get_user_id=lambda: agent.current_user_id,
+        get_user_id=get_user_id,
         get_chat_id=lambda: agent.current_chat_id,
         send_callback=telegram.send_message,
     )
@@ -282,14 +284,14 @@ async def main() -> None:
     from qanot.tools.delegate import register_delegate_tools, set_notify_callback
     register_delegate_tools(
         tool_registry, config, provider, tool_registry,
-        get_user_id=lambda: agent.current_user_id,
+        get_user_id=get_user_id,
     )
 
     # Register dynamic agent management tools (create/update/delete agents at runtime)
     from qanot.tools.agent_manager import register_agent_manager_tools
     register_agent_manager_tools(
         tool_registry, config, provider, tool_registry,
-        get_user_id=lambda: agent.current_user_id,
+        get_user_id=get_user_id,
     )
     logger.info("Agent tools registered (delegation + management + sub-agent)")
 
