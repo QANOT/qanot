@@ -218,13 +218,14 @@ tick();setInterval(tick,1000);
 // Data loader
 async function load(){
   try{
+    function api(p){return fetch(p).then(function(x){return x.json()})}
     var[s,c,r,cf,t,m]=await Promise.all([
-      fetch('/api/status').then(function(x){return x.json()}),
-      fetch('/api/costs').then(function(x){return x.json()}),
-      fetch('/api/routing').then(function(x){return x.json()}),
-      fetch('/api/config').then(function(x){return x.json()}),
-      fetch('/api/tools').then(function(x){return x.json()}),
-      fetch('/api/memory').then(function(x){return x.json()})
+      api('/api/status'),
+      api('/api/costs'),
+      api('/api/routing'),
+      api('/api/config'),
+      api('/api/tools'),
+      api('/api/memory')
     ]);
 
     // Status
