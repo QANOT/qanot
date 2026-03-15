@@ -298,8 +298,7 @@ async def main() -> None:
     # Wire live agent monitoring notifications to Telegram
     async def _notify_user(text: str) -> None:
         try:
-            cid = agent.current_chat_id
-            if cid:
+            if cid := agent.current_chat_id:
                 await telegram.send_message(cid, text)
         except Exception:
             pass  # Non-fatal
