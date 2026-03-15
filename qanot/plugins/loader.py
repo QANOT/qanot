@@ -262,9 +262,8 @@ def _deploy_plugin_files(workspace_dir: str, plugin: Plugin) -> None:
         soul_path = ws / "SOUL.md"
         if soul_path.exists():
             existing = soul_path.read_text(encoding="utf-8")
-            # Check if already appended
-            stripped_lines = plugin.soul_append.strip().splitlines()
-            marker = stripped_lines[0] if stripped_lines else ""
+            # Check if already appended using first non-blank line as marker
+            marker = next((l for l in plugin.soul_append.splitlines() if l.strip()), "")
             if marker and marker not in existing:
                 with open(soul_path, "a", encoding="utf-8") as f:
                     f.write(f"\n\n{plugin.soul_append}")
