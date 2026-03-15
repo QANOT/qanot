@@ -16,16 +16,12 @@ import sys
 from pathlib import Path
 
 
+_PLATFORM_MAP = {"linux": "linux", "darwin": "macos", "windows": "windows"}
+
+
 def _detect_platform() -> str:
     """Detect the current platform."""
-    system = platform.system().lower()
-    if system == "linux":
-        return "linux"
-    elif system == "darwin":
-        return "macos"
-    elif system == "windows":
-        return "windows"
-    return "unknown"
+    return _PLATFORM_MAP.get(platform.system().lower(), "unknown")
 
 
 def _qanot_bin() -> str:
