@@ -533,7 +533,6 @@ def prune_history_for_context(
         if not dropped:
             # Safety: if the oldest chunk is empty, avoid infinite loop
             break
-        dropped_tokens = estimate_messages_tokens(dropped)
         prev_kept_len = len(kept)
         kept = [msg for chunk in chunks[1:] for msg in chunk]
         total_dropped += len(dropped)
