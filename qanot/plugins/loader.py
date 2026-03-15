@@ -181,12 +181,12 @@ def _find_plugin_dir(name: str, plugins_dir: str) -> Path | None:
     """Find plugin directory by name, searching builtin and external paths."""
     # Try built-in plugins first
     builtin_path = BUILTIN_PLUGINS_DIR / name
-    if builtin_path.exists():
+    if builtin_path.is_dir():
         return builtin_path
 
     # Try configured plugins directory
     external_path = Path(plugins_dir) / name
-    if external_path.exists():
+    if external_path.is_dir():
         return external_path
 
     return None
