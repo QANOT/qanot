@@ -92,8 +92,7 @@ def register_cron_tools(
         _save_jobs(jobs)
 
         # Notify scheduler to reload
-        if scheduler_ref and hasattr(scheduler_ref, "reload_jobs"):
-            await scheduler_ref.reload_jobs()
+        await _reload_scheduler()
 
         logger.info("Cron job created: %s (%s)", name, at or schedule)
         return json.dumps({"success": True, "job": job})
