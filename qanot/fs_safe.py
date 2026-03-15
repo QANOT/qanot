@@ -70,8 +70,7 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
             return f"System directory blocked: {sys_dir}"
 
     # Block symlinks (prevent escape via symlink target)
-    parent = os.path.dirname(resolved)
-    if os.path.islink(path) or (os.path.exists(parent) and os.path.islink(parent)):
+    if os.path.islink(path):
         return "Symlink write blocked"
 
     # Jail mode: must be inside root
