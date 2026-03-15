@@ -72,8 +72,7 @@ def _create_provider(config):
             for pc in config.providers
         ]
         provider = FailoverProvider(profiles)
-        names = [p.name for p in profiles]
-        logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(names))
+        logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(p.name for p in profiles))
         return provider
 
     # Single provider mode — reuse the same factory
