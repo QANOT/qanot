@@ -225,7 +225,8 @@ def _check_rag(config: "Config") -> dict:
                 cursor.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
                 )
-                details.append(f"FTS5: {'available' if cursor.fetchone() is not None else 'not available'}")
+                fts5_row = cursor.fetchone()
+                details.append(f"FTS5: {'available' if fts5_row else 'not available'}")
 
                 # Embedding cache count
                 try:
