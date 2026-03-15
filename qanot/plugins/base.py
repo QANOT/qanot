@@ -121,12 +121,11 @@ class Plugin(ABC):
 
     def _collect_tools(self) -> list[ToolDef]:
         """Auto-collect tools from decorated methods."""
-        tools: list[ToolDef] = []
-        for attr_name in dir(self):
-            attr = getattr(self, attr_name, None)
-            if callable(attr) and hasattr(attr, "_tool_def"):
-                tools.append(ToolDef(**attr._tool_def, handler=attr))
-        return tools
+        return [
+            ToolDef(**attr._tool_def, handler=attr)
+            for attr_name in dir(self)
+            if callable(attr := getattr(self, attr_name, None)) and hasattr(attr, "_tool_def")
+        ]
 
 
 def validate_tool_params(params: dict, schema: dict) -> list[str]:
