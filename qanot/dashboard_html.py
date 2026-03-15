@@ -216,9 +216,9 @@ function tick(){document.getElementById('clock').textContent=new Date().toLocale
 tick();setInterval(tick,1000);
 
 // Data loader
+function api(p){return fetch(p).then(function(x){return x.json()})}
 async function load(){
   try{
-    function api(p){return fetch(p).then(function(x){return x.json()})}
     var[s,c,r,cf,t,m]=await Promise.all([
       api('/api/status'),
       api('/api/costs'),
