@@ -137,11 +137,8 @@ def _matches_allowlist(command: str, allowlist: list[str]) -> bool:
 
     Allowlist entries are prefix matches: "git" matches "git status", "git log", etc.
     """
-    cmd_base = command.strip().split()[0] if command.strip() else ""
-    for pattern in allowlist:
-        if command.strip().startswith(pattern) or cmd_base == pattern:
-            return True
-    return False
+    stripped = command.strip()
+    return any(stripped.startswith(pattern) for pattern in allowlist)
 
 
 def register_builtin_tools(
