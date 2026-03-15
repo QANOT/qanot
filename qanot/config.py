@@ -225,6 +225,12 @@ def load_config(path: str | None = None) -> Config:
                 raise ValueError(
                     f"Config field '{key}' contains invalid control characters"
                 )
+        elif key == 'voice_api_keys' and isinstance(value, dict):
+            for provider_name, api_key in value.items():
+                if isinstance(api_key, str) and _CONTROL_CHAR_RE.search(api_key):
+                    raise ValueError(
+                        f"Config field 'voice_api_keys[\"{provider_name}\"]' contains invalid control characters"
+                    )
     # Validate numeric fields with security-relevant bounds
     _INT_BOUNDS = [
         ('webhook_port', 1, 65535),
