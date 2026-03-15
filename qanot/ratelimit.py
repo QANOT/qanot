@@ -44,9 +44,10 @@ class RateLimiter:
         now = time.monotonic()
 
         # Check lockout
-        if user_id in self._locked_until:
-            if now < self._locked_until[user_id]:
-                remaining = int(self._locked_until[user_id] - now)
+        unlock_time = self._locked_until.get(user_id)
+        if unlock_time is not None:
+            if now < unlock_time:
+                remaining = int(unlock_time - now)
                 return False, f"Rate limit: {remaining}s qoldi"
             else:
                 del self._locked_until[user_id]
