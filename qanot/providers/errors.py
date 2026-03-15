@@ -53,8 +53,10 @@ def classify_error(error: Exception) -> str:
             status = int(status)
         except (ValueError, TypeError):
             status = None
-    if status is not None and status in _STATUS_MAP:
-        return _STATUS_MAP[status]
+    if status is not None:
+        mapped = _STATUS_MAP.get(status)
+        if mapped is not None:
+            return mapped
 
     # Fallback: check error message
     msg = str(error).lower()
