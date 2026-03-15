@@ -163,7 +163,7 @@ def register_image_tools(
             from google.genai import types
 
             client = _get_client()
-            response = client.models.generate_content(
+            response = await client.aio.models.generate_content(
                 model=img_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
