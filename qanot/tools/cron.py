@@ -175,11 +175,7 @@ def register_cron_tools(
             return json.dumps({"error": "name is required"})
 
         jobs = _load_jobs()
-        found = None
-        for j in jobs:
-            if j["name"] == name:
-                found = j
-                break
+        found = next((j for j in jobs if j["name"] == name), None)
 
         if not found:
             return json.dumps({"error": f"Job '{name}' not found"})
