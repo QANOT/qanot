@@ -120,7 +120,7 @@ def wal_write(
         state_path.write_text("# SESSION-STATE.md — Active Working Memory\n\n", encoding="utf-8")
 
     lines: list[str] = []
-    uid_tag = f" [user:{user_id}]" if user_id else ""
+    uid_tag = _uid_tag(user_id)
     for entry in entries:
         lines.append(f"- [{entry.timestamp}]{uid_tag} **{entry.category}**: {entry.detail}\n")
 
