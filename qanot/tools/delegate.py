@@ -618,9 +618,7 @@ def _get_board_summary(user_id: str, exclude_agent: str = "") -> str:
         if entry["agent_id"] == exclude_agent:
             continue
         # Truncate result for board summary
-        result_preview = entry["result"][:500]
-        if len(entry["result"]) > 500:
-            result_preview += "..."
+        result_preview = entry["result"][:500] + ("..." if len(entry["result"]) > 500 else "")
         lines.append(
             f"- **{entry['agent_name']}** ({entry['agent_id']}): {entry['task'][:100]}\n"
             f"  Result: {result_preview}"
