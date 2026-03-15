@@ -77,12 +77,11 @@ def _convert_messages(messages: list[dict], system: str | None) -> list[dict]:
                 if parts:
                     if has_images:
                         # Multi-modal content: keep as list of content parts
-                        content_parts = []
-                        for p in parts:
-                            if isinstance(p, dict) and p.get("type") == "text":
-                                content_parts.append({"type": "text", "text": p["text"]})
-                            elif isinstance(p, dict):
-                                content_parts.append(p)
+                        content_parts = [
+                            {"type": "text", "text": p["text"]} if p.get("type") == "text" else p
+                            for p in parts
+                            if isinstance(p, dict)
+                        ]
                         result.append({"role": "user", "content": content_parts})
                     else:
                         # Text-only: join as string
