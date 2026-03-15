@@ -112,9 +112,9 @@ async def _hot_launch_agent_bot(
 
 async def _stop_agent_bot(agent_id: str) -> bool:
     """Stop a running agent bot. Returns True if was running."""
-    if agent_id in _active_agent_bots:
+    if bot := _active_agent_bots.get(agent_id):
         try:
-            await _active_agent_bots[agent_id].stop()
+            await bot.stop()
         except Exception as e:
             logger.warning("Error stopping agent bot '%s': %s", agent_id, e)
         _active_agent_bots.pop(agent_id, None)
