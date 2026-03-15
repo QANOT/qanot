@@ -92,7 +92,7 @@ async def _run_sub_agent(
         )
 
         elapsed = time.monotonic() - start
-        formatted = _format_result(task_id[:8], task, result, elapsed)
+        formatted = _format_result(task_id[:8], task_preview, result, elapsed)
         await send_callback(chat_id, formatted)
         logger.info(
             "Sub-agent %s completed in %.1fs for user %s",
