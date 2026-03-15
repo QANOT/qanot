@@ -82,10 +82,5 @@ class RateLimiter:
         """Remove stale entries for users who haven't made requests recently."""
         now = time.monotonic()
         cutoff = now - self.window * 2
-        stale = [uid for uid, ts in self._requests.items() if not ts or ts[-1] < cutoff]
-        for uid in stale:
-            del self._requests[uid]
-        # Clean expired lockouts
-        expired = [uid for uid, t in self._locked_until.items() if now >= t]
-        for uid in expired:
-            del self._locked_until[uid]
+        self._requests = {uid: ts for uid, ts in self._requests.items() if ts and ts[-1] >= cutoff}
+        self._locked_until = {uid: t for uid, t in self._locked_until.items() if now < t}
