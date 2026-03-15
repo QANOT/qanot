@@ -294,11 +294,7 @@ class RAGEngine:
         for rank, (doc_id, _score) in enumerate(keyword_hits):
             rrf_score = keyword_weight / (rank + 60)
             fused_scores[doc_id] = fused_scores.get(doc_id, 0) + rrf_score
-            if doc_id not in result_map:
-                for vr in vec_results:
-                    if vr.chunk_id == doc_id:
-                        result_map[doc_id] = vr
-                        break
+
 
         # Apply temporal decay: boost recent memories over old ones
         now = time.time()
