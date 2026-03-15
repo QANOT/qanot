@@ -140,10 +140,7 @@ def register_rag_tools(
         if len(query) > 10000:
             return json.dumps({"error": "query too long (max 10000 characters)"})
 
-        if not isinstance(top_k, int):
-            top_k = 5
-        else:
-            top_k = max(1, min(top_k, 100))
+        top_k = max(1, min(top_k, 100)) if isinstance(top_k, int) else 5
 
         rag_result = await engine.query(
             query,
