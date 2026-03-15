@@ -353,8 +353,6 @@ class AgentBot:
             while True:
                 try:
                     await self.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                except asyncio.CancelledError:
-                    raise
                 except Exception:
                     logger.debug(
                         "AgentBot '%s': typing indicator failed for chat %s",
