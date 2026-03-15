@@ -12,7 +12,7 @@ def load_jobs(jobs_path: Path) -> list[dict]:
         try:
             with jobs_path.open(encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             return []
     return []
 
