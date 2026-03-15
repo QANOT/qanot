@@ -66,7 +66,7 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
 
     # Block system directories
     for sys_dir in _SYSTEM_DIRS:
-        if resolved.startswith(sys_dir + os.sep) or resolved == sys_dir:
+        if _is_under(resolved, sys_dir):
             return f"System directory blocked: {sys_dir}"
 
     # Block symlinks (prevent escape via symlink target)
