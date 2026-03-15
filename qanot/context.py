@@ -82,9 +82,8 @@ class ContextTracker:
             return False
         # Estimate next turn: current prompt + avg output per turn
         avg_output = self.total_output / max(self.turn_count, 1)
-        estimated_next = self.last_prompt_tokens + avg_output
         # Apply safety margin for estimation error
-        return (estimated_next * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
+        return ((self.last_prompt_tokens + avg_output) * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
 
     def compact_messages(self, messages: list[dict], summary_text: str | None = None) -> list[dict]:
         """Compact conversation history to reduce context usage.
