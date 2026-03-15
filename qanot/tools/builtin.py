@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 MAX_OUTPUT = 50_000
 COMMAND_TIMEOUT = 120
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB — Telegram document upload limit
 
 
 # ── Exec security levels ──
