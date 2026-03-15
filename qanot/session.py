@@ -252,11 +252,8 @@ def _entries_to_messages(entries: list[dict]) -> list[dict]:
                 # Structured content — extract text blocks only
                 text_parts = []
                 for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            text_parts.append(block.get("text", ""))
-                        elif block.get("type") == "tool_result":
-                            continue  # Skip tool results in restored history
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
                 if text_parts:
                     text = "\n".join(text_parts)
                     clean = _strip_injection(text)
