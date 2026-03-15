@@ -64,8 +64,9 @@ def _task_name(service_name: str) -> str:
 def _generate_systemd(config_path: Path) -> str:
     """Generate a systemd user service file."""
     qanot = _qanot_bin()
-    config = str(config_path.resolve())
-    working_dir = str(config_path.resolve().parent)
+    resolved = config_path.resolve()
+    config = str(resolved)
+    working_dir = str(resolved.parent)
 
     return f"""[Unit]
 Description=Qanot AI Telegram Bot
