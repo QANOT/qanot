@@ -397,7 +397,7 @@ def daemon_status(config_path: Path) -> tuple[bool, str]:
         return False, "Not installed"
 
     elif plat == "windows":
-        task_name = f"Qanot_{name}"
+        task_name = _task_name(name)
         result = subprocess.run(
             ["schtasks", "/query", "/tn", task_name, "/fo", "list"],
             capture_output=True, text=True,
