@@ -50,13 +50,11 @@ def classify_error(error: Exception) -> str:
     status = getattr(error, "status_code", None) or getattr(error, "status", None)
     if status is not None:
         try:
-            status = int(status)
+            mapped = _STATUS_MAP.get(int(status))
+            if mapped is not None:
+                return mapped
         except (ValueError, TypeError):
-            status = None
-    if status is not None:
-        mapped = _STATUS_MAP.get(status)
-        if mapped is not None:
-            return mapped
+            pass
 
     # Fallback: check error message
     msg = str(error).lower()
