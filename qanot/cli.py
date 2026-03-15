@@ -1467,13 +1467,14 @@ def _config_set(args: list[str]) -> None:
         value = True
     elif value_lower == "false":
         value = False
-    elif value.isdigit():
-        value = int(value)
     else:
         try:
-            value = float(value)
+            value = int(value)
         except ValueError:
-            pass  # Keep as string
+            try:
+                value = float(value)
+            except ValueError:
+                pass  # Keep as string
 
     old_value = raw.get(key, _dim("(not set)"))
     raw[key] = value
