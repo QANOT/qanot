@@ -1,4 +1,4 @@
-"""Dashboard HTML — Bloomberg Terminal × Apple luxury aesthetic."""
+"""Static HTML template string for the Qanot AI web dashboard."""
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
