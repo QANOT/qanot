@@ -657,6 +657,10 @@ class TelegramAdapter:
 
     # ── Telegram commands ────────────────────────────────────
 
+    def _conv_key(self, message: Message) -> str:
+        """Return the conversation key for a message (shared group key or per-user DM key)."""
+        return f"group_{message.chat.id}" if self._is_group_chat(message) else str(message.from_user.id)
+
     def _check_command_access(self, message: Message) -> tuple[int, str] | None:
         """Check command access and return (user_id, conv_key), or None if denied."""
         if not message.from_user:
@@ -664,8 +668,7 @@ class TelegramAdapter:
         user_id = message.from_user.id
         if not self._is_allowed(user_id):
             return None
-        conv_key = f"group_{message.chat.id}" if self._is_group_chat(message) else str(user_id)
-        return user_id, conv_key
+        return user_id, self._conv_key(message)
 
     async def _handle_reset(self, message: Message) -> None:
         """Handle /reset — clear conversation history."""
