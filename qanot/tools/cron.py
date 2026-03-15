@@ -186,6 +186,9 @@ def register_cron_tools(
             if not sched or len(sched) > 200:
                 return json.dumps({"error": "schedule must be a non-empty string (max 200 chars)"})
             found["schedule"] = sched
+            # Remove one-shot fields if converting to a recurring job
+            found.pop("at", None)
+            found.pop("delete_after_run", None)
         if "mode" in params:
             mode_val = str(params["mode"]).strip()
             if mode_val not in ("systemEvent", "isolated"):
