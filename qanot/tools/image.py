@@ -88,7 +88,7 @@ def _find_last_image_in_conversation(get_user_id: callable | None) -> bytes | No
     for msg in reversed(messages):
         if msg.get("role") != "user":
             continue
-        content = msg.get("content", "")
+        content = msg.get("content")
         if not isinstance(content, list):
             continue
         for block in content:
