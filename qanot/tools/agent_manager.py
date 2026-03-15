@@ -30,10 +30,14 @@ logger = logging.getLogger(__name__)
 _active_agent_bots: dict[str, "AgentBot"] = {}  # agent_id → AgentBot
 
 
+_RE_AGENT_ID_INVALID = re.compile(r"[^a-z0-9\-]")
+_RE_AGENT_ID_DASHES = re.compile(r"-+")
+
+
 def _sanitize_agent_id(raw: str) -> str:
     """Sanitize agent ID to safe format: lowercase, alphanumeric + hyphens."""
-    cleaned = re.sub(r"[^a-z0-9\-]", "-", raw.lower().strip())
-    cleaned = re.sub(r"-+", "-", cleaned).strip("-")
+    cleaned = _RE_AGENT_ID_INVALID.sub("-", raw.lower().strip())
+    cleaned = _RE_AGENT_ID_DASHES.sub("-", cleaned).strip("-")
     return cleaned[:32] or "agent"
 
 
