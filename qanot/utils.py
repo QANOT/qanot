@@ -16,10 +16,8 @@ def truncate_with_marker(
     text_len = len(text)
     if text_len <= max_chars:
         return text
-    # Estimate marker overhead so total output stays within max_chars.
-    # Marker template: "\n\n... [truncated NNNNN chars] ...\n\n"
-    # Estimate with worst-case digit count for removed chars.
-    marker_overhead = len("\n\n... [truncated  chars] ...\n\n") + len(str(text_len))
+    # Upper-bound marker length: removed <= text_len so digit count never exceeds this.
+    marker_overhead = len(f"\n\n... [truncated {text_len} chars] ...\n\n")
     budget = max(max_chars - marker_overhead, 0)
     head = int(budget * head_ratio)
     tail = int(budget * tail_ratio)
