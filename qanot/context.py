@@ -357,7 +357,6 @@ class CostTracker:
 
     def _load(self) -> None:
         """Load persisted cost data."""
-        import json
         path = self._cost_file()
         if path.exists():
             try:
@@ -368,7 +367,6 @@ class CostTracker:
 
     def _save(self) -> None:
         """Persist cost data to disk."""
-        import json
         path = self._cost_file()
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
