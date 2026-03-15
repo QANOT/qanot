@@ -464,4 +464,252 @@ class QanotPlugin(Plugin):
                 "ACTIVE": {"type": "boolean", "description": "Faqat faol foydalanuvchilar (true/false)"},
             }}, get_users))
 
+        # ── INVOICES (Schyot-fakturalar) ──
+        async def get_invoices(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {
+                    "select": ["ID", "ACCOUNT_NUMBER", "ORDER_TOPIC", "PRICE",
+                               "CURRENCY", "STATUS_ID", "DATE_INSERT", "PAY_VOUCHER_DATE"],
+                    "start": 0,
+                }
+                filt: dict[str, Any] = {}
+                if p.get("status_id"):
+                    filt["STATUS_ID"] = p["status_id"]
+                if p.get("date_from"):
+                    filt[">=DATE_INSERT"] = p["date_from"]
+                if p.get("date_to"):
+                    filt["<=DATE_INSERT"] = p["date_to"]
+                if filt:
+                    params["filter"] = filt
+                data = await c.call("crm.invoice.list", params)
+                items = data.get("result", [])
+                limit = int(p.get("limit", 50))
+                return self._ok(items[:limit])
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_invoices", "Schyot-fakturalar ro'yxati. Status, sana bo'yicha filter.", {
+            "type": "object", "properties": {
+                "status_id": {"type": "string", "description": "Status ID (P=to'langan, N=yangi)"},
+                "date_from": {"type": "string", "description": "Sanadan boshlab (YYYY-MM-DD)"},
+                "date_to": {"type": "string", "description": "Sanagacha (YYYY-MM-DD)"},
+                "limit": {"type": "number", "description": "Natijalalar soni (standart 50)"},
+            }}, get_invoices))
+
+        # Create invoice
+        async def create_invoice(p: dict) -> str:
+            try:
+                fields: dict[str, Any] = {
+                    "ORDER_TOPIC": p["topic"],
+                    "PERSON_TYPE_ID": 1,
+                }
+                if p.get("price") is not None:
+                    fields["PRICE"] = p["price"]
+                if p.get("deal_id") is not None:
+                    fields["UF_DEAL_ID"] = p["deal_id"]
+                if p.get("contact_id") is not None:
+                    fields["UF_CONTACT_ID"] = p["contact_id"]
+                if p.get("company_id") is not None:
+                    fields["UF_COMPANY_ID"] = p["company_id"]
+                return self._ok(await c.call("crm.invoice.add", {"fields": fields}))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_create_invoice", "Yangi schyot-faktura yaratish.", {
+            "type": "object", "required": ["topic"], "properties": {
+                "topic": {"type": "string", "description": "Schyot-faktura mavzusi"},
+                "price": {"type": "number", "description": "Summa"},
+                "deal_id": {"type": "number", "description": "Sdelka ID"},
+                "contact_id": {"type": "number", "description": "Kontakt ID"},
+                "company_id": {"type": "number", "description": "Kompaniya ID"},
+            }}, create_invoice))
+
+        # ── QUOTES (Takliflar) ──
+        async def get_quotes(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {
+                    "select": ["ID", "TITLE", "OPPORTUNITY", "CURRENCY_ID",
+                               "STATUS_ID", "BEGINDATE", "CLOSEDATE"],
+                    "start": 0,
+                }
+                filt: dict[str, Any] = {}
+                if p.get("status_id"):
+                    filt["STATUS_ID"] = p["status_id"]
+                if p.get("date_from"):
+                    filt[">=BEGINDATE"] = p["date_from"]
+                if p.get("date_to"):
+                    filt["<=CLOSEDATE"] = p["date_to"]
+                if filt:
+                    params["filter"] = filt
+                data = await c.call("crm.quote.list", params)
+                items = data.get("result", [])
+                limit = int(p.get("limit", 50))
+                return self._ok(items[:limit])
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_quotes", "Tijorat takliflari ro'yxati. Status, sana bo'yicha filter.", {
+            "type": "object", "properties": {
+                "status_id": {"type": "string", "description": "Status ID"},
+                "date_from": {"type": "string", "description": "Sanadan boshlab (YYYY-MM-DD)"},
+                "date_to": {"type": "string", "description": "Sanagacha (YYYY-MM-DD)"},
+                "limit": {"type": "number", "description": "Natijalalar soni (standart 50)"},
+            }}, get_quotes))
+
+        # Create quote
+        async def create_quote(p: dict) -> str:
+            try:
+                fields: dict[str, Any] = {"TITLE": p["title"]}
+                if p.get("opportunity") is not None:
+                    fields["OPPORTUNITY"] = p["opportunity"]
+                if p.get("deal_id") is not None:
+                    fields["DEAL_ID"] = p["deal_id"]
+                if p.get("contact_id") is not None:
+                    fields["CONTACT_ID"] = p["contact_id"]
+                if p.get("company_id") is not None:
+                    fields["COMPANY_ID"] = p["company_id"]
+                return self._ok(await c.call("crm.quote.add", {"fields": fields}))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_create_quote", "Yangi tijorat taklifi yaratish.", {
+            "type": "object", "required": ["title"], "properties": {
+                "title": {"type": "string", "description": "Taklif nomi"},
+                "opportunity": {"type": "number", "description": "Summa"},
+                "deal_id": {"type": "number", "description": "Sdelka ID"},
+                "contact_id": {"type": "number", "description": "Kontakt ID"},
+                "company_id": {"type": "number", "description": "Kompaniya ID"},
+            }}, create_quote))
+
+        # ── PRODUCTS (Mahsulotlar) ──
+        async def get_products(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {
+                    "select": ["ID", "NAME", "PRICE", "CURRENCY_ID",
+                               "ACTIVE", "CATALOG_ID", "SECTION_ID"],
+                    "start": 0,
+                }
+                filt: dict[str, Any] = {}
+                if p.get("search"):
+                    filt["%NAME"] = p["search"]
+                if p.get("active"):
+                    filt["ACTIVE"] = p["active"]
+                if filt:
+                    params["filter"] = filt
+                data = await c.call("crm.product.list", params)
+                items = data.get("result", [])
+                limit = int(p.get("limit", 50))
+                return self._ok(items[:limit])
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_products", "CRM mahsulotlar katalogi.", {
+            "type": "object", "properties": {
+                "search": {"type": "string", "description": "Nomi bo'yicha qidirish"},
+                "active": {"type": "string", "description": "Faol holat (Y yoki N)"},
+                "limit": {"type": "number", "description": "Natijalalar soni (standart 50)"},
+            }}, get_products))
+
+        # ── DEAL PRODUCTS (Sdelka mahsulotlari) ──
+        async def get_deal_products(p: dict) -> str:
+            try:
+                return self._ok(await c.call("crm.deal.productrows.get", {"id": p["deal_id"]}))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_deal_products", "Sdelkadagi mahsulotlar ro'yxati.", {
+            "type": "object", "required": ["deal_id"], "properties": {
+                "deal_id": {"type": "number", "description": "Sdelka ID"},
+            }}, get_deal_products))
+
+        # Set deal products
+        async def set_deal_products(p: dict) -> str:
+            try:
+                rows = []
+                for item in p.get("products", []):
+                    rows.append({
+                        "PRODUCT_ID": item.get("product_id", 0),
+                        "PRICE": item.get("price", 0),
+                        "QUANTITY": item.get("quantity", 1),
+                    })
+                return self._ok(await c.call("crm.deal.productrows.set", {
+                    "id": p["deal_id"], "rows": rows,
+                }))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_set_deal_products", "Sdelkaga mahsulotlar qo'shish/o'zgartirish.", {
+            "type": "object", "required": ["deal_id", "products"], "properties": {
+                "deal_id": {"type": "number", "description": "Sdelka ID"},
+                "products": {"type": "array", "description": "Mahsulotlar ro'yxati", "items": {
+                    "type": "object", "properties": {
+                        "product_id": {"type": "number", "description": "Mahsulot ID"},
+                        "price": {"type": "number", "description": "Narx"},
+                        "quantity": {"type": "number", "description": "Miqdor"},
+                    }}},
+            }}, set_deal_products))
+
+        # ── STATUSES (Statuslar) ──
+        async def get_statuses(p: dict) -> str:
+            try:
+                params: dict[str, Any] = {}
+                if p.get("entity_id"):
+                    params["filter"] = {"ENTITY_ID": p["entity_id"]}
+                return self._ok(await c.call("crm.status.list", params))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_statuses", "CRM statuslari ro'yxati (lid, sdelka, taklif, faktura).", {
+            "type": "object", "properties": {
+                "entity_id": {"type": "string", "description": "Turi: STATUS (lid), DEAL_STAGE (sdelka), QUOTE_STATUS (taklif), INVOICE_STATUS (faktura)"},
+            }}, get_statuses))
+
+        # ── SEARCH (Umumiy qidiruv) ──
+        async def crm_search(p: dict) -> str:
+            try:
+                query = p.get("query", "")
+                results: dict[str, Any] = {"deals": [], "contacts": [], "leads": []}
+                # Search deals by TITLE
+                d = await c.call("crm.deal.list", {
+                    "filter": {"%TITLE": query},
+                    "select": ["ID", "TITLE", "OPPORTUNITY", "STAGE_ID"],
+                    "start": 0,
+                })
+                results["deals"] = (d.get("result") or [])[:10]
+                # Search contacts by NAME
+                ct = await c.call("crm.contact.list", {
+                    "filter": {"%NAME": query},
+                    "select": ["ID", "NAME", "LAST_NAME", "PHONE"],
+                    "start": 0,
+                })
+                results["contacts"] = (ct.get("result") or [])[:10]
+                # Search leads by TITLE
+                ld = await c.call("crm.lead.list", {
+                    "filter": {"%TITLE": query},
+                    "select": ["ID", "TITLE", "NAME", "STATUS_ID"],
+                    "start": 0,
+                })
+                results["leads"] = (ld.get("result") or [])[:10]
+                return self._ok(results)
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_search", "CRM bo'ylab umumiy qidiruv (sdelkalar, kontaktlar, lidlar).", {
+            "type": "object", "required": ["query"], "properties": {
+                "query": {"type": "string", "description": "Qidiruv so'zi"},
+            }}, crm_search))
+
+        # ── TIMELINE (Tarix yozuvlari) ──
+        ENTITY_TYPE_MAP: dict[str, str] = {
+            "deal": "deal", "lead": "lead", "contact": "contact",
+        }
+
+        async def get_timeline(p: dict) -> str:
+            try:
+                entity_type = ENTITY_TYPE_MAP.get(p.get("entity_type", "deal"), "deal")
+                return self._ok(await c.call("crm.timeline.comment.list", {
+                    "filter": {
+                        "ENTITY_ID": p["entity_id"],
+                        "ENTITY_TYPE": entity_type,
+                    },
+                }))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("bitrix24_get_timeline", "CRM element tarixi (timeline izohlar).", {
+            "type": "object", "required": ["entity_id"], "properties": {
+                "entity_id": {"type": "number", "description": "Element ID"},
+                "entity_type": {"type": "string", "description": "Turi: deal, lead, contact (standart: deal)"},
+            }}, get_timeline))
+
         return tools

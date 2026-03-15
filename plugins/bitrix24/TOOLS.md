@@ -2,7 +2,7 @@
 
 ## Bitrix24 CRM Integration (bitrix24_*)
 
-Siz Bitrix24 CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 20 ta bitrix24_* tool mavjud.
+Siz Bitrix24 CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 30 ta bitrix24_* tool mavjud.
 
 **MUHIM:** Login ma'lumotlari OLDINDAN sozlangan. Foydalanuvchidan HECH QACHON webhook, parol yoki API URL so'ramang. Tizimga kirish avtomatik amalga oshiriladi.
 
@@ -41,6 +41,28 @@ Siz Bitrix24 CRM tizimiga to'g'ridan-to'g'ri ulangansiz. 20 ta bitrix24_* tool m
 
 ### Foydalanuvchilar:
 - `bitrix24_get_users` — CRM foydalanuvchilari (menejerlar) ro'yxati.
+
+### Schyot-fakturalar (Invoices):
+- `bitrix24_get_invoices` — Schyot-fakturalar ro'yxati. Status, sana bo'yicha filter.
+- `bitrix24_create_invoice` — Yangi schyot-faktura yaratish (mavzu, summa, sdelka).
+
+### Tijorat takliflari (Quotes):
+- `bitrix24_get_quotes` — Tijorat takliflari ro'yxati. Status, sana bo'yicha filter.
+- `bitrix24_create_quote` — Yangi tijorat taklifi yaratish (nomi, summa, sdelka).
+
+### Mahsulotlar (Products):
+- `bitrix24_get_products` — CRM mahsulotlar katalogi. Nomi, faol holat bo'yicha qidirish.
+- `bitrix24_get_deal_products` — Sdelkadagi mahsulotlar ro'yxati (ID bo'yicha).
+- `bitrix24_set_deal_products` — Sdelkaga mahsulotlar qo'shish/o'zgartirish.
+
+### Statuslar:
+- `bitrix24_get_statuses` — CRM statuslari ro'yxati (lid, sdelka, taklif, faktura uchun).
+
+### Qidiruv:
+- `bitrix24_search` — CRM bo'ylab umumiy qidiruv (sdelkalar, kontaktlar, lidlar).
+
+### Tarix (Timeline):
+- `bitrix24_get_timeline` — CRM element tarixi (timeline izohlar).
 
 ### Foydalanish misollari:
 
@@ -108,6 +130,63 @@ bitrix24_get_deal_stages()
 
 # CRM menejerlari
 bitrix24_get_users(ACTIVE=true)
+```
+
+**Schyot-fakturalar:**
+```
+# Barcha fakturalar
+bitrix24_get_invoices()
+
+# To'langan fakturalar
+bitrix24_get_invoices(status_id="P")
+
+# Faktura yaratish
+bitrix24_create_invoice(topic="Server xizmati - mart", price=5000000, deal_id=111)
+```
+
+**Tijorat takliflari:**
+```
+# Barcha takliflar
+bitrix24_get_quotes()
+
+# Taklif yaratish
+bitrix24_create_quote(title="Loyiha taklifi", opportunity=15000000, deal_id=111)
+```
+
+**Mahsulotlar:**
+```
+# Mahsulotlar katalogi
+bitrix24_get_products()
+
+# Nomi bo'yicha qidirish
+bitrix24_get_products(search="server")
+
+# Sdelkadagi mahsulotlar
+bitrix24_get_deal_products(deal_id=111)
+
+# Sdelkaga mahsulot qo'shish
+bitrix24_set_deal_products(deal_id=111, products=[{"product_id": 1, "price": 500000, "quantity": 2}])
+```
+
+**Statuslar va qidiruv:**
+```
+# Sdelka bosqichlari
+bitrix24_get_statuses(entity_id="DEAL_STAGE")
+
+# Lid statuslari
+bitrix24_get_statuses(entity_id="STATUS")
+
+# CRM bo'ylab qidiruv
+bitrix24_search(query="Alisher")
+```
+
+**Tarix:**
+```
+# Sdelka tarixi
+bitrix24_get_timeline(entity_id=111, entity_type="deal")
+
+# Lid tarixi
+bitrix24_get_timeline(entity_id=55, entity_type="lead")
 ```
 
 ### Qoidalar:
