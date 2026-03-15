@@ -101,12 +101,12 @@ def extract_urls(text: str) -> list[str]:
             continue
 
         # Reject URLs with embedded credentials (user:pass@host)
-        if "@" in url.split("//", 1)[-1].split("/", 1)[0]:
+        after_scheme = url.split("//", 1)[1]
+        if "@" in after_scheme.split("/", 1)[0]:
             logger.debug("Skipping URL with embedded credentials")
             continue
 
         # Reject URLs without a meaningful host after the scheme
-        after_scheme = url.split("//", 1)[-1]
         host_part = after_scheme.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
         if not host_part or host_part == ":":
             logger.debug("Skipping URL with no host: %r", url[:100])
