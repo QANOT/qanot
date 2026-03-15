@@ -102,12 +102,6 @@ def _result_fingerprint(result: str) -> str:
     return hashlib.sha256(result.encode()).hexdigest()[:16]
 
 
-def _strip_verbose_result(result: str) -> str:
-    """Strip verbose fields from tool results to save context tokens.
-
-    Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
-    from JSON results while preserving the core data.
-    """
 _VERBOSE_KEYS = frozenset({"details", "debug", "trace", "raw", "stacktrace", "verbose", "raw_response"})
 
 
