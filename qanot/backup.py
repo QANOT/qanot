@@ -137,11 +137,11 @@ def _rotate_backups(backups_root: Path) -> None:
     try:
         # List backup directories, sorted alphabetically (timestamps sort chronologically)
         backup_dirs = sorted(
-            [
+            (
                 d
                 for d in backups_root.iterdir()
                 if d.is_dir() and not d.is_symlink() and _TS_PATTERN.match(d.name)
-            ],
+            ),
             key=lambda d: d.name,
         )
 
