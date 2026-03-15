@@ -123,12 +123,6 @@ class MemoryIndexer:
         Returns:
             List of result dicts with file, content, score, and chunk_id keys.
         """
-        rag_result = await self.engine.query(
-            query,
-            top_k=top_k,
-            user_id=user_id,
-        )
-
         return [
             {
                 "file": r.metadata.get("source", ""),
@@ -136,5 +130,5 @@ class MemoryIndexer:
                 "score": r.score,
                 "chunk_id": r.chunk_id,
             }
-            for r in rag_result.results
+            for r in (await self.engine.query(query, top_k=top_k, user_id=user_id)).results
         ]
