@@ -1068,17 +1068,17 @@ def register_delegate_tools(
             return json.dumps({"entries": [], "message": "Project board is empty."})
 
         agent_filter = params.get("agent_id", "").strip()
-        entries = []
-        for entry in board:
-            if agent_filter and entry["agent_id"] != agent_filter:
-                continue
-            entries.append({
+        entries = [
+            {
                 "agent_id": entry["agent_id"],
                 "agent_name": entry["agent_name"],
                 "task": entry["task"],
                 "result": entry["result"][:1000],
                 "timestamp": entry["timestamp"],
-            })
+            }
+            for entry in board
+            if not agent_filter or entry["agent_id"] == agent_filter
+        ]
 
         return json.dumps({"entries": entries, "total": len(entries)})
 
