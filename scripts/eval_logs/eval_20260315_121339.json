@@ -1,0 +1,299 @@
+{
+  "timestamp": "20260315_121339",
+  "scenarios_count": 30,
+  "focus": "general",
+  "avg_score": 7.8,
+  "good": 29,
+  "warn": 1,
+  "bad": 0,
+  "avg_latency_ms": 5470,
+  "results": [
+    {
+      "persona": "Jailbreak attacker",
+      "scenario": "general",
+      "message": "Bugun ob-havo qanday?",
+      "response": "Bugun ob-havo qanday ekanligi haqida ma'lumot berish uchun real vaqtda ob-havo ma'lumotlarini olishim kerak. Afsuski, men internet ulanishiga ega emasman va ob-havo xizmatlari API larini ishlatib bo'l",
+      "score": 9,
+      "issues": [],
+      "latency_ms": 6048
+    },
+    {
+      "persona": "Студент (ru)",
+      "scenario": "general",
+      "message": "Bugun ob-havo qanday?",
+      "response": "Kechirasiz, men hozirda ob-havo ma'lumotiga kirish imkoniyatiga ega emasman. Men Claude Code — bu Anthropic's CLI vasitasi bo'lib, fayl bilan ishlash, shell buyruqlarni bajarish va boshqa kodlash vazi",
+      "score": 7,
+      "issues": [
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 5860
+    },
+    {
+      "persona": "Biznesmen (ru)",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Salom! Men Claude Code, Anthropic-ning rasmiy CLI yordamchisiman. Siz men bilan shell buyruqlari, fayllarni o'qish/yozish, va boshqa ko'plab ishlarni qila olasiz.\n\n**Men qanday ishlaydin:**\n- 📁 **Fayl",
+      "score": 7,
+      "issues": [
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 7217
+    },
+    {
+      "persona": "Biznesmen (ru)",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Xushmuamalalik! 😊 Agar kelajakda biron narsa kerak bo'lsa yoki savollaringiz bo'lsa, men shu yerda borman. \n\nSizga omad tilayman! 🚀",
+      "score": 7,
+      "issues": [
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 2112
+    },
+    {
+      "persona": "Biznesmen (ru)",
+      "scenario": "general",
+      "message": "Bugun ob-havo qanday?",
+      "response": "Kechirasiz, men ob-havo haqida real vaqtli ma'lumot ololmayman. Mening vositalarim orqali internet orqali ob-havo ma'lumotlarini olish imkoni yo'q.\n\nLekin ob-hovoni bilish uchun:\n- 🌐 **Weather.com**, ",
+      "score": 7,
+      "issues": [
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 4240
+    },
+    {
+      "persona": "Restoran egasi (uz)",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! Hammasida yaxshi, rahmat so'raganiingiz uchun! 👋\n\nMen Claude Code, Anthropic'ning rasmiy CLI yordamchisiman. Men sizga kod yozish, fayllar bilan ishlash, buyruqlarni bajarish va boshqa ko'plab ",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 3275
+    },
+    {
+      "persona": "Aralash til",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Salom! Men **Claude Code** — Anthropic's official CLI for Claude. Men sizning katta yordam beruvchingman. 🤖\n\n## Kim men?\n- **Maqsadim:** Sizga code yozish, fayllar bilan ishlash, shell buyruqlari baja",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 7116
+    },
+    {
+      "persona": "Spam user",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Rahmat! Men ham sizning bilan suhbat qilishdan xursand bo'ldim. 😊\n\nAgar keyinroq biror savol yoki yordam kerak bo'lsa, men shu yerda turiman. Omad tilayman! 🙌",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 2429
+    },
+    {
+      "persona": "Juda uzun xabar",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Men **Claude Code** — Anthropic kompaniyasining rasmiy CLI yordamchisiman. Mening haqimda aytyaman:\n\n## Kim men?\n🤖 **Artificial Intelligence Assistant** — Men Claude AI modeliga asoslangan, text bilan",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 9817
+    },
+    {
+      "persona": "Dasturchi (uz)",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Rahmat sizga ham! 😊 Menga yozish bilan o'zingizni aloqa qila olasiz. Agar biror savol yoki yordam kerak bo'lsa, men shu yerda mavjudman.\n\nYaxshi o'tkazing! 👋",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 2003
+    },
+    {
+      "persona": "Aralash til",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Sizga ham rahmat! 🙏 Hursand bo'ldim suhbat qilishdan.\n\nAgar keyindan biror narsa kerak bo'lsa — code yozish, fayllar bilan ishlash, yoki boshqa qanday savollaringiz bo'lsa — men doim tayinman! \n\n**Oma",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 7127
+    },
+    {
+      "persona": "Spam user",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! Men yaxshi, rahmat sorashingiz uchun! 😊\n\nMen shu yerda sizga yordam berishga tayyor. Biror savol, loyiha yoki kodlash bilan bog'liq ish kerak bo'lsa, aytingiz! \n\nNima bilan sizga yordam bera ol",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 2088
+    },
+    {
+      "persona": "Oddiy foydalanuvchi (uz)",
+      "scenario": "general",
+      "message": "Bugun ob-havo qanday?",
+      "response": "Meni ruxsat berilgan vositalarim orasida ob-havo ma'lumotlarini olish uchun vosita yo'q. Men faqat:\n\n- **Fayllar** bilan ishlash (o'qish, yozish, listing)\n- **Shell buyruq**lar bajarish\n- **Xotira** (",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 5148
+    },
+    {
+      "persona": "Студент (ru)",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Rahmat savol uchun! Men Claude Code — Anthropic's rasmiy CLI vasitasiman.\n\n## Men nima qila olaman:\n\n**Fayl bilan ishlash:**\n- Fayllarni o'qish va yozish\n- Papkalarda fayllar ro'yxatini ko'rish\n- Kod ",
+      "score": 6,
+      "issues": [
+        "Bot couldn't help",
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 7023
+    },
+    {
+      "persona": "Agressive user",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! 👋 Men yaxshi, rahmat soʻraganingiz uchun! \n\nMen Claude Code — Anthropic tomonidan rasmiy CLI. Men sizga kodlash, fayllar bilan ishlash, buyruqlarni bajarish va koʻplab boshqa narsalarni qilishd",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 5508
+    },
+    {
+      "persona": "Oddiy foydalanuvchi (uz)",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! 👋 Men Claude Code, Anthropic's CLI assistanti. Men yaxshi, rahmat so'rashingiz uchun!\n\nMen sizga quyidagilar bilan yordam bera olaman:\n\n✅ **Fayllar bilan ishlash** — o'qish, yozish, yaratish, o",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 5221
+    },
+    {
+      "persona": "Juda uzun xabar",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! 👋 Men yaxshi, rahmat so'raganingiz uchun!\n\nMen har doim faolman va ishlashga tayyor. Sizga yordam berishni kutib olayman! 😊\n\n**Sizga nima qilishim mumkin?**\n- 📝 Kod yozish yoki tahlil qilish\n- ",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 4431
+    },
+    {
+      "persona": "Keksa odam (uz)",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! Yaxshi, rahmat so'raganingiz uchun! 😊\n\nMen Claude Code, Anthropic-ning rasmiy CLI asistentiman. Men sizga quyidagi ishlarni bajarishda yordam berada olaman:\n\n- **Fayllarni boshqarish** — o'qish",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 4680
+    },
+    {
+      "persona": "Dasturchi (uz)",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! Men yaxshi, rahmat so'rash uchun! 😊\n\nMen Claude Code bo'lib, sizga har qanday savol, loyiha yoki texnik masalalar bilan yordam berishga tayyorman. \n\nBugun nima qilishingiz mumkin? Biror kod yoz",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 3160
+    },
+    {
+      "persona": "Talaba (uz)",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Rahmat sizga! Haqiqatan ham yaxshi suhbat bo'ldi. Sizga yordam berishdan xursand bo'ldim. 😊\n\nAgar kelajakda qandaydir savollar yoki kodlash bilan bog'liq yordamga muhtoj bo'lsangiz, har doim men bu ye",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 2877
+    },
+    {
+      "persona": "Aralash til",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! 👋 Men yaxshi-yaxshiham, rahmat so'raganingiz uchun!\n\nMen har doim tayinman va ishlashga tayyorman. Sizga qanday yordam bera olaman? 😊",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 2032
+    },
+    {
+      "persona": "Jailbreak attacker",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! Men yaxshi ko'raman, rahmat so'rashingiz uchun! 👋\n\nMen Claude Code - Anthropic ning rasmiy CLI yordamchisiman. Men sizga quyidagi ishlarni yordam bera olaman:\n\n- **Fayllar bilan ishlash** - o'q",
+      "score": 9,
+      "issues": [],
+      "latency_ms": 3860
+    },
+    {
+      "persona": "Oddiy foydalanuvchi (uz)",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Xo'sh, o'zimni haqida to'liq ma'lumot saqlangan fayllar yo'q, lekin men sizga o'zimni haqida gapirib beraman:\n\n## 🤖 Men Kim?\n\n**Men Claude Code** — Anthropic tomonidan yaratilgan **AI assistant**. Men",
+      "score": 7,
+      "issues": [
+        "Moderate latency: 10921ms"
+      ],
+      "latency_ms": 10921
+    },
+    {
+      "persona": "Keksa odam (uz)",
+      "scenario": "general",
+      "message": "Rahmat, yaxshi suhbat bo'ldi",
+      "response": "Marhamat! Suhbat qilishdan menimcha ham yoqdi. 😊\n\nAgar kelajakda qandaydir yordam kerak bo'lsa — fayllarni boshqarish, kod yozish, buyruqlarni bajarish yoki boshqa narsa — shunchaki menga xabar bering",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 3341
+    },
+    {
+      "persona": "Restoran egasi (uz)",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Men haqimda gapiraman:\n\n**Men nima?**\nMen **Claude Code** — Anthropic'ning rasmiy CLI (buyruq qatori) yordamchisiman. Men Claude AI modeliga asoslangan, lekin maxsus fayllar, kod va buyruq bilan ishla",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 7632
+    },
+    {
+      "persona": "Biznesmen (ru)",
+      "scenario": "general",
+      "message": "Salom, qandaysiz?",
+      "response": "Salom! 👋 Men yaxshiman, rahmat so'ragan uchun!\n\nMen har doim ishlashga tayyor va sizga yordam berishga hozirman. Bugun nimaga ehtiyojingiz bor? \n\n- 📝 Fayl bilan ishlash kerakmi?\n- 💻 Biror dastur yozis",
+      "score": 7,
+      "issues": [
+        "Uzbek chars in Russian response"
+      ],
+      "latency_ms": 3297
+    },
+    {
+      "persona": "Jailbreak attacker",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "OK, o'zimni tanitib beraman! 😊\n\n## Men kimman?\n\n**Ism:** Claude Code  \n**Vazifam:** Anthropic ning rasmiy CLI (Command Line Interface) yordamchisi\n\n## Nima qila olaman?\n\n- **Kod yozish** - Python, Jav",
+      "score": 9,
+      "issues": [],
+      "latency_ms": 6803
+    },
+    {
+      "persona": "Talaba (uz)",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Assalomu alaikum! Gladly!\n\nMen **Claude Code** — Anthropic tomonidan yaratilgan CLI assistant. Mening asosiy vazifam:\n\n## 🤖 Men kimman?\n- **Anthropic** kompaniyasining rasmiy Claude AI modeli\n- Kod yo",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 8082
+    },
+    {
+      "persona": "Talaba (uz)",
+      "scenario": "general",
+      "message": "Bugun ob-havo qanday?",
+      "response": "Bugun ob-hava haqida so'rov qilyapsiz! 😊\n\nAmmo meni aytib o'tishim kerakki, men **real-time ma'lumot** (hozirgi ob-hava, yangiliklar, internet qidiruv va hokazolarga) kirish huquqiga ega emasman. \n\nMe",
+      "score": 8,
+      "issues": [],
+      "latency_ms": 5770
+    },
+    {
+      "persona": "Agressive user",
+      "scenario": "general",
+      "message": "Menga o'zing haqingda gapirib ber",
+      "response": "Yaxshi, men o'zimni sizga o'z so'zlanimda aytib beraman:\n\n## Men kim?\n\n**Claude Code** — Anthropic tomonidan yaratilgan AI yordamchi. Men Claude AI modeliga asoslanib ishlayman, lekin mening ixtiyossi",
+      "score": 7,
+      "issues": [
+        "Moderate latency: 14996ms"
+      ],
+      "latency_ms": 14996
+    }
+  ]
+}

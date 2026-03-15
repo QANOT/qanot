@@ -11,6 +11,10 @@ from qanot.utils import truncate_with_marker
 logger = logging.getLogger(__name__)
 
 MAX_FILE_CHARS = 20_000
+
+
+def _truncate_content(content: str, max_chars: int) -> str:
+    return truncate_with_marker(content, max_chars)
 MAX_TOTAL_CHARS = 150_000
 
 _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
