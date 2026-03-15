@@ -9,8 +9,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Templates bundled inside qanot package (pip install) or repo root (Docker)
-_pkg_templates = Path(__file__).resolve().parent.parent / "templates"
-_repo_templates = Path(__file__).resolve().parent.parent.parent / "templates"
+_pkg_root = Path(__file__).resolve().parent.parent
+_pkg_templates = _pkg_root / "templates"
+_repo_templates = _pkg_root.parent / "templates"
 TEMPLATE_DIR = _pkg_templates if _pkg_templates.exists() else _repo_templates
 
 
