@@ -105,8 +105,9 @@ def _generate_launchd(config_path: Path) -> str:
     log_path = str(resolved.parent / "qanot.log")
     name = _service_name(config_path)
 
-    # Split command for ProgramArguments
-    parts = qanot.split()
+    # Split command for ProgramArguments (shlex handles paths with spaces)
+    import shlex
+    parts = shlex.split(qanot)
     args_xml = "\n".join(f"    <string>{p}</string>" for p in parts)
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
