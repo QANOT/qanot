@@ -80,7 +80,6 @@ def chunk_text(
             else:
                 # Single segment exceeds max — split by words
                 words = segment.split()
-                current = ""
                 for word in words:
                     test = f"{current} {word}".strip()
                     if len(test) <= max_chars:
