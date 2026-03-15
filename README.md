@@ -179,29 +179,28 @@ User → Telegram → Agent Loop (25 iterations max)
 
 ## Compared to Alternatives
 
-| Feature | Qanot | OpenClaw | LangChain |
-|---------|-------|----------|-----------|
-| Telegram-native | ✅ | ✅ | ❌ |
-| 2-command setup | ✅ | ✅ | ❌ |
-| Multi-agent delegation | ✅ | ✅ | ❌ |
+| Feature | Qanot | OpenClaw | LangChain/LangGraph |
+|---------|-------|----------|---------------------|
+| Telegram-native | ✅ | ✅ | ❌ (needs integration) |
+| Multi-channel (Discord, Slack, etc.) | ❌ Telegram only | ✅ 22 channels | ❌ (needs integration) |
+| 2-command setup | ✅ | ✅ | ❌ (code required) |
+| Multi-agent delegation | ✅ | ✅ | ✅ LangGraph |
 | Multi-provider failover | ✅ | ✅ | ✅ |
-| Built-in RAG | ✅ | ✅ | ✅ |
-| 3-tier memory (WAL+daily+long-term) | ✅ | ⚠️ 2-tier | ❌ |
-| 3-tier model routing | ✅ Haiku/Sonnet/Opus | ✅ alias | ❌ |
+| Built-in RAG | ✅ hybrid | ✅ hybrid | ✅ (via chains) |
+| Memory system | ✅ 3-tier (WAL+daily+long-term) | ✅ 2-tier | ✅ LangGraph checkpoints |
+| Model routing | ✅ 3-tier auto | ✅ alias-based | ❌ |
 | Self-learning (workspace evolve) | ✅ | ✅ | ❌ |
-| Voice I/O (4 providers) | ✅ | ✅ | ❌ |
-| Streaming (native draft) | ✅ | ✅ | ❌ |
-| Exec security + inline approval | ✅ | ✅ | ❌ |
-| Per-user rate limiting | ✅ | ✅ | ❌ |
-| Safe file write (jail) | ✅ | ✅ | ❌ |
-| SecretRef (env/file) | ✅ | ✅ | ❌ |
-| Per-user cost tracking | ✅ | ❌ | ❌ |
-| Ollama zero-config | ✅ | ❌ | ❌ |
-| File sharing via Telegram | ✅ | ❌ | ❌ |
-| Synthetic user testing | ✅ agent_eval.py | ❌ | ❌ |
-| Web dashboard | ✅ | ❌ | ❌ |
-| Lightweight (143MB RAM) | ✅ | ❌ (1.9GB) | ❌ |
-| Uzbek voice support | ✅ | ❌ | ❌ |
+| Voice I/O | ✅ 4 providers | ✅ ElevenLabs | ❌ |
+| Streaming | ✅ sendMessageDraft | ✅ partial edit | ✅ |
+| Browser automation | ❌ | ✅ CDP/Chrome | ❌ |
+| Exec security | ✅ 3-tier + inline buttons | ✅ sandbox + approvals | ❌ |
+| Web dashboard | ✅ | ✅ (Control UI) | ✅ LangSmith |
+| Per-user cost tracking | ✅ | ❌ | ✅ LangSmith |
+| Ollama / local LLM | ✅ zero-config | ❌ | ✅ (via config) |
+| Lightweight | ✅ 143MB RAM | ❌ 1.9GB RAM | ⚠️ varies |
+| Observability | ✅ dashboard + eval | ⚠️ basic logs | ✅ LangSmith |
+| Uzbek voice (Muxlisa, Aisha) | ✅ | ❌ | ❌ |
+| Community & ecosystem | 🌱 new | ✅ 313K stars, 5700 skills | ✅ 34M downloads/mo |
 
 ---
 
