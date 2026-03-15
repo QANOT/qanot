@@ -839,9 +839,14 @@ def register_delegate_tools(
 
     async def converse_with_agent(params: dict) -> str:
         """Start a multi-turn conversation with an agent (ping-pong)."""
-        message = params.get("message", "").strip()
+        message = params.get("message", "")
+        if not isinstance(message, str):
+            return json.dumps({"error": "message must be a string"})
+        message = message.strip()
         if not message:
             return json.dumps({"error": "message is required"})
+        if len(message) > 10000:
+            return json.dumps({"error": f"message too long ({len(message)} chars, max 10000)"})
 
         agent_id = params.get("agent_id", "researcher").lower()
         if agent_id not in available_agents:
