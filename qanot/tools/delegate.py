@@ -14,6 +14,7 @@ Agent-to-agent access control via delegate_allow config field.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
