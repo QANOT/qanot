@@ -528,4 +528,214 @@ class QanotPlugin(Plugin):
             "O'qilmagan chatlar — javob kutayotgan mijozlar ro'yxati.", {
             "type": "object", "properties": {}}, unread_chats))
 
+        # ── COMPANIES (Kompaniyalar) ──
+        _simple("amocrm_get_companies", "Kompaniyalar ro'yxati yoki qidirish.", "/companies", {
+            "type": "object", "properties": {
+                "query": {"type": "string", "description": "Qidiruv so'zi (kompaniya nomi)"},
+                "page": {"type": "number", "description": "Sahifa raqami"},
+                "limit": {"type": "number", "description": "Har sahifadagi natijalar (max 250)"},
+            }})
+        _simple("amocrm_get_company", "Bitta kompaniya tafsilotlari.", "/companies/{company_id}", {
+            "type": "object", "required": ["company_id"], "properties": {
+                "company_id": {"type": "number", "description": "Kompaniya ID"},
+            }}, "company_id")
+
+        # Create company
+        async def create_company(p: dict) -> str:
+            try:
+                body: dict[str, Any] = {"name": p.get("name", "")}
+                if p.get("custom_fields_values"):
+                    body["custom_fields_values"] = p["custom_fields_values"]
+                return self._ok(await c.post("/companies", [body]))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_create_company", "Yangi kompaniya yaratish.", {
+            "type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "Kompaniya nomi"},
+                "custom_fields_values": {"type": "array", "description": "Custom fieldlar [{field_id, values: [{value}]}]"},
+            }}, create_company))
+
+        # ── TAGS (Teglar) ──
+        async def get_tags(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                return self._ok(await c.get(f"/{entity_type}/tags"))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_tags", "Teglar ro'yxati (lidlar, kontaktlar yoki kompaniyalar uchun).", {
+            "type": "object", "properties": {
+                "entity_type": {"type": "string", "description": "Entity turi: leads, contacts yoki companies (default: leads)"},
+            }}, get_tags))
+
+        async def add_tags(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                entity_id = p.get("entity_id")
+                if not entity_id:
+                    return self._err("entity_id majburiy")
+                tags = p.get("tags", [])
+                body = [{"name": t.get("name", "")} if isinstance(t, dict) else {"name": t} for t in tags]
+                return self._ok(await c.post(f"/{entity_type}/{entity_id}/tags", body))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_add_tags", "Entity ga teg qo'shish (lid, kontakt yoki kompaniya).", {
+            "type": "object", "required": ["entity_id", "tags"], "properties": {
+                "entity_type": {"type": "string", "description": "Entity turi: leads, contacts yoki companies (default: leads)"},
+                "entity_id": {"type": "number", "description": "Lid, kontakt yoki kompaniya ID"},
+                "tags": {"type": "array", "description": "Teglar ro'yxati [{name: 'teg_nomi'}]", "items": {"type": "object", "properties": {"name": {"type": "string"}}}},
+            }}, add_tags))
+
+        # ── INCOMING LEADS (Kiruvchi murojaatlar) ──
+        _simple("amocrm_get_incoming_leads", "Kiruvchi (unsorted) murojaatlar ro'yxati.", "/leads/unsorted", {
+            "type": "object", "properties": {
+                "page": {"type": "number", "description": "Sahifa raqami"},
+                "limit": {"type": "number", "description": "Har sahifadagi natijalar"},
+            }})
+
+        async def accept_incoming_lead(p: dict) -> str:
+            try:
+                uid = p.get("uid")
+                if not uid:
+                    return self._err("uid majburiy")
+                body: dict[str, Any] = {}
+                if p.get("user_id") is not None:
+                    body["user_id"] = p["user_id"]
+                if p.get("status_id") is not None:
+                    body["status_id"] = p["status_id"]
+                return self._ok(await c.post(f"/leads/unsorted/{uid}/accept", body or None))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_accept_incoming_lead", "Kiruvchi murojaatni qabul qilish.", {
+            "type": "object", "required": ["uid"], "properties": {
+                "uid": {"type": "string", "description": "Kiruvchi murojaat UID"},
+                "user_id": {"type": "number", "description": "Mas'ul shaxs ID"},
+                "status_id": {"type": "number", "description": "Bosqich ID"},
+            }}, accept_incoming_lead))
+
+        _simple("amocrm_get_incoming_summary", "Kiruvchi murojaatlar umumiy statistikasi.", "/leads/unsorted/summary", {
+            "type": "object", "properties": {}})
+
+        # ── LINKS (Bog'lanishlar) ──
+        async def get_links(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                entity_id = p.get("entity_id")
+                if not entity_id:
+                    return self._err("entity_id majburiy")
+                return self._ok(await c.get(f"/{entity_type}/{entity_id}/links"))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_links", "Entity bilan bog'langan elementlar (lidlar, kontaktlar, kompaniyalar).", {
+            "type": "object", "required": ["entity_id"], "properties": {
+                "entity_type": {"type": "string", "description": "Entity turi: leads, contacts yoki companies (default: leads)"},
+                "entity_id": {"type": "number", "description": "Entity ID"},
+            }}, get_links))
+
+        async def link_entities(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                entity_id = p.get("entity_id")
+                if not entity_id:
+                    return self._err("entity_id majburiy")
+                to_entity_id = p.get("to_entity_id")
+                to_entity_type = p.get("to_entity_type", "contacts")
+                if not to_entity_id:
+                    return self._err("to_entity_id majburiy")
+                body = [{"to_entity_id": to_entity_id, "to_entity_type": to_entity_type}]
+                return self._ok(await c.post(f"/{entity_type}/{entity_id}/link", body))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_link_entities", "Ikki entity ni bir-biriga bog'lash (lid-kontakt, lid-kompaniya va h.k.).", {
+            "type": "object", "required": ["entity_id", "to_entity_id"], "properties": {
+                "entity_type": {"type": "string", "description": "Asosiy entity turi: leads, contacts yoki companies (default: leads)"},
+                "entity_id": {"type": "number", "description": "Asosiy entity ID"},
+                "to_entity_id": {"type": "number", "description": "Bog'lanadigan entity ID"},
+                "to_entity_type": {"type": "string", "description": "Bog'lanadigan entity turi: contacts, companies, leads (default: contacts)"},
+            }}, link_entities))
+
+        # ── CUSTOM FIELDS ──
+        async def get_custom_fields(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                return self._ok(await c.get(f"/{entity_type}/custom_fields"))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_custom_fields", "Custom fieldlar ro'yxati (lid, kontakt yoki kompaniya uchun).", {
+            "type": "object", "properties": {
+                "entity_type": {"type": "string", "description": "Entity turi: leads, contacts yoki companies (default: leads)"},
+            }}, get_custom_fields))
+
+        # ── NOTES expanded (Izohlar) ──
+        async def get_notes(p: dict) -> str:
+            try:
+                entity_type = p.get("entity_type", "leads")
+                entity_id = p.get("entity_id")
+                if not entity_id:
+                    return self._err("entity_id majburiy")
+                params: dict[str, Any] = {}
+                if p.get("limit"):
+                    params["limit"] = p["limit"]
+                return self._ok(await c.get(f"/{entity_type}/{entity_id}/notes", params if params else None))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_get_notes", "Entity izohlari ro'yxati (lid yoki kontakt).", {
+            "type": "object", "required": ["entity_id"], "properties": {
+                "entity_type": {"type": "string", "description": "Entity turi: leads yoki contacts (default: leads)"},
+                "entity_id": {"type": "number", "description": "Lid yoki kontakt ID"},
+                "limit": {"type": "number", "description": "Natijalar soni (max 250)"},
+            }}, get_notes))
+
+        # ── COMPLEX LEAD (Lid + kontakt birga) ──
+        async def create_complex_lead(p: dict) -> str:
+            try:
+                contact: dict[str, Any] = {"name": p.get("contact_name", "")}
+                custom_fields: list = []
+                if p.get("phone"):
+                    custom_fields.append({
+                        "field_code": "PHONE",
+                        "values": [{"value": p["phone"], "enum_code": "WORK"}],
+                    })
+                if p.get("email"):
+                    custom_fields.append({
+                        "field_code": "EMAIL",
+                        "values": [{"value": p["email"], "enum_code": "WORK"}],
+                    })
+                if custom_fields:
+                    contact["custom_fields_values"] = custom_fields
+                lead: dict[str, Any] = {
+                    "name": p.get("lead_name", "Yangi lid"),
+                    "_embedded": {"contacts": [contact]},
+                }
+                if p.get("price") is not None:
+                    lead["price"] = p["price"]
+                if p.get("pipeline_id") is not None:
+                    lead["pipeline_id"] = p["pipeline_id"]
+                return self._ok(await c.post("/leads/complex", [lead]))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("amocrm_create_complex_lead",
+            "Lid va kontaktni birga yaratish (complex lead). Telefon, email bilan.", {
+            "type": "object", "required": ["lead_name", "contact_name"], "properties": {
+                "lead_name": {"type": "string", "description": "Lid nomi"},
+                "price": {"type": "number", "description": "Narxi (so'm)"},
+                "contact_name": {"type": "string", "description": "Kontakt ismi"},
+                "phone": {"type": "string", "description": "Telefon raqam (+998...)"},
+                "email": {"type": "string", "description": "Email manzil"},
+                "pipeline_id": {"type": "number", "description": "Voronka ID"},
+            }}, create_complex_lead))
+
+        # ── SOURCES (Manbalar) ──
+        _simple("amocrm_get_sources", "Lid manbalari ro'yxati (reklama kanallari).", "/sources", {
+            "type": "object", "properties": {}})
+
+        # ── ACCOUNT INFO ──
+        _simple("amocrm_get_account", "amoCRM akkaunt ma'lumotlari.", "/account", {
+            "type": "object", "properties": {
+                "with": {"type": "string", "description": "Qo'shimcha: amojo_id,users_groups,task_types,version,entity_names,datetime_settings"},
+            }})
+
+        # ── WEBHOOKS ──
+        _simple("amocrm_get_webhooks", "Ro'yxatga olingan webhooklar.", "/webhooks", {
+            "type": "object", "properties": {}})
+
         return tools
