@@ -344,13 +344,14 @@ async def summarize_chunks(
             continue
 
         # Retry up to 3 times
-        for attempt in range(3):
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
                 summary = await _generate_summary(provider, text, summary)
                 break
             except Exception as e:
                 logger.warning("Summarization attempt %d failed: %s", attempt + 1, e)
-                if attempt == 2:
+                if attempt == max_attempts - 1:
                     raise
                 await asyncio.sleep(min(2 ** attempt, 5))
 
