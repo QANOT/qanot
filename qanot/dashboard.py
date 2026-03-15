@@ -121,8 +121,7 @@ class Dashboard:
         if not path.exists() or path.suffix != ".md":
             return web.json_response({"error": "not found"}, status=404)
 
-        content = path.read_text(encoding="utf-8")
-        return web.json_response({"name": filename, "content": content})
+        return web.json_response({"name": filename, "content": path.read_text(encoding="utf-8")})
 
     async def _handle_api_tools(self, request: web.Request) -> web.Response:
         tools = [
