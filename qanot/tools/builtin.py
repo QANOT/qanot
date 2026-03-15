@@ -440,9 +440,7 @@ def register_builtin_tools(
         # Size check — Telegram limit 50MB
         size = os.path.getsize(full)
         if size > MAX_FILE_SIZE:
-            size_mb = size / 1024 / 1024
-            max_mb = MAX_FILE_SIZE // (1024 * 1024)
-            return json.dumps({"error": f"File too large: {size_mb:.1f}MB (max {max_mb}MB)"})
+            return json.dumps({"error": f"File too large: {size / 1024 / 1024:.1f}MB (max {MAX_FILE_SIZE // (1024 * 1024)}MB)"})
         # Push to pending files queue (telegram adapter will send it)
         from qanot.agent import Agent
         if Agent._instance:
