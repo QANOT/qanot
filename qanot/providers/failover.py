@@ -155,6 +155,12 @@ class FailoverProvider(LLMProvider):
             logger.warning("All providers in cooldown, forcing first provider")
         return self._build_try_order(available)
 
+    def _mark_active(self, idx: int) -> None:
+        """Update active-provider state after a successful call."""
+        self.profiles[idx].mark_success()
+        self._active_index = idx
+        self.model = self.profiles[idx].model
+
     async def chat(
         self,
         messages: list[dict],
@@ -170,10 +176,7 @@ class FailoverProvider(LLMProvider):
             provider = self._ensure_provider(idx)
             try:
                 response = await provider.chat(messages, tools, system)
-                # Success — update state
-                profile.mark_success()
-                self._active_index = idx
-                self.model = profile.model
+                self._mark_active(idx)
                 return response
             except Exception as e:
                 error_type = classify_error(e)
@@ -206,10 +209,7 @@ class FailoverProvider(LLMProvider):
             try:
                 async for event in provider.chat_stream(messages, tools, system):
                     yield event
-                # Success
-                profile.mark_success()
-                self._active_index = idx
-                self.model = profile.model
+                self._mark_active(idx)
                 return
             except Exception as e:
                 error_type = classify_error(e)
