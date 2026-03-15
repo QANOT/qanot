@@ -126,7 +126,7 @@ def resolve_config_secrets(raw: dict) -> dict:
     # Resolve voice_api_keys dict
     voice_keys = raw.get("voice_api_keys", {})
     if isinstance(voice_keys, dict):
-        for name, val in voice_keys.items():
+        for name, val in list(voice_keys.items()):
             try:
                 voice_keys[name] = resolve_secret(val)
             except Exception as e:
