@@ -65,8 +65,7 @@ def _ensure_user_first(messages: list[dict]) -> list[dict]:
 
 def _sanitize_gemini_tools(tools: list[dict]) -> list[dict]:
     """Convert Anthropic-style tools to OpenAI format and strip unsupported keys."""
-    openai_tools = _anthropic_tools_to_openai(tools)
-    return _strip_unsupported_keys(openai_tools)
+    return _strip_unsupported_keys(_anthropic_tools_to_openai(tools))
 
 
 class GeminiProvider(OpenAIProvider):
