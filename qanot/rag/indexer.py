@@ -120,7 +120,7 @@ class MemoryIndexer:
             user_id: Filter by user.
 
         Returns:
-            List of result dicts with file, content, and score keys.
+            List of result dicts with file, content, score, and chunk_id keys.
         """
         rag_result = await self.engine.query(
             query,
