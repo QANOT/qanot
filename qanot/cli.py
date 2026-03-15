@@ -694,7 +694,6 @@ def cmd_stop(args: list[str]) -> None:
     pid_path = _pid_file(config_path)
     running, pid = _is_running(pid_path)
     if running:
-        import signal
         os.kill(pid, signal.SIGTERM)
         pid_path.unlink(missing_ok=True)
         print(f"  {_green('✓')} Bot stopped (PID {pid})")
