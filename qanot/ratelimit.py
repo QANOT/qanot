@@ -49,7 +49,6 @@ class RateLimiter:
             if now < unlock_time:
                 return False, f"Rate limit: {int(unlock_time - now)}s qoldi"
             del self._locked_until[user_id]
-            self._requests.pop(user_id, None)
 
         # Slide window: remove old timestamps
         timestamps = self._requests.get(user_id, [])
