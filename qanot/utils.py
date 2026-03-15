@@ -28,5 +28,4 @@ def truncate_with_marker(
     if removed <= 0:
         # Ratios sum to >= 1.0 for this max_chars; just hard-truncate
         return text[:max_chars]
-    marker = _TRUNCATION_MARKER.format(removed)
-    return text[:head] + marker + (text[-tail:] if tail else "")
+    return text[:head] + _TRUNCATION_MARKER.format(removed) + (text[-tail:] if tail else "")
