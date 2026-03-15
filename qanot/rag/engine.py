@@ -289,10 +289,9 @@ class RAGEngine:
                 continue
             created_at = result.metadata.get("created_at")
             if created_at:
-                age_days = max((now - created_at) / 86400, 0)
                 # Gentle decay: score * (1 / (1 + age_days/30))
                 # 1 day old → 0.97x, 7 days → 0.81x, 30 days → 0.50x, 90 days → 0.25x
-                decay = 1.0 / (1.0 + age_days / 30.0)
+                decay = 1.0 / (1.0 + max((now - created_at) / 86400, 0) / 30.0)
                 fused_scores[chunk_id] = base_score * decay
 
         # Sort by fused score (with temporal decay applied)
