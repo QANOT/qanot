@@ -145,12 +145,10 @@ def register_rag_tools(
         else:
             top_k = max(1, min(top_k, 100))
 
-        user_id = get_user_id()
-
         rag_result = await engine.query(
             query,
             top_k=top_k,
-            user_id=user_id or None,
+            user_id=get_user_id() or None,
         )
 
         results = [
