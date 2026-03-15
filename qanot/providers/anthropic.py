@@ -171,13 +171,7 @@ class AnthropicProvider(LLMProvider):
         # Extract usage
         usage_dict = self._extract_usage_dict(response.usage)
 
-        usage = Usage(
-            input_tokens=usage_dict["input_tokens"],
-            output_tokens=usage_dict["output_tokens"],
-            cache_read_input_tokens=usage_dict["cache_read_input_tokens"],
-            cache_creation_input_tokens=usage_dict["cache_creation_input_tokens"],
-            cost=self._calc_cost(usage_dict),
-        )
+        usage = self._build_usage(usage_dict)
 
         return ProviderResponse(
             content="".join(text_parts),
