@@ -296,8 +296,9 @@ async def fetch_link_previews(
                 title=result["title"],
                 preview=result["preview"][:remaining],
             )
+            preview_len = len(result["preview"]) + len(result["title"]) + len(result["url"])
         previews.append(result)
-        total_chars += len(result["preview"]) + len(result["title"]) + len(result["url"])
+        total_chars += preview_len
 
     if not previews:
         return ""
