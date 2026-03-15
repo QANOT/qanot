@@ -197,7 +197,7 @@ async def muxlisa_tts(
     speaker = 0
     if voice:
         speaker = MUXLISA_VOICES.get(voice.lower(), 0)
-        if isinstance(voice, str) and voice.isdigit():
+        if voice.isdigit():
             speaker = int(voice)
 
     payload = {
