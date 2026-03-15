@@ -28,6 +28,11 @@ _SIMPLE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|sure|bye|goodbye|good morning|good evening|good night|got it|understood|cool|nice|great|awesome)\s*[.!?]*$", re.IGNORECASE),
 ]
 
+# Routing score thresholds
+_GREETING_SCORE = 0.1    # below this = greeting/ack → Haiku
+_MODERATE_SCORE = 0.4   # below this = moderate → Sonnet, above = complex → Opus
+_ACTIVE_CTX_SCORE = 0.5  # above this = active/tool-heavy context
+
 # Indicators of complex messages
 _COMPLEX_INDICATORS = [
     r"```",              # code blocks
