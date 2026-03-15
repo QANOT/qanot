@@ -217,7 +217,7 @@ async def fetch_url_preview(
             # Try to break at last sentence or paragraph boundary
             for boundary in ("\n\n", "\n", ". ", "? ", "! "):
                 last_break = preview.rfind(boundary)
-                if last_break > max_chars // 2:
+                if last_break > len(preview) // 2:
                     preview = preview[: last_break + len(boundary)].strip()
                     break
 
