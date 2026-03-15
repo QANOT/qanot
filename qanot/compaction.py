@@ -224,14 +224,13 @@ def split_messages_by_token_share(
 
     # Precompute per-message token counts to avoid double estimation
     msg_token_cache: dict[int, int] = {}
+    total_tokens = 0
+    for msg in messages:
+        t = estimate_message_tokens(msg)
+        msg_token_cache[id(msg)] = t
+        total_tokens += t
     if _precomputed_total is not None:
         total_tokens = _precomputed_total
-    else:
-        total_tokens = 0
-        for msg in messages:
-            t = estimate_message_tokens(msg)
-            msg_token_cache[id(msg)] = t
-            total_tokens += t
 
     target_tokens = total_tokens / parts
 
