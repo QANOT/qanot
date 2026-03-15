@@ -125,7 +125,7 @@ class SessionWriter:
 
     def new_session(self, session_id: str | None = None) -> None:
         """Start a new session with an optional custom ID."""
-        self._session_id = session_id or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._session_id = session_id
         self._msg_counter = 0
 
     # ── Session Replay ──
