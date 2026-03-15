@@ -171,7 +171,7 @@ async def main() -> None:
             return False
         return await adapter.request_approval(
             chat_id=chat_id,
-            user_id=int(user_id) if user_id.isdigit() else 0,
+            user_id=int(user_id) if user_id.isdecimal() else 0,
             command=command,
             reason=reason,
         )
