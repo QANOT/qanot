@@ -93,6 +93,11 @@ def wal_scan(user_message: str) -> list[WALEntry]:
     return entries
 
 
+def _uid_tag(user_id: str) -> str:
+    """Return a formatted user tag string, or empty string if no user_id."""
+    return f" [user:{user_id}]" if user_id else ""
+
+
 def wal_write(
     entries: list[WALEntry],
     workspace_dir: str = "/data/workspace",
