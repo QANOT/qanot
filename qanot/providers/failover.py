@@ -160,13 +160,7 @@ class FailoverProvider(LLMProvider):
             available = [0]
             logger.warning("All providers in cooldown, forcing first provider")
 
-        # Try active provider first, then others
-        order = []
-        if self._active_index in available:
-            order.append(self._active_index)
-        for i in available:
-            if i not in order:
-                order.append(i)
+        order = self._build_try_order(available)
 
         last_error: Exception | None = None
         for idx in order:
@@ -205,12 +199,7 @@ class FailoverProvider(LLMProvider):
         if not available:
             available = [0]
 
-        order = []
-        if self._active_index in available:
-            order.append(self._active_index)
-        for i in available:
-            if i not in order:
-                order.append(i)
+        order = self._build_try_order(available)
 
         last_error: Exception | None = None
         for idx in order:
