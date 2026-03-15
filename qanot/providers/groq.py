@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from qanot.providers.openai import OpenAIProvider
 
+# Fallback pricing for unrecognised Groq models (same tier as llama-3.3-70b / groq/compound).
+_GROQ_DEFAULT_PRICING = {"input": 0.59, "output": 0.79}
+
 # Groq pricing per million tokens (March 2026)
 GROQ_PRICING = {
     # Llama 4 series
     "meta-llama/llama-4-scout-17b-16e-instruct": {"input": 0.11, "output": 0.18},
     # Llama 3.x series
-    "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79},
+    "llama-3.3-70b-versatile": _GROQ_DEFAULT_PRICING,
     "llama-3.1-8b-instant": {"input": 0.05, "output": 0.08},
     # Qwen / Kimi / Compound
     "qwen/qwen3-32b": {"input": 0.29, "output": 0.39},
     "moonshotai/kimi-k2-instruct": {"input": 0.20, "output": 0.20},
-    "groq/compound": {"input": 0.59, "output": 0.79},
+    "groq/compound": _GROQ_DEFAULT_PRICING,
     "groq/compound-mini": {"input": 0.05, "output": 0.08},
 }
 
@@ -49,5 +52,5 @@ class GroqProvider(OpenAIProvider):
         self.model = model.strip()
 
     def _calc_cost(self, inp: int, out: int) -> float:
-        prices = GROQ_PRICING.get(self.model, {"input": 0.59, "output": 0.79})
+        prices = GROQ_PRICING.get(self.model, _GROQ_DEFAULT_PRICING)
         return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
