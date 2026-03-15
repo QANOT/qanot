@@ -1298,9 +1298,7 @@ class Agent:
     def reset(self, user_id: str | None = None) -> None:
         """Reset conversation state for a user, or all if user_id is None."""
         if user_id is not None:
-            self._conversations.pop(user_id, None)
-            self._locks.pop(user_id, None)
-            self._last_active.pop(user_id, None)
+            self._remove_user_state(user_id)
         else:
             self._conversations.clear()
             self._locks.clear()
