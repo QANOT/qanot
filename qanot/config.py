@@ -127,8 +127,7 @@ class Config:
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
-        p = provider or self.voice_provider
-        return self.voice_api_keys.get(p, self.voice_api_key)
+        return self.voice_api_keys.get(provider or self.voice_provider, self.voice_api_key)
 
 
 def load_config(path: str | None = None) -> Config:
