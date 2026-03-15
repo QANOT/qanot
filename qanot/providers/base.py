@@ -16,10 +16,8 @@ class Usage:
     cost: float = 0.0
 
     def __post_init__(self) -> None:
-        self.input_tokens = max(0, int(self.input_tokens))
-        self.output_tokens = max(0, int(self.output_tokens))
-        self.cache_read_input_tokens = max(0, int(self.cache_read_input_tokens))
-        self.cache_creation_input_tokens = max(0, int(self.cache_creation_input_tokens))
+        for attr in ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'):
+            setattr(self, attr, max(0, int(getattr(self, attr))))
         self.cost = max(0.0, float(self.cost))
 
 
