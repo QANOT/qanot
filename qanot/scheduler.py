@@ -202,7 +202,7 @@ class CronScheduler:
         """Run an isolated agent for a cron job."""
         # Skip heartbeat/briefing if user is currently active (avoid wasting tokens)
         if job_name in ("heartbeat", "briefing") and not self._is_user_idle():
-            logger.info("Heartbeat skipped — user is active")
+            logger.info("%s skipped — user is active", job_name)
             return
 
         # Check if HEARTBEAT.md is empty (skip API call to save tokens)
