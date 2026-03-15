@@ -280,7 +280,7 @@ async function load(){
     mf.innerHTML=m.files.map(function(f){
       return '<div class="mem-file" onclick="viewFile(this)" data-name="'+f.name+'">'
         +'<span class="mem-file-name">'+f.name+'</span>'
-        +'<span class="mem-file-size">'+(f.size/1024).toFixed(1)+'K</span></div>';
+        +'<span class="mem-file-size">'+((f.size||0)/1024).toFixed(1)+'K</span></div>';
     }).join('');
 
   }catch(e){console.error('Dashboard load error:',e)}
