@@ -62,7 +62,7 @@ def _extract_image_from_response(response) -> tuple[bytes | None, str]:
         for part in response.candidates[0].content.parts:
             if part.inline_data is not None:
                 image_data = part.inline_data.data
-            elif part.text:
+            if part.text:
                 response_text = part.text
 
     return image_data, response_text
