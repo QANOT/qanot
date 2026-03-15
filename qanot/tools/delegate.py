@@ -153,7 +153,6 @@ def _send_notification(callback, event: str, entry: dict) -> None:
         return  # Don't notify for unknown events
 
     try:
-        import asyncio
         import inspect
         if inspect.iscoroutinefunction(callback):
             asyncio.create_task(callback(text))
