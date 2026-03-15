@@ -300,15 +300,10 @@ def register_agent_manager_tools(
             return json.dumps({"error": "id is required"})
 
         # Find and remove
-        found = False
-        for i, ad in enumerate(config.agents):
-            if ad.id == agent_id:
-                config.agents.pop(i)
-                found = True
-                break
-
-        if not found:
+        target = next((ad for ad in config.agents if ad.id == agent_id), None)
+        if target is None:
             return json.dumps({"error": f"Agent '{agent_id}' not found."})
+        config.agents.remove(target)
 
         # Stop bot if running
         was_running = await _stop_agent_bot(agent_id)
