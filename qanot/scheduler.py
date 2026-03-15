@@ -86,8 +86,7 @@ class CronScheduler:
         """Check if user has been idle long enough for heartbeat."""
         if self._last_user_activity == 0.0:
             return True  # No activity recorded yet
-        elapsed = asyncio.get_event_loop().time() - self._last_user_activity
-        return elapsed >= self._idle_threshold
+        return asyncio.get_event_loop().time() - self._last_user_activity >= self._idle_threshold
 
     def _load_jobs(self) -> list[dict]:
         """Load jobs from JSON file."""
