@@ -1085,19 +1085,18 @@ class TelegramAdapter:
 
         try:
             async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
-                if event.type == "text_delta" and not drafting_paused:
+                if event.type == "text_delta":
                     accumulated += event.text
-                    now = asyncio.get_running_loop().time()
-                    if now - last_flush >= interval and accumulated != last_sent_text:
-                        typing_task.cancel()
-                        await self._send_draft(chat_id, draft_id, accumulated)
-                        last_sent_text = accumulated
-                        last_flush = now
-
-                elif event.type == "text_delta" and drafting_paused:
-                    # Tool iteration done, new text arriving — resume drafting
-                    accumulated += event.text
-                    drafting_paused = False
+                    if drafting_paused:
+                        # Tool iteration done, new text arriving — resume drafting
+                        drafting_paused = False
+                    else:
+                        now = asyncio.get_running_loop().time()
+                        if now - last_flush >= interval and accumulated != last_sent_text:
+                            typing_task.cancel()
+                            await self._send_draft(chat_id, draft_id, accumulated)
+                            last_sent_text = accumulated
+                            last_flush = now
 
                 elif event.type == "tool_use":
                     # Pause drafting during tool execution to avoid race
