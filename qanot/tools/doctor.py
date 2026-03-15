@@ -148,7 +148,7 @@ def _check_memory(config: "Config") -> tuple[dict, list[str]]:
     if memory_dir.is_dir():
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         for f in memory_dir.iterdir():
-            if f.suffix == ".md" and f.stem not in ("working-buffer",):
+            if f.suffix == ".md" and f.stem != "working-buffer":
                 try:
                     # Daily notes are named YYYY-MM-DD.md
                     note_date = datetime.strptime(f.stem, "%Y-%m-%d").replace(
