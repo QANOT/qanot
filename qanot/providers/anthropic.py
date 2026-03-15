@@ -85,6 +85,16 @@ class AnthropicProvider(LLMProvider):
         # Increase max_tokens to accommodate thinking budget
         kwargs["max_tokens"] = self._thinking_budget + 8192
 
+    def _build_usage(self, usage_dict: dict) -> Usage:
+        """Construct a Usage object from a raw usage dict."""
+        return Usage(
+            input_tokens=usage_dict["input_tokens"],
+            output_tokens=usage_dict["output_tokens"],
+            cache_read_input_tokens=usage_dict["cache_read_input_tokens"],
+            cache_creation_input_tokens=usage_dict["cache_creation_input_tokens"],
+            cost=self._calc_cost(usage_dict),
+        )
+
     def _calc_cost(self, usage: dict) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
         inp = usage.get("input_tokens", 0)
