@@ -184,9 +184,9 @@ def register_agent_manager_tools(
             logger.info("Created agent identity: %s", soul_path)
 
         # Re-register delegate tools to include new agent in enum
-        from qanot.tools.delegate import register_delegate_tools, _get_available_agents
-        # Update available agents cache by re-registering
-        # (tools with same name get overwritten)
+        from qanot.tools.delegate import register_delegate_tools
+        # Re-register so the updated agent list is reflected in the tool schema
+        # (tools with same name get overwritten in the registry)
         register_delegate_tools(
             registry, config, provider, parent_registry,
             get_user_id=get_user_id,
