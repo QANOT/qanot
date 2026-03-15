@@ -202,7 +202,7 @@ class AgentBot:
         from qanot.context import ContextTracker
         from qanot.session import SessionWriter
         from qanot.tools.builtin import register_builtin_tools
-        from qanot.tools.delegate import register_delegate_tools
+        from qanot.tools.delegate import register_delegate_tools, _load_agent_identity
 
         # Create agent-specific provider if model/provider differs
         provider = self._create_agent_provider()
@@ -220,7 +220,6 @@ class AgentBot:
         session = SessionWriter(self.config.sessions_dir)
 
         # Build system prompt from agent identity or config
-        from qanot.tools.delegate import _load_agent_identity
         identity = _load_agent_identity(self.config.workspace_dir, self.agent_def.id)
         system_prompt = identity or self.agent_def.prompt or (
             f"You are {self.agent_def.name or self.agent_def.id}. "
