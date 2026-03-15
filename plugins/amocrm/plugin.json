@@ -1,0 +1,8 @@
+{
+    "name": "amocrm",
+    "version": "1.0.0",
+    "description": "amoCRM CRM integration — leads, contacts, pipelines, tasks",
+    "author": "Qanot AI",
+    "dependencies": ["aiohttp"],
+    "required_config": ["subdomain", "client_id", "client_secret", "access_token", "refresh_token", "redirect_uri"]
+}
