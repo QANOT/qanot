@@ -94,8 +94,9 @@ class MemoryIndexer:
         if self._indexed_hashes.get(source) == content_hash:
             return 0
 
-        # Re-index: delete old chunks, ingest new ones
-        self.engine.store.delete_source(source)
+        # Delete stale chunks only when a prior version exists, then ingest fresh content
+        if source in self._indexed_hashes:
+            self.engine.store.delete_source(source)
         chunk_ids = await self.engine.ingest(
             content,
             source=source,
