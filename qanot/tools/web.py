@@ -271,8 +271,7 @@ def _format_results(data: dict, query: str) -> str:
             "url": r.get("url", ""),
             "description": r.get("description", "").replace("<strong>", "").replace("</strong>", ""),
         }
-        age = r.get("age")
-        if age:
+        if age := r.get("age"):
             entry["age"] = age
         formatted.append(entry)
 
