@@ -46,7 +46,7 @@ class MemoryIndexer:
         # Index shared daily notes (workspace root, OpenClaw-style)
         memory_dir = self.workspace_dir / "memory"
         if memory_dir.exists():
-            for note_path in sorted(memory_dir.glob("*.md"), reverse=True)[:30]:
+            for note_path in sorted(memory_dir.glob("*.md"), reverse=True)[:self._MAX_DAILY_NOTES]:
                 total_chunks += await self._index_file(note_path, user_id)
 
         if total_chunks > 0:
