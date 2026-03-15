@@ -54,6 +54,11 @@ def _service_name(config_path: Path) -> str:
     return "qanot"
 
 
+def _task_name(service_name: str) -> str:
+    """Derive a Windows Scheduled Task name from the service name."""
+    return f"Qanot_{service_name}"
+
+
 # ── Generators ───────────────────────────────────────────────
 
 def _generate_systemd(config_path: Path) -> str:
