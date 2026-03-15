@@ -202,7 +202,8 @@ def write_daily_note(
     All users' conversation summaries go to the same daily file,
     tagged with user_id. This is the OpenClaw approach.
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
     ws = Path(workspace_dir)
     memory_dir = ws / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
@@ -212,7 +213,7 @@ def write_daily_note(
     if not daily_path.exists():
         daily_path.write_text(f"# Daily Notes — {today}\n\n", encoding="utf-8")
 
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    ts = now.strftime("%H:%M:%S")
     uid_tag = _uid_tag(user_id)
     with open(daily_path, "a", encoding="utf-8") as f:
         f.write(f"\n## [{ts}]{uid_tag}\n{content}\n")
