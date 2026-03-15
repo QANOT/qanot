@@ -213,7 +213,7 @@ def write_daily_note(
         daily_path.write_text(f"# Daily Notes — {today}\n\n", encoding="utf-8")
 
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    uid_tag = f" [user:{user_id}]" if user_id else ""
+    uid_tag = _uid_tag(user_id)
     with open(daily_path, "a", encoding="utf-8") as f:
         f.write(f"\n## [{ts}]{uid_tag}\n{content}\n")
 
