@@ -227,24 +227,18 @@ def load_config(path: str | None = None) -> Config:
                     f"Config field '{key}' contains invalid control characters"
                 )
     # Validate numeric fields with security-relevant bounds
-    if 'webhook_port' in simple:
-        port = simple['webhook_port']
-        if not isinstance(port, int) or port < 1 or port > 65535:
-            raise ValueError(
-                f"Config field 'webhook_port' must be an integer between 1 and 65535, got {port!r}"
-            )
-    if 'max_concurrent' in simple:
-        mc = simple['max_concurrent']
-        if not isinstance(mc, int) or mc < 1 or mc > 100:
-            raise ValueError(
-                f"Config field 'max_concurrent' must be an integer between 1 and 100, got {mc!r}"
-            )
-    if 'history_limit' in simple:
-        hl = simple['history_limit']
-        if not isinstance(hl, int) or hl < 0 or hl > 10000:
-            raise ValueError(
-                f"Config field 'history_limit' must be an integer between 0 and 10000, got {hl!r}"
-            )
+    _INT_BOUNDS = [
+        ('webhook_port', 1, 65535),
+        ('max_concurrent', 1, 100),
+        ('history_limit', 0, 10000),
+    ]
+    for _field, _lo, _hi in _INT_BOUNDS:
+        if _field in simple:
+            _v = simple[_field]
+            if not isinstance(_v, int) or _v < _lo or _v > _hi:
+                raise ValueError(
+                    f"Config field '{_field}' must be an integer between {_lo} and {_hi}, got {_v!r}"
+                )
 
     # Also validate provider and agent secrets
     for pc in provider_configs:
