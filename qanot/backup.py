@@ -147,8 +147,7 @@ def _rotate_backups(backups_root: Path) -> None:
 
         # Remove oldest if over limit
         if len(backup_dirs) > MAX_BACKUPS:
-            to_remove = backup_dirs[:-MAX_BACKUPS]
-            for oldest in to_remove:
+            for oldest in backup_dirs[:-MAX_BACKUPS]:
                 try:
                     shutil.rmtree(oldest)
                     logger.info("Rotated old backup: %s", oldest.name)
