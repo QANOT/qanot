@@ -94,25 +94,19 @@ class Dashboard:
         ws = Path(self.config.workspace_dir)
         files = []
 
+        def _entry(name: str, path: Path) -> dict:
+            st = path.stat()
+            return {"name": name, "size": st.st_size, "modified": st.st_mtime}
+
         # Workspace root files
         for f in sorted(ws.glob("*.md")):
-            st = f.stat()
-            files.append({
-                "name": f.name,
-                "size": st.st_size,
-                "modified": st.st_mtime,
-            })
+            files.append(_entry(f.name, f))
 
         # Daily notes
         mem_dir = ws / "memory"
         if mem_dir.exists():
             for f in sorted(mem_dir.glob("*.md"), reverse=True):
-                st = f.stat()
-                files.append({
-                    "name": f"memory/{f.name}",
-                    "size": st.st_size,
-                    "modified": st.st_mtime,
-                })
+                files.append(_entry(f"memory/{f.name}", f))
 
         return web.json_response({"files": files})
 
