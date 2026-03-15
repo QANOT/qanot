@@ -269,14 +269,14 @@ def _check_sessions(config: "Config") -> dict:
     details.append(f"sessions dir size: {_file_size_str(dir_size)}")
 
     # Session files in last 7 days
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=7)).timestamp()
     recent_count = 0
     latest_ts: float = 0.0
     try:
         for f in sd.iterdir():
             if f.suffix == ".jsonl" and f.is_file():
                 mtime = f.stat().st_mtime
-                if mtime > cutoff.timestamp():
+                if mtime > cutoff_ts:
                     recent_count += 1
                 if mtime > latest_ts:
                     latest_ts = mtime
