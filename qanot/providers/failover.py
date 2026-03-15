@@ -137,6 +137,12 @@ class FailoverProvider(LLMProvider):
         """Get indices of available (non-cooled-down) profiles."""
         return [i for i, p in enumerate(self.profiles) if p.is_available]
 
+    def _build_try_order(self, available: list[int]) -> list[int]:
+        """Return provider indices to try: active first, then remaining available."""
+        order = [self._active_index] if self._active_index in available else []
+        order += [i for i in available if i not in order]
+        return order
+
     @property
     def active_profile(self) -> ProviderProfile:
         return self.profiles[self._active_index]
