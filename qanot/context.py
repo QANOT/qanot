@@ -299,8 +299,6 @@ class ContextTracker:
             (self.workspace_dir / "memory" / f"{today}.md", "Today's Notes"),
         ]
 
-        MAX_RECOVERY_FILE_CHARS = 20_000  # Limit per file to prevent context bloat
-
         parts = []
         for path, heading in sources:
             if path.exists():
