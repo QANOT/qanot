@@ -96,5 +96,5 @@ _OVERFLOW_PATTERNS = [
 
 def is_context_overflow_error(msg: str) -> bool:
     """Check if an error message indicates context window overflow."""
-    msg_lower = msg.lower() if not msg.islower() else msg
+    msg_lower = msg.lower()
     return any(pattern in msg_lower for pattern in _OVERFLOW_PATTERNS)
