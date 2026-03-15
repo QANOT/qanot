@@ -315,12 +315,10 @@ class OpenAIProvider(LLMProvider):
         inp = u.prompt_tokens if u else 0
         out = u.completion_tokens if u else 0
 
-        stop_reason = self._stop_reason(tool_calls)
-
         return ProviderResponse(
             content=text,
             tool_calls=tool_calls,
-            stop_reason=stop_reason,
+            stop_reason=self._stop_reason(tool_calls),
             usage=Usage(
                 input_tokens=inp,
                 output_tokens=out,
