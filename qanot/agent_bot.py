@@ -173,6 +173,14 @@ class AgentBot:
         if not text:
             return
 
+        MAX_INPUT_LEN = 16_000
+        if len(text) > MAX_INPUT_LEN:
+            text = text[:MAX_INPUT_LEN]
+            logger.warning(
+                "AgentBot '%s': input from user %s truncated to %d chars",
+                self.agent_def.id, user_id, MAX_INPUT_LEN,
+            )
+
         # Show typing indicator
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
 
