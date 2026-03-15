@@ -285,7 +285,6 @@ async def kotib_transcribe(
                     raise RuntimeError(f"KotibAI STT failed: {result}")
                 text = result.get("text", "")
                 # Strip "Speaker N:" prefixes from diarization output
-                import re
                 text = re.sub(r"Speaker \d+:\s*", "", text).strip()
                 return TranscriptionResult(text=text, language=language)
     finally:
