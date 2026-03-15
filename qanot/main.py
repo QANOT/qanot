@@ -39,6 +39,13 @@ def _find_gemini_key(config) -> str | None:
     return None
 
 
+def _anthropic_thinking_kwargs(provider_type: str, config) -> dict:
+    """Return thinking keyword arguments for Anthropic providers; empty dict otherwise."""
+    if provider_type == "anthropic":
+        return {"thinking_level": config.thinking_level, "thinking_budget": config.thinking_budget}
+    return {}
+
+
 def _create_provider(config):
     """Create LLM provider based on config.
 
@@ -55,18 +62,13 @@ def _create_provider(config):
     if config.providers:
         profiles = []
         for pc in config.providers:
-            # Pass thinking config only to anthropic providers
-            thinking_kwargs = {}
-            if pc.provider == "anthropic":
-                thinking_kwargs["thinking_level"] = config.thinking_level
-                thinking_kwargs["thinking_budget"] = config.thinking_budget
             profiles.append(ProviderProfile(
                 name=pc.name,
                 provider_type=pc.provider,
                 api_key=pc.api_key,
                 model=pc.model,
                 base_url=pc.base_url or None,
-                **thinking_kwargs,
+                **_anthropic_thinking_kwargs(pc.provider, config),
             ))
         provider = FailoverProvider(profiles)
         names = [p.name for p in profiles]
@@ -74,10 +76,6 @@ def _create_provider(config):
         return provider
 
     # Single provider mode — reuse the same factory
-    thinking_kwargs = {}
-    if config.provider == "anthropic":
-        thinking_kwargs["thinking_level"] = config.thinking_level
-        thinking_kwargs["thinking_budget"] = config.thinking_budget
     profile = ProviderProfile(
         name="default",
         provider_type=config.provider,
