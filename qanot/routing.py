@@ -234,15 +234,17 @@ class RoutingProvider(LLMProvider):
                 score += 0.5
 
             # Long response → complex topic
-            if isinstance(content, str) and len(content) > 500:
-                score += 0.2
+            if isinstance(content, str):
+                text_len = len(content)
             elif isinstance(content, list):
                 text_len = sum(
                     len(b.get("text", "")) for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
-                if text_len > 500:
-                    score += 0.2
+            else:
+                text_len = 0
+            if text_len > 500:
+                score += 0.2
 
         return min(score, 1.0)
 
