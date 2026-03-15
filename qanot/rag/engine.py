@@ -191,7 +191,7 @@ class RAGEngine:
             logger.debug("No chunks produced from source=%r", source)
             return []
 
-        metadatas = [metadata or {} for _ in chunks]
+        metadatas = [{**(metadata or {})} for _ in chunks]
 
         if self.embedder is not None:
             embeddings = await self._embed_with_cache(chunks)
