@@ -140,8 +140,7 @@ class BM25Index:
         # Document frequency for each term
         df: Counter = Counter()
         for freq in self._doc_freqs:
-            for term in freq:
-                df[term] += 1
+            df.update(freq.keys())
 
         self._idf = {
             term: math.log((n - count + 0.5) / (count + 0.5) + 1.0)
