@@ -232,10 +232,11 @@ async function load(){
     document.getElementById('s-model').textContent=s.model;
     document.getElementById('s-provider').textContent=s.provider+' \u2022 '+s.bot_name;
     document.getElementById('s-up').textContent=s.uptime;
-    document.getElementById('s-ctx').textContent=s.context_percent+'%';
+    var pct=s.context_percent;
+    document.getElementById('s-ctx').textContent=pct+'%';
     var bar=document.getElementById('ctx-bar');
-    bar.style.width=s.context_percent+'%';
-    bar.style.background=s.context_percent>70?'var(--rose)':s.context_percent>40?'var(--amber)':'var(--emerald)';
+    bar.style.width=pct+'%';
+    bar.style.background=pct>70?'var(--rose)':pct>40?'var(--amber)':'var(--emerald)';
     document.getElementById('s-turns').textContent=s.turn_count;
     document.getElementById('s-api').textContent=s.api_calls;
     document.getElementById('s-users').textContent=s.active_conversations;
