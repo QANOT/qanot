@@ -250,10 +250,10 @@ def _entries_to_messages(entries: list[dict]) -> list[dict]:
                     messages.append({"role": "user", "content": clean})
             elif isinstance(content, list):
                 # Structured content — extract text blocks only
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
+                text_parts = [
+                    block.get("text", "") for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
                 if text_parts:
                     text = "\n".join(text_parts)
                     clean = _strip_injection(text)
@@ -266,10 +266,10 @@ def _entries_to_messages(entries: list[dict]) -> list[dict]:
                     messages.append({"role": "assistant", "content": content})
             elif isinstance(content, list):
                 # Extract only text blocks from assistant (skip tool_use blocks)
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
+                text_parts = [
+                    block.get("text", "") for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
                 if text_parts:
                     text = "\n".join(text_parts)
                     if text.strip():
