@@ -1334,10 +1334,7 @@ def _plugin_list(args: list[str]) -> None:
 
     # Show discovered but unconfigured plugins
     if plugins_dir.exists():
-        discovered = set()
-        for d in plugins_dir.iterdir():
-            if d.is_dir() and (d / "plugin.py").exists():
-                discovered.add(d.name)
+        discovered = {d.name for d in plugins_dir.iterdir() if d.is_dir() and (d / "plugin.py").exists()}
 
         configured_names = {
             (pl if isinstance(pl, str) else pl.get("name", "?"))
