@@ -31,7 +31,7 @@ class SafeWriteError(Exception):
 
 
 def _is_under(path: str, directory: str) -> bool:
-    """Return True if *path* equals *directory* or is directly beneath it."""
+    """Return True if *path* equals *directory* or is anywhere beneath it."""
     return path == directory or path.startswith(directory + os.sep)
 
 
