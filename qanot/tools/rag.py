@@ -153,7 +153,7 @@ def register_rag_tools(
         rag_result = await engine.query(
             query,
             top_k=top_k,
-            user_id=user_id if user_id else None,
+            user_id=user_id or None,
         )
 
         results = [
