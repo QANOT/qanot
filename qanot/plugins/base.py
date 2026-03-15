@@ -126,8 +126,7 @@ class Plugin(ABC):
         for attr_name in dir(self):
             attr = getattr(self, attr_name, None)
             if callable(attr) and hasattr(attr, "_tool_def"):
-                td = attr._tool_def
-                tools.append(ToolDef(**td, handler=attr))
+                tools.append(ToolDef(**attr._tool_def, handler=attr))
         return tools
 
 
