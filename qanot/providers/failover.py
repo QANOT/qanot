@@ -139,9 +139,9 @@ class FailoverProvider(LLMProvider):
 
     def _build_try_order(self, available: list[int]) -> list[int]:
         """Return provider indices to try: active first, then remaining available."""
-        order = [self._active_index] if self._active_index in available else []
-        order += [i for i in available if i not in order]
-        return order
+        if self._active_index in available:
+            return [self._active_index] + [i for i in available if i != self._active_index]
+        return available
 
     @property
     def active_profile(self) -> ProviderProfile:
