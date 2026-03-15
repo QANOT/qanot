@@ -230,11 +230,11 @@ class RoutingProvider(LLMProvider):
             content = msg.get("content", "")
 
             # Tool use → active complex task
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
-                        score += 0.5
-                        break
+            if isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result")
+                for block in content
+            ):
+                score += 0.5
 
             # Long response → complex topic
             if isinstance(content, str) and len(content) > 500:
