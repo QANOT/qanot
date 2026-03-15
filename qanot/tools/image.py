@@ -76,8 +76,10 @@ def _find_last_image_in_conversation(get_user_id: callable | None) -> bytes | No
     Searches backwards through messages for an image content block,
     decodes base64 and returns raw bytes.
     """
+    if not get_user_id:
+        return None
     from qanot.agent import Agent
-    if not get_user_id or Agent._instance is None:
+    if Agent._instance is None:
         return None
 
     user_id = get_user_id()
