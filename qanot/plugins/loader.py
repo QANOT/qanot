@@ -194,11 +194,7 @@ def _find_plugin_dir(name: str, plugins_dir: str) -> Path | None:
 
 def _check_required_config(manifest: PluginManifest, config: dict) -> list[str]:
     """Check if all required config keys are present."""
-    missing = []
-    for key in manifest.required_config:
-        if key not in config or not config[key]:
-            missing.append(key)
-    return missing
+    return [key for key in manifest.required_config if key not in config or not config[key]]
 
 
 async def _load_from_path(plugin_dir: Path, config: dict) -> Plugin | None:
