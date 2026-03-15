@@ -221,12 +221,7 @@ def register_agent_manager_tools(
             return json.dumps({"error": "id is required"})
 
         # Find existing agent
-        target = None
-        for ad in config.agents:
-            if ad.id == agent_id:
-                target = ad
-                break
-
+        target = next((ad for ad in config.agents if ad.id == agent_id), None)
         if target is None:
             return json.dumps({"error": f"Agent '{agent_id}' not found."})
 
