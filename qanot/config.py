@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
 
 @dataclass
