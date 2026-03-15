@@ -78,5 +78,5 @@ def update_session_state(key: str, value: str, workspace_dir: str = "/data/works
     if updated:
         state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     else:
-        with open(state_path, "a", encoding="utf-8") as f:
+        with state_path.open("a", encoding="utf-8") as f:
             f.write(f"- **{key}:** {value}\n")
