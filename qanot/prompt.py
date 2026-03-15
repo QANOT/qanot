@@ -127,7 +127,7 @@ def build_system_prompt(
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S UTC")
 
-    session_info = (
+    parts.append(
         f"\n---\n\n"
         f"# Session Info\n"
         f"- **Date:** {date_str}\n"
@@ -135,12 +135,8 @@ def build_system_prompt(
         f"- **Timezone:** {timezone_str}\n"
         f"- **Context Usage:** {context_percent:.1f}%\n"
         f"- **Total Tokens:** {total_tokens:,}\n"
+        + ("- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n" if context_percent >= 50 else "")
     )
-
-    if context_percent >= 50:
-        session_info += "- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n"
-
-    parts.append(session_info)
 
     # Variable injection
     full = "\n\n---\n\n".join(parts)
