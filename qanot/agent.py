@@ -829,8 +829,7 @@ class Agent:
         self, tool_calls: list[ToolCall], recent_fingerprints: list[str]
     ) -> str | None:
         """Check for tool call loops. Returns loop message if detected, None otherwise."""
-        batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
-        batch_key = ":".join(sorted(batch_fps))
+        batch_key = ":".join(sorted(_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls))
 
         if _is_loop_detected(recent_fingerprints, batch_key):
             logger.warning(
