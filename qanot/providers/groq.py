@@ -53,4 +53,4 @@ class GroqProvider(OpenAIProvider):
 
     def _calc_cost(self, inp: int, out: int) -> float:
         prices = GROQ_PRICING.get(self.model, _GROQ_DEFAULT_PRICING)
-        return inp * prices["input"] / 1_000_000 + out * prices["output"] / 1_000_000
+        return (inp * prices["input"] + out * prices["output"]) / 1_000_000
