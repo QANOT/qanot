@@ -131,11 +131,7 @@ class PluginManager:
 
     def _check_plugin_deps(self, manifest: PluginManifest) -> list[str]:
         """Check if required plugin dependencies are loaded."""
-        missing = []
-        for dep in manifest.plugin_deps:
-            if dep not in self._plugins:
-                missing.append(dep)
-        return missing
+        return [dep for dep in manifest.plugin_deps if dep not in self._plugins]
 
     async def shutdown_all(self) -> None:
         """Call teardown() on all loaded plugins."""
