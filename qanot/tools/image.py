@@ -47,8 +47,8 @@ def _save_and_queue(
     logger.info("Image saved: %s (%d bytes)", image_path, len(image_bytes))
 
     # Push to agent's pending images queue
-    from qanot.agent import Agent
     if get_user_id:
+        from qanot.agent import Agent
         user_id = get_user_id()
         Agent._push_pending_image(user_id, str(image_path))
 
