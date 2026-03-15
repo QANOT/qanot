@@ -147,6 +147,14 @@ class FailoverProvider(LLMProvider):
     def active_profile(self) -> ProviderProfile:
         return self.profiles[self._active_index]
 
+    def _resolve_try_order(self) -> list[int]:
+        """Return provider indices to try, falling back to first if all are cooling down."""
+        available = self._get_available_indices()
+        if not available:
+            available = [0]
+            logger.warning("All providers in cooldown, forcing first provider")
+        return self._build_try_order(available)
+
     async def chat(
         self,
         messages: list[dict],
@@ -154,13 +162,7 @@ class FailoverProvider(LLMProvider):
         system: str | None = None,
     ) -> ProviderResponse:
         """Call chat with automatic failover."""
-        available = self._get_available_indices()
-        if not available:
-            # All in cooldown — try first one anyway (least bad option)
-            available = [0]
-            logger.warning("All providers in cooldown, forcing first provider")
-
-        order = self._build_try_order(available)
+        order = self._resolve_try_order()
 
         last_error: Exception | None = None
         for idx in order:
