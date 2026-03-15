@@ -90,13 +90,11 @@ def build_system_prompt(
         _add(_read_file(ws / "AGENTS.md"))
 
         # 6. SESSION-STATE.md (shared per-agent, OpenClaw-style)
-        state = _read_file(ws / "SESSION-STATE.md")
-        if state:
+        if state := _read_file(ws / "SESSION-STATE.md"):
             _add(f"# Current Session State\n\n{state}")
 
         # 6b. MEMORY.md — persistent curated knowledge (injected for context)
-        memory = _read_file(ws / "MEMORY.md")
-        if memory:
+        if memory := _read_file(ws / "MEMORY.md"):
             _add(f"# Your Long-Term Memory\n\n{memory}")
 
         # 7. USER.md (per-user if exists, fallback to shared)
@@ -106,8 +104,7 @@ def build_system_prompt(
         _add(user_md)
 
         # 8. BOOTSTRAP.md — first-run ritual (only if it exists)
-        bootstrap = _read_file(ws / "BOOTSTRAP.md")
-        if bootstrap:
+        if bootstrap := _read_file(ws / "BOOTSTRAP.md"):
             _add(bootstrap)
 
     # Hardcoded behavioral rules (not in templates — cannot be overwritten by agent)
