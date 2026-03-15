@@ -95,7 +95,7 @@ def register_rag_tools(
             return json.dumps({"error": "File is empty"})
 
         source = name or full_path.name
-        user_id = get_user_id()
+        user_id = get_user_id() or None
 
         # Delete existing chunks for this source before re-indexing
         engine.store.delete_source(source)
