@@ -878,7 +878,7 @@ def register_delegate_tools(
         _log_activity(
             user_id, "converse_start",
             from_agent=caller_agent_id, to_agent=agent_id,
-            task=message, depth=current_depth + 1,
+            task=message, depth=depth,
         )
 
         child_registry = _build_delegate_registry(
