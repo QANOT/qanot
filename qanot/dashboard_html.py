@@ -242,12 +242,12 @@ async function load(){
 
     // Costs
     document.getElementById('c-total').textContent='$'+c.total_cost.toFixed(2);
-    var cu=document.getElementById('c-users');cu.innerHTML='';
-    Object.entries(c.users||{}).forEach(function(e){
+    var cu=document.getElementById('c-users');
+    cu.innerHTML=Object.entries(c.users||{}).map(function(e){
       var uid=e[0],d=e[1];
-      cu.innerHTML+='<div class="row"><span class="row-k">User '+uid.slice(-4)+'</span>'
+      return '<div class="row"><span class="row-k">User '+uid.slice(-4)+'</span>'
         +'<span class="pill pill-emerald">$'+(d.total_cost||0).toFixed(3)+' \u2022 '+(d.turns||0)+' turns</span></div>';
-    });
+    }).join('');
 
     // Routing
     var ri=document.getElementById('r-info');
