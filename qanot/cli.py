@@ -1462,9 +1462,10 @@ def _config_set(args: list[str]) -> None:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
 
     # Type coercion
-    if value.lower() == "true":
+    value_lower = value.lower()
+    if value_lower == "true":
         value = True
-    elif value.lower() == "false":
+    elif value_lower == "false":
         value = False
     elif value.isdigit():
         value = int(value)
