@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 
+_TRUNCATION_MARKER = "\n\n... [truncated {} chars] ...\n\n"
+
+
 def truncate_with_marker(
     text: str,
     max_chars: int,
@@ -17,7 +20,7 @@ def truncate_with_marker(
     if text_len <= max_chars:
         return text
     # Upper-bound marker length: removed <= text_len so digit count never exceeds this.
-    marker_overhead = len(f"\n\n... [truncated {text_len} chars] ...\n\n")
+    marker_overhead = len(_TRUNCATION_MARKER.format(text_len))
     budget = max(max_chars - marker_overhead, 0)
     head = int(budget * head_ratio)
     tail = int(budget * tail_ratio)
@@ -25,7 +28,7 @@ def truncate_with_marker(
     if removed <= 0:
         # Ratios sum to >= 1.0 for this max_chars; just hard-truncate
         return text[:max_chars]
-    marker = f"\n\n... [truncated {removed} chars] ...\n\n"
+    marker = _TRUNCATION_MARKER.format(removed)
     if tail == 0:
         return text[:head] + marker
     return text[:head] + marker + text[-tail:]
