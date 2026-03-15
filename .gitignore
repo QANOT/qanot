@@ -12,3 +12,4 @@ config.json
 venv/
 .claude/
 CLAUDE.md
+site/
