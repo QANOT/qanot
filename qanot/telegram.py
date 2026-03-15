@@ -142,6 +142,10 @@ class TelegramAdapter:
         async def handle_help(message: Message) -> None:
             await self._handle_help(message)
 
+        @self.dp.message(F.text.startswith("/model"))
+        async def handle_model(message: Message) -> None:
+            await self._handle_model(message)
+
         @self.dp.message(F.text)
         async def handle_text(message: Message) -> None:
             await self._handle_message(message)
@@ -737,11 +741,56 @@ class TelegramAdapter:
         help_text = (
             "**Buyruqlar:**\n\n"
             "/reset — Suhbatni tozalash\n"
-            "/status — Sessiya holati\n"
+            "/status — Sessiya holati va statistika\n"
+            "/model — Model tanlash (Opus/Sonnet/Haiku)\n"
             "/help — Yordam\n\n"
-            "Matn, rasm, sticker, ovozli xabar va fayllar qabul qilinadi."
+            "**Imkoniyatlar:**\n"
+            "📝 Matn — savol, buyruq, suhbat\n"
+            "🎙 Ovozli xabar — avtomatik transcribe\n"
+            "📷 Rasm — tahlil qilish (vision)\n"
+            "📎 Fayl — PDF, doc, excel o'qish\n"
+            "🔗 Link — avtomatik tushunish\n"
+            "🎨 Rasm yaratish — \"rasm chiz: ...\" deb yozing\n"
         )
         await self._send_final(message.chat.id, help_text)
+
+    async def _handle_model(self, message: Message) -> None:
+        """Handle /model — show current model and switch via inline buttons."""
+        if not self._check_command_access(message):
+            return
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        current = self.config.model
+        provider = self.agent.provider
+
+        # Available models
+        models = [
+            ("claude-opus-4-6", "Opus 4.6", "Eng kuchli"),
+            ("claude-sonnet-4-6", "Sonnet 4.6", "Tez va sifatli"),
+            ("claude-haiku-4-5-20251001", "Haiku 4.5", "Eng arzon"),
+        ]
+
+        buttons = []
+        for model_id, label, desc in models:
+            marker = " ◀" if model_id == current else ""
+            buttons.append([InlineKeyboardButton(
+                text=f"{'✅ ' if model_id == current else ''}{label} — {desc}{marker}",
+                callback_data=f"model:{model_id}",
+            )])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        # Routing info
+        routing_text = ""
+        if self.config.routing_enabled:
+            routing_text = "\n\n🔀 Routing: ON (auto Haiku/Sonnet/Opus)"
+
+        await message.reply(
+            f"🤖 **Joriy model:** `{current}`{routing_text}\n\nModel tanlang:",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
 
     async def _handle_callback_query(self, callback: "CallbackQuery") -> None:
         """Handle inline button callbacks (approvals, model picker, etc.)."""
@@ -772,6 +821,33 @@ class TelegramAdapter:
             except Exception:
                 pass
             await callback.answer(status)
+            return
+
+        # Model switch: model:<model_id>
+        if data.startswith("model:"):
+            model_id = data.split(":", 1)[1]
+            # Update the underlying provider's model
+            provider = self.agent.provider
+            if hasattr(provider, '_provider'):
+                # RoutingProvider — update primary
+                provider._provider.model = model_id
+                provider._primary_model = model_id
+                provider.model = model_id
+            else:
+                provider.model = model_id
+            self.config.model = model_id
+
+            model_names = {
+                "claude-opus-4-6": "Opus 4.6",
+                "claude-sonnet-4-6": "Sonnet 4.6",
+                "claude-haiku-4-5-20251001": "Haiku 4.5",
+            }
+            name = model_names.get(model_id, model_id)
+            await callback.answer(f"✅ Model: {name}")
+            try:
+                await callback.message.edit_text(f"✅ Model o'zgartirildi: **{name}** (`{model_id}`)", parse_mode="Markdown")
+            except Exception:
+                pass
             return
 
         # Unknown callback
@@ -816,11 +892,12 @@ class TelegramAdapter:
             return False
 
     async def _register_commands(self) -> None:
-        """Register bot commands with BotFather (appears in Telegram UI menu)."""
+        """Register dynamic bot commands with Telegram (appears in / menu)."""
         commands = [
+            BotCommand(command="status", description="Sessiya holati va statistika"),
+            BotCommand(command="model", description="Model tanlash (Opus/Sonnet/Haiku)"),
             BotCommand(command="reset", description="Suhbatni tozalash"),
-            BotCommand(command="status", description="Sessiya holati"),
-            BotCommand(command="help", description="Yordam"),
+            BotCommand(command="help", description="Barcha buyruqlar va imkoniyatlar"),
         ]
         try:
             await self.bot.set_my_commands(commands)
