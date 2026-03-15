@@ -136,7 +136,7 @@ class Dashboard:
             data = provider.status()
             if isinstance(data, dict):
                 return web.json_response(data)
-            if isinstance(data, list):
+            elif isinstance(data, list):
                 return web.json_response({"providers": data})
         return web.json_response({"routing": "disabled"})
 
