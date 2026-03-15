@@ -22,11 +22,7 @@ def _extract_pdf_text(path: Path) -> str:
     import fitz  # PyMuPDF
 
     with fitz.open(str(path)) as doc:
-        pages = []
-        for page in doc:
-            text = page.get_text()
-            if text.strip():
-                pages.append(text)
+        pages = [text for page in doc if (text := page.get_text()).strip()]
     return "\n\n".join(pages)
 
 
