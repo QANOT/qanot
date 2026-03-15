@@ -111,25 +111,20 @@ class ContextTracker:
 
         if summary_text:
             # LLM-generated summary
-            summary_msg = {
-                "role": "user",
-                "content": (
-                    f"[CONVERSATION SUMMARY — {removed_count} messages compacted]\n\n"
-                    f"{summary_text}\n\n"
-                    f"[End of summary. Recent conversation continues below.]"
-                ),
-            }
+            summary_content = (
+                f"[CONVERSATION SUMMARY — {removed_count} messages compacted]\n\n"
+                f"{summary_text}\n\n"
+                f"[End of summary. Recent conversation continues below.]"
+            )
         else:
             # Fallback: simple truncation marker
-            summary_msg = {
-                "role": "user",
-                "content": (
-                    f"[CONTEXT COMPACTION: {removed_count} earlier messages were removed "
-                    f"to free context space. Recent conversation preserved below. "
-                    f"Check your workspace files (SESSION-STATE.md, memory/) for "
-                    f"any important context from earlier in the conversation.]"
-                ),
-            }
+            summary_content = (
+                f"[CONTEXT COMPACTION: {removed_count} earlier messages were removed "
+                f"to free context space. Recent conversation preserved below. "
+                f"Check your workspace files (SESSION-STATE.md, memory/) for "
+                f"any important context from earlier in the conversation.]"
+            )
+        summary_msg = {"role": "user", "content": summary_content}
 
         compacted = head + [summary_msg] + tail
         logger.info(
