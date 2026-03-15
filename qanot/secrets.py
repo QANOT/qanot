@@ -76,9 +76,7 @@ def _read_secret_file(path: str) -> str:
 
     # Check permissions on Unix
     try:
-        st = p.stat()
-        mode = st.st_mode
-        if mode & stat.S_IROTH:
+        if p.stat().st_mode & stat.S_IROTH:
             logger.warning(
                 "Secret file %s is world-readable (chmod 600 recommended)", path
             )
