@@ -101,7 +101,6 @@ async def _run_sub_agent(
 
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
-        task_preview = task[:200] + ("..." if len(task) > 200 else "")
         try:
             await send_callback(
                 chat_id,
