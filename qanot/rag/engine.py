@@ -120,8 +120,8 @@ class RAGEngine:
             new_embeddings = await self.embedder.embed(miss_texts)
             # Store in cache
             cache_items = [
-                (hashes[miss_indices[j]], new_embeddings[j])
-                for j in range(len(miss_texts))
+                (hashes[i], emb)
+                for i, emb in zip(miss_indices, new_embeddings)
             ]
             store.cache_put(cache_items, provider, model)
             logger.debug(
