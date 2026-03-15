@@ -196,6 +196,117 @@ The adapter catches agent errors and sends user-friendly messages:
 
 Errors are logged with full stack traces for debugging, but users only see the friendly message.
 
+## Group Chat
+
+```json
+{
+  "group_mode": "mention"
+}
+```
+
+The `group_mode` setting controls how the bot behaves in group and supergroup chats. Default is `"mention"`.
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Bot ignores all group messages |
+| `mention` | Bot responds only when @mentioned by username or when someone replies to the bot's own message |
+| `all` | Bot responds to every message in the group |
+
+**How mention mode works:**
+
+1. The bot caches its own username on startup
+2. When a group message arrives, it checks for `@bot_username` in the message text or caption
+3. It also checks if the message is a reply to one of the bot's own messages
+4. If neither condition is met, the message is silently ignored
+
+**Group conversation isolation:** In group chats, all members share a single conversation keyed by `group_{chat_id}`. This means the bot maintains one conversation context per group, not per user. In DMs, conversations are keyed by user ID as usual.
+
+**Sender identification:** Group messages are prefixed with the sender's name (e.g., `[Ahmad]: message text`) so the agent can distinguish between group members. The `@bot_username` mention is stripped from the text before processing.
+
+## Voice Messages
+
+Voice messages and video notes are automatically transcribed when a voice API key is configured.
+
+**Processing flow:**
+
+1. Voice message or video note arrives
+2. Bot sends a typing indicator immediately
+3. Audio is downloaded to a temporary file
+4. Audio is transcribed using the configured `voice_provider`
+5. Transcribed text replaces the voice message content
+6. The turn is processed normally, with `voice_request` flag set
+
+**Audio format handling:**
+
+| Provider | Accepts OGG | Requires Conversion |
+|----------|-------------|---------------------|
+| Muxlisa | Yes (native) | No |
+| Whisper | Yes | No |
+| KotibAI | No | OGG to MP3 via ffmpeg |
+| Aisha | No | OGG to MP3 via ffmpeg |
+
+For video notes, audio is extracted via ffmpeg (to OGG for Muxlisa, to MP3 for others).
+
+**TTS voice replies:**
+
+When `voice_mode` is `"always"`, or `"inbound"` and the user sent a voice message, the bot sends a TTS voice reply after the text response. The flow:
+
+1. A "recording voice" indicator is shown
+2. The last assistant response text is sent to the TTS provider
+3. The returned audio (WAV or URL) is converted to OGG Opus for Telegram
+4. The voice message is sent via `bot.send_voice()`
+
+**Four voice providers:**
+
+| Provider | STT | TTS | Voices | Notes |
+|----------|-----|-----|--------|-------|
+| Muxlisa (default) | Yes | Yes | maftuna, asomiddin | Native OGG, no ffmpeg for STT |
+| KotibAI | Yes | Yes | aziza, nargiza, soliha, sherzod, rachel, arnold | 6 voices, multi-language |
+| Aisha | Yes | Yes | gulnoza, jaxongir | Mood control (happy/sad/neutral) |
+| Whisper | Yes | No | N/A | OpenAI, 50+ languages, STT only |
+
+**Quoted voice messages:** When a user replies to a voice message, the quoted voice is also transcribed and included as `[voice: transcribed text]` in the reply annotation.
+
+## Reactions
+
+```json
+{
+  "reactions_enabled": false
+}
+```
+
+When `reactions_enabled` is `true`, the bot sends emoji reactions on messages to indicate processing status:
+
+| Emoji | When |
+|-------|------|
+| `eyes` | Message received, processing started |
+| `white_check_mark` | Processing completed successfully |
+| `x` | An error occurred during processing |
+
+When messages are coalesced (multiple rapid messages batched into one turn), earlier messages in the batch receive a `white_check_mark` reaction to indicate they were included.
+
+Reactions are sent via the `SetMessageReaction` API method. If reactions are not supported in a chat (e.g., older groups), failures are silently ignored.
+
+Default is `false` (no reactions sent).
+
+## Reply Mode
+
+```json
+{
+  "reply_mode": "coalesced"
+}
+```
+
+Controls when the bot uses Telegram's reply-to feature to link its response to the user's message.
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Never reply-to; responses are sent as standalone messages |
+| `coalesced` | Reply-to only when multiple rapid messages were batched into one turn |
+| `always` | Always reply-to the triggering message |
+
+Default is `"coalesced"`.
+
 ## Typing Indicator
 
 During processing, the bot sends a typing indicator every 4 seconds until the response is ready. This is visible as "Bot is typing..." in the Telegram client. The typing loop is cancelled as soon as the first streaming draft is sent.

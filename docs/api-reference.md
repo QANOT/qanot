@@ -120,10 +120,13 @@ class ToolRegistry:
 @dataclass
 class Config:
     bot_token: str = ""
+    # Legacy single-provider fields (still supported)
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-6"
     api_key: str = ""
+    # Multi-provider support
     providers: list[ProviderConfig] = field(default_factory=list)
+    # Paths
     soul_path: str = "/data/workspace/SOUL.md"
     tools_path: str = "/data/workspace/TOOLS.md"
     plugins: list[PluginConfig] = field(default_factory=list)
@@ -138,12 +141,61 @@ class Config:
     plugins_dir: str = "/data/plugins"
     max_context_tokens: int = 200000
     allowed_users: list[int] = field(default_factory=list)
-    response_mode: str = "stream"
-    stream_flush_interval: float = 0.8
-    telegram_mode: str = "polling"
-    webhook_url: str = ""
-    webhook_port: int = 8443
+    response_mode: str = "stream"          # "stream" | "partial" | "blocked"
+    stream_flush_interval: float = 0.8     # seconds between draft updates
+    telegram_mode: str = "polling"         # "polling" | "webhook"
+    webhook_url: str = ""                  # e.g. "https://bot.example.com/webhook"
+    webhook_port: int = 8443               # local port for webhook server
+    # RAG
     rag_enabled: bool = True
+    rag_mode: str = "auto"                 # "auto" | "agentic" | "always"
+    # Voice
+    voice_provider: str = "muxlisa"        # "muxlisa" | "kotib" | "aisha" | "whisper"
+    voice_api_key: str = ""                # Default API key (fallback)
+    voice_api_keys: dict[str, str] = field(default_factory=dict)  # Per-provider keys
+    voice_mode: str = "inbound"            # "off" | "inbound" | "always"
+    voice_name: str = ""                   # TTS voice name
+    voice_language: str = ""               # Force STT language (uz/ru/en), auto if empty
+    # Web search
+    brave_api_key: str = ""                # Brave Search API key
+    # UX
+    reactions_enabled: bool = False        # Send emoji reactions on messages
+    reply_mode: str = "coalesced"          # "off" | "coalesced" | "always"
+    # Group chat
+    group_mode: str = "mention"            # "off" | "mention" | "all"
+    # Self-healing / heartbeat
+    heartbeat_enabled: bool = True
+    heartbeat_interval: str = "0 */4 * * *"
+    # Daily briefing
+    briefing_enabled: bool = True
+    briefing_schedule: str = "0 8 * * *"
+    # Memory injection budget
+    max_memory_injection_chars: int = 4000
+    # Session history replay
+    history_limit: int = 50
+    # Extended thinking (Claude reasoning mode)
+    thinking_level: str = "off"            # "off" | "low" | "medium" | "high"
+    thinking_budget: int = 10000           # max thinking tokens
+    # Execution security
+    exec_security: str = "open"            # "open" | "cautious" | "strict"
+    exec_allowlist: list[str] = field(default_factory=list)
+    # Dashboard
+    dashboard_enabled: bool = True
+    dashboard_port: int = 8765
+    # Backup
+    backup_enabled: bool = True
+    # Model routing (cost optimization)
+    routing_enabled: bool = False
+    routing_model: str = "claude-haiku-4-5-20251001"
+    routing_mid_model: str = "claude-sonnet-4-6"
+    routing_threshold: float = 0.3         # Complexity score threshold (0.0-1.0)
+    # Image generation
+    image_api_key: str = ""                # Dedicated Gemini key for images
+    image_model: str = "gemini-3-pro-image-preview"
+    # Multi-agent definitions
+    agents: list[AgentDefinition] = field(default_factory=list)
+    # Agent monitoring
+    monitor_group_id: int = 0              # Telegram group ID for monitoring
 ```
 
 ```python
@@ -151,6 +203,53 @@ def load_config(path: str | None = None) -> Config
 ```
 
 Load configuration from a JSON file. If `path` is None, checks `QANOT_CONFIG` env var, then falls back to `/data/config.json`.
+
+### ProviderConfig
+
+`qanot.config.ProviderConfig`
+
+```python
+@dataclass
+class ProviderConfig:
+    name: str
+    provider: str       # "anthropic" | "openai" | "gemini" | "groq"
+    model: str
+    api_key: str
+    base_url: str = ""
+```
+
+### PluginConfig
+
+`qanot.config.PluginConfig`
+
+```python
+@dataclass
+class PluginConfig:
+    name: str
+    enabled: bool = True
+    config: dict = field(default_factory=dict)
+```
+
+### AgentDefinition
+
+`qanot.config.AgentDefinition`
+
+```python
+@dataclass
+class AgentDefinition:
+    id: str                                              # Unique identifier
+    name: str = ""                                       # Human-readable name
+    prompt: str = ""                                     # System prompt / personality
+    model: str = ""                                      # Model override (empty = use main)
+    provider: str = ""                                   # Provider override (empty = use main)
+    api_key: str = ""                                    # API key override (empty = use main)
+    bot_token: str = ""                                  # Separate Telegram bot token (empty = internal)
+    tools_allow: list[str] = field(default_factory=list) # Whitelist (empty = all)
+    tools_deny: list[str] = field(default_factory=list)  # Blacklist
+    delegate_allow: list[str] = field(default_factory=list)  # Delegation targets (empty = all)
+    max_iterations: int = 15                             # Max tool-use loops
+    timeout: int = 120                                   # Seconds before timeout
+```
 
 ## Provider Classes
 
@@ -482,6 +581,41 @@ class ContextTracker:
     def detect_compaction(self, messages: list[dict]) -> bool: ...
     def recover_from_compaction(self) -> str: ...
     def session_status(self) -> dict: ...
+```
+
+`session_status()` returns:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `context_percent` | `float` | Current context usage as percentage (rounded to 1 decimal) |
+| `context_tokens` | `int` | Last prompt tokens (actual context window usage) |
+| `total_output_tokens` | `int` | Cumulative output tokens generated |
+| `total_tokens` | `int` | `context_tokens` + `total_output_tokens` |
+| `max_tokens` | `int` | Maximum context window size |
+| `buffer_active` | `bool` | Whether working buffer is active (50% threshold crossed) |
+| `buffer_started` | `str \| None` | ISO timestamp when buffer activated |
+| `turn_count` | `int` | Number of user turns in session |
+| `api_calls` | `int` | Total API calls (including tool loop iterations) |
+
+### CostTracker
+
+`qanot.context.CostTracker`
+
+Per-user token and cost tracking. Persists to `costs.json` in the workspace directory.
+
+```python
+class CostTracker:
+    def __init__(self, workspace_dir: str = "/data/workspace"): ...
+
+    def add_usage(
+        self, user_id: str, input_tokens: int = 0, output_tokens: int = 0,
+        cache_read: int = 0, cache_write: int = 0, cost: float = 0.0,
+    ) -> None: ...
+    def add_turn(self, user_id: str) -> None: ...
+    def get_user_stats(self, user_id: str) -> dict: ...
+    def get_all_stats(self) -> dict[str, dict]: ...
+    def get_total_cost(self) -> float: ...
+    def save(self) -> None: ...
 ```
 
 ### SessionWriter

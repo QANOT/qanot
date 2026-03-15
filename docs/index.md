@@ -17,16 +17,25 @@ Built for the Uzbekistan market: defaults to `Asia/Tashkent` timezone, Telegram-
 - **Live streaming** -- real-time response streaming via Telegram Bot API 9.5 `sendMessageDraft`, with `editMessageText` and blocked fallbacks.
 - **RAG (Retrieval-Augmented Generation)** -- built-in document indexing with hybrid search (vector + BM25). Uses sqlite-vec for local vector storage.
 - **Memory system** -- WAL protocol scans every message for corrections and preferences before responding. Daily notes, session state, and long-term memory files.
-- **Context management** -- token tracking with automatic compaction at 70% usage and working buffer activation at 60%.
+- **Context management** -- token tracking with automatic compaction at 60% usage and working buffer activation at 50%.
 - **Cron scheduler** -- APScheduler-based scheduled tasks with isolated agent spawning or system event injection.
 - **Plugin system** -- extend with custom tools via a decorator-based plugin API.
 - **Per-user isolation** -- separate conversation histories per Telegram user with automatic eviction of idle conversations.
+- **Voice support** -- 4 voice providers (Muxlisa, KotibAI, Aisha, Whisper) for speech-to-text and text-to-speech.
+- **Model routing** -- 3-tier routing (Haiku/Sonnet/Opus) based on message complexity for cost optimization.
+- **Web dashboard** -- Bloomberg Terminal aesthetic monitoring dashboard at :8765.
+- **Image generation/editing** -- Gemini-powered image generation and editing via natural language.
+- **Multi-agent delegation** -- spawn and delegate tasks to sub-agents with tool/model overrides.
+- **Execution security** -- 3 levels (open/cautious/strict) for sandboxed command execution.
+- **Web search and fetch** -- Brave Search API integration with SSRF-protected web fetching.
+- **Cost tracking** -- per-user token and cost tracking across providers.
+- **115+ plugin tools** -- ready-made plugins for amoCRM, Bitrix24, 1C, AbsMarket, and more.
 
 ## How It Compares to OpenClaw
 
 | Aspect | Qanot AI | OpenClaw |
 |--------|----------|----------|
-| Size | Lightweight (~15 files) | Heavy (many modules) |
+| Size | Lightweight (~30 modules) | Heavy (many modules) |
 | Providers | 4 built-in + failover | Typically single provider |
 | Streaming | Native `sendMessageDraft` | `editMessageText` only |
 | RAG | Built-in hybrid search | External dependency |

@@ -210,8 +210,16 @@ Any provider that speaks the OpenAI chat completions API can be used through the
 This works for:
 - OpenRouter
 - Azure OpenAI
-- Local models (Ollama, vLLM, llama.cpp server)
+- Local models (vLLM, llama.cpp server)
 - Any OpenAI-compatible API
+
+### Ollama Native API
+
+For Ollama, Qanot uses the native `/api/chat` endpoint with `think=false` instead of the OpenAI-compatible endpoint. This provides approximately 30x faster inference by disabling the thinking/reasoning step that Ollama's OpenAI compatibility layer does not support efficiently. The native API is automatically selected when Ollama is detected (by API key or base URL containing port 11434).
+
+### FastEmbed for RAG with Ollama
+
+When Ollama is your LLM provider, Qanot automatically selects FastEmbed (CPU-based, ONNX runtime) for RAG embeddings instead of requiring a separate embedding API. This avoids GPU VRAM conflicts between the chat model and the embedding model. Install with `pip install fastembed`. If FastEmbed is not installed, Qanot falls back to using Ollama's own embedding endpoint via the OpenAI-compatible API.
 
 For providers with significant API differences, you can subclass `LLMProvider`:
 

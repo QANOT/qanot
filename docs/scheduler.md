@@ -114,6 +114,24 @@ Agent: [calls cron_create with name="daily-summary", schedule="0 20 * * *", ...]
 
 Available tools: `cron_create`, `cron_list`, `cron_update`, `cron_delete`. See [Tools](tools.md) for parameters.
 
+### cron_create Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Unique job name |
+| `prompt` | string | Yes | Reminder text or task prompt |
+| `schedule` | string | No* | Cron expression (e.g. `0 9 * * *`) for recurring jobs |
+| `at` | string | No* | ISO 8601 timestamp (e.g. `2026-03-12T17:00:00+05:00`) for one-shot reminders |
+| `mode` | string | No | `"systemEvent"` (text delivery) or `"isolated"` (full agent). Default: `"systemEvent"` |
+| `delete_after_run` | boolean | No | Auto-delete job after execution. Default: `true` for `at` reminders, `false` for recurring |
+| `timezone` | string | No | IANA timezone override for this job (e.g. `"Asia/Tashkent"`, `"Europe/London"`) |
+
+\* Either `schedule` or `at` must be provided. Use `schedule` for recurring jobs and `at` for one-shot reminders.
+
+**One-shot reminders:** When using the `at` parameter, the job runs once at the specified ISO 8601 timestamp and is automatically deleted afterward (`delete_after_run` is forced to `true`).
+
+**Per-job timezone:** By default, jobs use the global timezone from config. The `timezone` parameter overrides this for a specific job, useful when the user needs reminders in a different timezone.
+
 ### Via jobs.json (manual)
 
 Edit `{cron_dir}/jobs.json` directly. Changes take effect after restarting the bot, or the agent can call `cron_update` to trigger a reload.

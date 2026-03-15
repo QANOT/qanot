@@ -227,3 +227,87 @@ Plugins are found by directory name. The loader checks:
 2. `{plugins_dir}/{name}/plugin.py` -- external plugins from the config path
 
 The plugin directory is temporarily added to `sys.path` during loading, then removed. This means your plugin can import from sibling modules in its directory.
+
+## Plugin Manifest (plugin.json)
+
+Plugins can include a `plugin.json` file for metadata and dependency management:
+
+```json
+{
+  "name": "weather",
+  "version": "1.0.0",
+  "description": "Weather information for Uzbekistan cities",
+  "author": "Your Name",
+  "dependencies": ["aiohttp>=3.9"],
+  "plugin_deps": ["cloud_reporter"],
+  "required_config": ["api_key"],
+  "min_qanot_version": "2.0.0",
+  "homepage": "https://github.com/example/weather-plugin",
+  "license": "MIT"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Plugin name (defaults to directory name) |
+| `version` | string | Semantic version (default: `"0.1.0"`) |
+| `description` | string | Human-readable description |
+| `author` | string | Plugin author |
+| `dependencies` | list | pip packages required by the plugin |
+| `plugin_deps` | list | Other Qanot plugins this plugin depends on |
+| `required_config` | list | Config keys that must be present in the plugin's config |
+| `min_qanot_version` | string | Minimum Qanot version required |
+| `homepage` | string | URL for plugin documentation or repository |
+| `license` | string | License identifier (default: `"MIT"`) |
+
+If `plugin.json` is not present, a default manifest is created from the directory name.
+
+## Error Handling
+
+### on_error() Hook
+
+Plugins can override the `on_error()` method to handle tool execution failures:
+
+```python
+async def on_error(self, tool_name: str, error: Exception) -> None:
+    """Called when a tool execution fails."""
+    logger.error("Tool %s failed: %s", tool_name, error)
+    # Custom error handling: retry, notify, fallback, etc.
+```
+
+This hook is called with the tool name and the exception that was raised. Override it for custom error reporting, retry logic, or graceful degradation.
+
+### validate_tool_params()
+
+The `validate_tool_params()` function provides lightweight JSON Schema validation for tool parameters:
+
+```python
+from qanot.plugins.base import validate_tool_params
+
+errors = validate_tool_params(
+    params={"city": "Tashkent", "units": 42},
+    schema={
+        "type": "object",
+        "required": ["city"],
+        "properties": {
+            "city": {"type": "string"},
+            "units": {"type": "string"},
+        },
+    },
+)
+# errors: ["Parameter 'units' expected string, got int"]
+```
+
+It checks required fields and basic type matching (string, integer, number, boolean, array, object). Returns an empty list if all parameters are valid.
+
+## Available Plugins
+
+| Plugin | Tools | Description |
+|--------|-------|-------------|
+| amoCRM | 20 | CRM integration: leads, contacts, pipelines, tasks, notes |
+| Bitrix24 | 24 | CRM integration: deals, leads, contacts, tasks, activities |
+| 1C Enterprise | 13 | Accounting: contractors, products, sales, purchases, balances |
+| AbsMarket | 8 | POS system: products, sales, inventory, reports |
+| AbsVision | 3 | HR system: employees, attendance, payroll |
+| MySQL Query | 1 | Standalone SELECT-only SQL query tool |
+| Cloud Reporter | 1 | Usage reporting to Qanot Cloud platform |

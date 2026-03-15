@@ -35,9 +35,9 @@ The config file is located by checking, in order:
 
 Context management thresholds (hardcoded, not configurable):
 
-- **60%** -- Working Buffer activates, exchanges logged to `working-buffer.md`
-- **70%** -- Proactive compaction triggers, middle messages removed from history
-- **40%** -- Target context usage after compaction
+- **50%** -- Working Buffer activates, exchanges logged to `working-buffer.md`
+- **60%** -- Proactive compaction triggers, middle messages removed from history
+- **35%** -- Target context usage after compaction
 
 ### Telegram Settings
 
@@ -74,8 +74,144 @@ When using `qanot init`, these paths are set relative to the project directory i
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `rag_enabled` | bool | `true` | Enable RAG document indexing and search |
+| `rag_mode` | string | `"auto"` | RAG retrieval strategy: `auto` (inject when relevant), `agentic` (agent decides via tools), `always` (inject on every turn) |
 
 RAG requires a Gemini or OpenAI provider for embeddings. See [RAG documentation](rag.md) for details.
+
+### Voice Settings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `voice_provider` | string | `"muxlisa"` | Voice provider: `muxlisa`, `kotib`, `aisha`, `whisper` |
+| `voice_api_key` | string | `""` | Default API key for the voice provider |
+| `voice_api_keys` | dict | `{}` | Per-provider API keys: `{"muxlisa": "...", "kotib": "..."}` |
+| `voice_mode` | string | `"inbound"` | Voice handling: `off` (disabled), `inbound` (STT only), `always` (STT + TTS) |
+| `voice_name` | string | `""` | Voice name (e.g., `maftuna`/`asomiddin` for Muxlisa, `aziza`/`sherzod` for KotibAI) |
+| `voice_language` | string | `""` | Force STT language (`uz`/`ru`/`en`). Empty = auto-detect. |
+
+### Web Search
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `brave_api_key` | string | `""` | Brave Search API key (free tier: 2000 queries/month) |
+
+### UX Settings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reactions_enabled` | bool | `false` | Send emoji reactions on messages |
+| `reply_mode` | string | `"coalesced"` | Reply behavior: `off`, `coalesced`, `always` |
+
+### Group Chat
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `group_mode` | string | `"mention"` | Group chat behavior: `off` (ignore groups), `mention` (respond to @bot and replies), `all` (respond to everything) |
+
+### Heartbeat
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `heartbeat_enabled` | bool | `true` | Enable/disable heartbeat cron job |
+| `heartbeat_interval` | string | `"0 */4 * * *"` | Cron expression for heartbeat schedule |
+
+### Daily Briefing
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `briefing_enabled` | bool | `true` | Enable/disable daily morning briefing |
+| `briefing_schedule` | string | `"0 8 * * *"` | Cron expression for briefing (default: 8:00 AM daily) |
+
+### Memory and History
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_memory_injection_chars` | int | `4000` | Max characters for RAG/compaction injection into user messages |
+| `history_limit` | int | `50` | Max user turns to restore from session history on restart |
+
+### Extended Thinking
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `thinking_level` | string | `"off"` | Claude reasoning mode: `off`, `low`, `medium`, `high` |
+| `thinking_budget` | int | `10000` | Maximum thinking tokens |
+
+### Execution Security
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `exec_security` | string | `"open"` | Command execution security level: `open` (all commands), `cautious` (prompts for dangerous ops), `strict` (allowlist only) |
+| `exec_allowlist` | list[string] | `[]` | In `strict` mode, only these commands are allowed |
+
+### Dashboard
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dashboard_enabled` | bool | `true` | Enable web dashboard |
+| `dashboard_port` | int | `8765` | Port for the web dashboard |
+
+### Backup
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `backup_enabled` | bool | `true` | Enable automatic workspace backups on startup |
+
+### Model Routing
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `routing_enabled` | bool | `false` | Enable 3-tier model routing for cost optimization |
+| `routing_model` | string | `"claude-haiku-4-5-20251001"` | Cheap model for simple messages (greetings, acknowledgments) |
+| `routing_mid_model` | string | `"claude-sonnet-4-6"` | Mid-tier model for general conversation |
+| `routing_threshold` | float | `0.3` | Complexity score threshold (0.0--1.0) for routing decisions |
+
+### Image Generation
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image_api_key` | string | `""` | Dedicated Gemini API key for image generation (optional, uses provider key if empty) |
+| `image_model` | string | `"gemini-3-pro-image-preview"` | Model for image generation and editing |
+
+### Multi-Agent
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `agents` | list[AgentDefinition] | `[]` | Named agent definitions for delegation. See below. |
+| `monitor_group_id` | int | `0` | Telegram group ID to mirror agent conversations for monitoring |
+
+Each agent definition:
+
+```json
+{
+  "id": "researcher",
+  "name": "Tadqiqotchi",
+  "prompt": "You are a research assistant...",
+  "model": "",
+  "provider": "",
+  "api_key": "",
+  "bot_token": "",
+  "tools_allow": [],
+  "tools_deny": [],
+  "delegate_allow": [],
+  "max_iterations": 15,
+  "timeout": 120
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | string | required | Unique identifier (e.g., `researcher`, `coder`) |
+| `name` | string | `""` | Human-readable name |
+| `prompt` | string | `""` | System prompt / personality |
+| `model` | string | `""` | Model override (empty = use main model) |
+| `provider` | string | `""` | Provider override (empty = use main provider) |
+| `api_key` | string | `""` | API key override (empty = use main) |
+| `bot_token` | string | `""` | Separate Telegram bot token (empty = internal agent only) |
+| `tools_allow` | list[string] | `[]` | Tool whitelist (empty = all tools) |
+| `tools_deny` | list[string] | `[]` | Tool blacklist |
+| `delegate_allow` | list[string] | `[]` | Which agents this one can delegate to (empty = all) |
+| `max_iterations` | int | `15` | Max tool-use loops |
+| `timeout` | int | `120` | Seconds before timeout |
 
 ### Plugin Configuration
 

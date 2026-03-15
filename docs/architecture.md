@@ -70,7 +70,7 @@ Add message to conversation history
     |
     +---> [Loop start: iteration 1..25]
     |         |
-    |     Proactive compaction check (if > 70%, compact)
+    |     Proactive compaction check (if > 60%, compact)
     |         |
     |     Repair messages (fix orphaned tool_results)
     |         |
@@ -245,14 +245,14 @@ FailoverProvider.chat()
 Turn N: input_tokens = 45,000 / 200,000 max (22.5%)
     --> Normal operation
 
-Turn N+5: input_tokens = 120,000 (60%)
+Turn N+5: input_tokens = 100,000 (50%)
     --> Working buffer ACTIVATES
     --> Exchanges logged to working-buffer.md
 
-Turn N+10: estimated next = 148,000 (74% > 70% threshold)
+Turn N+10: estimated next = 128,000 (64% > 60% threshold)
     --> Proactive compaction triggers
     --> Messages: [first 2] + [summary marker] + [last 4]
-    --> Token estimate adjusted to ~40%
+    --> Token estimate adjusted to ~35%
 
 Turn N+20: compaction detected in messages
     --> Recovery context injected from:
@@ -283,7 +283,7 @@ Each line is a JSON object:
 }
 ```
 
-Assistant messages include usage stats and model information. File writes use `fcntl.LOCK_EX` for safe concurrent access.
+Assistant messages include usage stats and model information. File writes use cross-platform locking (`fcntl.LOCK_EX` on Unix, graceful degradation on Windows).
 
 ## Data Flow Summary
 
@@ -299,3 +299,49 @@ Assistant messages include usage stats and model information. File writes use `f
 | `cron/jobs.json` | Cron tools / User | Cron scheduler |
 | `rag.db` | RAG engine | RAG search |
 | `uploads/*` | Telegram adapter | Agent (via `read_file`) |
+
+## Module Reference
+
+Beyond the core modules described above, Qanot includes these additional components:
+
+### Core Modules
+
+| Module | Purpose |
+|--------|---------|
+| `agent.py` | Core agent loop (25 iterations, circuit breaker, result-aware loops) |
+| `agent_bot.py` | Separate agent bot runtime |
+| `backup.py` | Startup backup functionality |
+| `config.py` | JSON config loader, `Config` dataclass, `SecretRef` |
+| `context.py` | Token tracking, 50% buffer, 60% compaction threshold |
+| `compaction.py` | Multi-stage LLM summarization (OpenClaw-style) |
+| `routing.py` | 3-tier model routing (Haiku/Sonnet/Opus) |
+| `voice.py` | Voice provider integration (Muxlisa, KotibAI, Aisha, Whisper) |
+| `ratelimit.py` | Per-user sliding window rate limiter |
+| `links.py` | Auto URL preview injection |
+| `utils.py` | Utility functions (truncation, helpers) |
+| `fs_safe.py` | Safe file write (system dir block, symlink check) |
+| `secrets.py` | SecretRef resolver (env vars, files) |
+| `session.py` | JSONL append-only session logging (cross-platform locking) |
+| `prompt.py` | System prompt builder (9 sections + MEMORY.md injection) |
+| `telegram.py` | aiogram 3.x adapter (stream/partial/blocked + inline buttons) |
+| `dashboard.py` | Web dashboard server at :8765 (aiohttp) |
+| `dashboard_html.py` | Dashboard HTML (Bloomberg Terminal aesthetic) |
+| `daemon.py` | Cross-platform daemon (systemd/launchd/schtasks) |
+| `scheduler.py` | APScheduler cron (isolated + systemEvent modes) |
+| `cli.py` | CLI: init/start/stop/restart/status/config/update/doctor |
+
+### Tool Modules (`tools/`)
+
+| Module | Purpose |
+|--------|---------|
+| `builtin.py` | read/write/list/run_command/send_file/memory/session/cost |
+| `cron.py` | 4 cron management tools |
+| `web.py` | web_search (Brave) + web_fetch (SSRF protected) |
+| `image.py` | generate_image + edit_image (Gemini) |
+| `rag.py` | 4 RAG tools (search/index/list/forget) |
+| `delegate.py` | Multi-agent delegation (delegate/converse/spawn) |
+| `subagent.py` | Sub-agent management |
+| `agent_manager.py` | create/update/delete/restart agents |
+| `doctor.py` | System diagnostics |
+| `workspace.py` | Workspace init + templates |
+| `jobs_io.py` | Cron jobs JSON I/O utilities |

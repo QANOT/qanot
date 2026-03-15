@@ -46,8 +46,11 @@ Qanot automatically selects the best available embedding provider from your exis
 
 | Priority | Provider | Model | Dimensions | Cost |
 |----------|----------|-------|------------|------|
-| 1 | Gemini | `gemini-embedding-001` | 768 | Free tier |
+| 0 | FastEmbed | `nomic-ai/nomic-embed-text-v1.5` | 768 | Free (CPU, ONNX) |
+| 1 | Gemini | `gemini-embedding-001` | 3072 | Free tier |
 | 2 | OpenAI | `text-embedding-3-small` | 1536 | $0.02/MTok |
+
+FastEmbed is automatically selected when an Ollama provider is detected. It runs on CPU via ONNX runtime, avoiding GPU VRAM conflicts with the chat model. Install with `pip install fastembed`.
 
 The embedder checks both multi-provider configs and single-provider config. If you have a Gemini provider for failover, its API key will be reused for embeddings.
 

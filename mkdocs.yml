@@ -32,6 +32,7 @@ theme:
     - search.highlight
     - content.code.copy
     - content.tabs.link
+  custom_dir: docs/overrides
   icon:
     repo: fontawesome/brands/github
 

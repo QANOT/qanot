@@ -22,6 +22,11 @@ The core idea: before the agent generates a response, every user message is scan
 | `preference` | "I like", "I prefer", "I don't like", "I want" | "I prefer dark mode" |
 | `decision` | "let's do", "go with", "use" | "Let's go with PostgreSQL" |
 | `specific_value` | Dates, URLs, large numbers | "The deadline is 2025-06-15" |
+| `remember` | "remember this", "don't forget", "eslab qol", "unutma", "yodda tut" | "Remember that the API key rotates monthly" |
+
+### Durable Categories
+
+Entries in the categories `proper_noun`, `preference`, and `remember` are automatically saved to `MEMORY.md` in addition to `SESSION-STATE.md`. These are considered durable facts that should persist beyond the current session. Duplicate detection prevents the same fact from being written twice.
 
 ### SESSION-STATE.md Format
 
@@ -83,9 +88,9 @@ results = memory_search("FastAPI authentication", workspace_dir)
 
 As conversations grow, the context window fills up. Qanot tracks token usage and takes action at specific thresholds.
 
-### Working Buffer (60% Threshold)
+### Working Buffer (50% Threshold)
 
-When context usage reaches 60%, the Working Buffer activates:
+When context usage reaches 50%, the Working Buffer activates:
 
 - A `working-buffer.md` file is created in the memory directory
 - Every exchange (user message + agent summary) is appended to this file
@@ -105,9 +110,9 @@ Can you refactor the database module?
 Refactored the database module to use connection pooling...
 ```
 
-### Proactive Compaction (70% Threshold)
+### Proactive Compaction (60% Threshold)
 
-When the estimated next-turn context would exceed 70% of the max:
+When the estimated next-turn context would exceed 60% of the max:
 
 1. The first 2 messages (initial context) are kept
 2. The last 4 messages (recent context) are kept
@@ -120,7 +125,7 @@ Recent conversation preserved below. Check your workspace files
 (SESSION-STATE.md, memory/) for any important context from earlier.]
 ```
 
-After compaction, the token estimate is adjusted to approximately 40% of max.
+After compaction, the token estimate is adjusted to approximately 35% of max.
 
 ### Compaction Recovery
 
@@ -155,6 +160,6 @@ This means RAG search results include the latest memory entries without manual r
 | File | Purpose | Included in System Prompt |
 |------|---------|--------------------------|
 | `workspace/SESSION-STATE.md` | WAL entries for current session | Yes |
-| `workspace/MEMORY.md` | Long-term memory | No (searched on demand) |
+| `workspace/MEMORY.md` | Long-term memory | Yes (injected as "Your Long-Term Memory" section) |
 | `workspace/memory/YYYY-MM-DD.md` | Daily conversation notes | No (searched on demand) |
 | `workspace/memory/working-buffer.md` | Danger zone backup log | Only during compaction recovery |

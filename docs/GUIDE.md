@@ -142,7 +142,7 @@ All configuration lives in `config.json`. The `qanot init` wizard generates it, 
   // ── UX ──
   "reactions_enabled": false,          // Send emoji reactions on messages
   "reply_mode": "coalesced",           // "off"|"coalesced"|"always"
-  "group_mode": "off",                 // "off"|"mention"|"all"
+  "group_mode": "mention",              // "off"|"mention"|"all"
 
   // ── Self-Healing ──
   "heartbeat_enabled": true,           // Enable periodic self-check

@@ -99,7 +99,7 @@ Config: mybot/config.json
 
 2025-01-15 10:00:00 [qanot] INFO: Config loaded: provider=anthropic, model=claude-sonnet-4-6
 2025-01-15 10:00:00 [qanot] INFO: Provider initialized: anthropic
-2025-01-15 10:00:00 [qanot] INFO: Tools registered: read_file, write_file, list_files, run_command, web_search, memory_search, session_status, cron_create, cron_list, cron_delete, cron_update
+2025-01-15 10:00:00 [qanot] INFO: Tools registered: read_file, write_file, list_files, run_command, memory_search, session_status, cost_status, send_file, doctor, cron_create, cron_list, cron_delete, cron_update, web_search, web_fetch, generate_image, edit_image, rag_search, rag_index, rag_list, rag_forget
 2025-01-15 10:00:00 [qanot] INFO: Cron scheduler started with 1 jobs
 2025-01-15 10:00:01 [qanot.telegram] INFO: [telegram] starting — transport=polling, response=stream, flush=0.8s
 ```
