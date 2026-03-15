@@ -413,9 +413,8 @@ class SqliteVecStore(VectorStore):
 
         results: list[SearchResult] = []
         for crow in chunk_rows:
-            c_rowid, c_id, c_text, c_source, c_user_id, c_metadata, c_created_at = (
-                crow[0], crow[1], crow[2], crow[3], crow[4], json.loads(crow[5]), crow[6],
-            )
+            c_rowid, c_id, c_text, c_source, c_user_id, meta_json, c_created_at = crow
+            c_metadata = json.loads(meta_json)
 
             if user_id and c_user_id != user_id:
                 continue
