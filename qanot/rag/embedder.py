@@ -159,7 +159,10 @@ def _collect_provider_keys(config) -> dict[str, dict]:
     if provider_type and provider_type not in providers:
         api_key = getattr(config, "api_key", "")
         if api_key:
-            providers[provider_type] = {"api_key": api_key}
+            providers[provider_type] = {
+                "api_key": api_key,
+                "base_url": getattr(config, "base_url", ""),
+            }
 
     return providers
 
