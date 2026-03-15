@@ -295,11 +295,6 @@ async def _mirror_to_group(
             msg = f"📋 <i>{_get_agent_name(config, to_agent)}</i> ga vazifa:\n\n{text[:3000]}"
         elif direction == "converse":
             msg = f"💬 <i>{_get_agent_name(config, to_agent)}</i> bilan suhbat boshladim:\n\n{text[:3000]}"
-        elif direction == "result":
-            msg = text[:3500]
-        elif direction == "turn":
-            # Natural conversation turn — just the message content, no prefix
-            msg = text[:3500]
         else:
             msg = text[:3500]
 
