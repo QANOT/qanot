@@ -511,8 +511,7 @@ async def aisha_tts(
             # Read body once, then try JSON or raw audio
             raw = await resp.read()
             try:
-                import json as _json
-                result = _json.loads(raw)
+                result = json.loads(raw)
                 audio_url = result.get("audio_path", "") or result.get("audio_url", "")
                 if audio_url:
                     return TTSResult(
