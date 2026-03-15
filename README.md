@@ -5,7 +5,7 @@
     <em>Two commands to fly.</em>
   </p>
   <p align="center">
-    <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/v/qanot?color=blue&label=PyPI" alt="PyPI"></a>
+    <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/v/qanot?color=blue&label=PyPI%20v2.0.1" alt="PyPI v2.0.1"></a>
     <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/pyversions/qanot" alt="Python"></a>
     <a href="https://github.com/sirli-ai/qanotai/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
     <a href="https://github.com/sirli-ai/qanotai/stargazers"><img src="https://img.shields.io/github/stars/sirli-ai/qanotai?style=social" alt="Stars"></a>
@@ -106,6 +106,12 @@ class QanotPlugin(Plugin):
 ### 📁 File Sharing
 Agent can send files to users via Telegram — workspace files, generated reports, anything.
 
+### 📊 Web Dashboard
+Live web UI for monitoring your agent: conversation logs, cost breakdown, tool usage stats, and memory inspection. Runs on a local port alongside the bot.
+
+### 🧪 Synthetic User Testing
+`agent_eval.py` — automated evaluation harness that simulates multi-turn user conversations, measures tool accuracy, response quality, and cost per scenario. Run it before deploying to catch regressions.
+
 ### 🩺 Self-Healing
 Autonomous heartbeat, workspace backup rotation, daily briefing, memory consolidation.
 
@@ -146,6 +152,7 @@ User → Telegram → Agent Loop (25 iterations max)
                       ├── Voice Pipeline (4 providers: STT + TTS)
                       ├── Agent Delegation (delegate / converse / spawn)
                       ├── Security (rate limit + exec approval + file jail)
+                      ├── Web Dashboard (live monitoring UI)
                       └── Context Tracker (auto-compaction at 60%)
 ```
 
@@ -191,6 +198,8 @@ User → Telegram → Agent Loop (25 iterations max)
 | Per-user cost tracking | ✅ | ❌ | ❌ |
 | Ollama zero-config | ✅ | ❌ | ❌ |
 | File sharing via Telegram | ✅ | ❌ | ❌ |
+| Synthetic user testing | ✅ agent_eval.py | ❌ | ❌ |
+| Web dashboard | ✅ | ❌ | ❌ |
 | Lightweight (143MB RAM) | ✅ | ❌ (1.9GB) | ❌ |
 | Uzbek voice support | ✅ | ❌ | ❌ |
 
