@@ -251,12 +251,8 @@ class SqliteVecStore(VectorStore):
                 f"WHERE provider = ? AND model = ? AND hash IN ({placeholders})",
                 [provider, model, *batch],
             ).fetchall()
-            for row in rows:
-                h = row[0]
-                blob = row[1]
-                dims = row[2]
-                vec = list(struct.unpack(f"<{dims}f", blob))
-                result[h] = vec
+            for h, blob, dims in rows:
+                result[h] = list(struct.unpack(f"<{dims}f", blob))
 
         if result:
             logger.debug("Embedding cache: %d hits / %d queries", len(result), len(hashes))
