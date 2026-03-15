@@ -39,11 +39,10 @@ def init_workspace(workspace_dir: str) -> None:
                     shutil.copy2(src, dst)
                     logger.info("Copied template: %s", rel)
 
-    single_files = [
+    for src, dst in [
         (TEMPLATE_DIR / "souls" / "universal.md", ws / "SOUL.md"),
         (TEMPLATE_DIR / "skills" / "proactive-agent" / "SKILL.md", ws / "SKILL.md"),
-    ]
-    for src, dst in single_files:
+    ]:
         if not dst.exists() and src.exists():
             shutil.copy2(src, dst)
             logger.info("Copied %s template", dst.name)
