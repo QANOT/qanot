@@ -251,12 +251,8 @@ def register_sub_agent_tools(
     async def list_sub_agents(params: dict) -> str:
         """List active sub-agents for current user."""
         user_id = get_user_id()
+        _get_active_count(user_id)  # cleans up completed tasks as a side effect
         tasks = _active_tasks.get(user_id, {})
-
-        # Clean up done tasks
-        done = [tid for tid, t in tasks.items() if t.done()]
-        for tid in done:
-            tasks.pop(tid, None)
 
         if not tasks:
             return json.dumps({"active": 0, "message": "No active sub-agents."})
