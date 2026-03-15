@@ -82,11 +82,10 @@ class Dashboard:
 
     async def _handle_api_costs(self, request: web.Request) -> web.Response:
         tracker = self.agent.cost_tracker
-        data = {
+        return web.json_response({
             "total_cost": tracker.get_total_cost(),
             "users": tracker.get_all_stats(),
-        }
-        return web.json_response(data)
+        })
 
     async def _handle_api_memory(self, request: web.Request) -> web.Response:
         ws = Path(self.config.workspace_dir)
