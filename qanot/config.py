@@ -214,8 +214,6 @@ def load_config(path: str | None = None) -> Config:
 
     # Sanitize string fields: reject control characters (null bytes, newlines, etc.)
     # that could enable injection attacks in HTTP headers, file paths, or API calls
-    import re
-    _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
     _SENSITIVE_FIELDS = {
         'bot_token', 'api_key', 'brave_api_key', 'voice_api_key',
         'image_api_key', 'webhook_url', 'base_url',
