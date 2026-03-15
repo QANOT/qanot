@@ -106,8 +106,7 @@ class AgentBot:
         if not self._is_allowed(message.from_user.id):
             return
         if self._agent:
-            user_id = str(message.from_user.id)
-            self._agent.reset(user_id)
+            self._agent.reset(str(message.from_user.id))
         await message.answer("Suhbat tozalandi.")
 
     async def _resolve_bot_username(self) -> str:
