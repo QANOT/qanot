@@ -309,8 +309,7 @@ async def fetch_link_previews(
         section += f"\nPreview: {p['preview']}"
         sections.append(section)
 
-    body = "\n\n".join(sections)
     return (
         "[LINK CONTEXT — auto-fetched from URLs in your message]\n\n"
-        f"{body}"
+        + "\n\n".join(sections)
     )
