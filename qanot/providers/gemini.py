@@ -86,11 +86,8 @@ class GeminiProvider(OpenAIProvider):
         import openai
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
-        prices = GEMINI_PRICING.get(model)
-        if prices is not None:
-            self._pricing = (prices["input"], prices["output"])
-        else:
-            self._pricing = (0.15, 0.60)
+        prices = GEMINI_PRICING.get(model, {"input": 0.15, "output": 0.60})
+        self._pricing = (prices["input"], prices["output"])
 
     def _calc_cost(self, inp: int, out: int) -> float:
         price_in, price_out = self._pricing
