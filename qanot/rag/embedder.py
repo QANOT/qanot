@@ -106,6 +106,8 @@ class GeminiEmbedder(Embedder):
         return all_embeddings
 
 
+_EMBED_BATCH_SIZE = 100
+
 _OPENAI_MODEL_DIMS: dict[str, int] = {
     "nomic-embed-text": 768,
     "text-embedding-3-small": 1536,
