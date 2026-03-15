@@ -115,7 +115,6 @@ async def _run_sub_agent(
 
     except Exception as e:
         elapsed = time.monotonic() - start
-        task_preview = task[:200] + ("..." if len(task) > 200 else "")
         error_msg = str(e)[:500] if str(e) else "Unknown error"
         try:
             await send_callback(
