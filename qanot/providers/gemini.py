@@ -63,11 +63,6 @@ def _ensure_user_first(messages: list[dict]) -> list[dict]:
     return messages[:insert_idx] + [synthetic] + messages[insert_idx:]
 
 
-def _sanitize_gemini_tools(tools: list[dict]) -> list[dict]:
-    """Convert Anthropic-style tools to OpenAI format and strip unsupported keys."""
-    return _strip_unsupported_keys(_anthropic_tools_to_openai(tools))
-
-
 class GeminiProvider(OpenAIProvider):
     """Google Gemini provider via OpenAI-compatible API.
 
