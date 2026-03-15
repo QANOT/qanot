@@ -86,6 +86,14 @@ def _read_secret_file(path: str) -> str:
     except OSError:
         pass
 
+    _MAX_SECRET_BYTES = 64 * 1024  # 64 KB — no legitimate secret exceeds this
+    size = p.stat().st_size
+    if size > _MAX_SECRET_BYTES:
+        raise ValueError(
+            f"Secret file {path} is too large ({size} bytes); "
+            f"maximum allowed is {_MAX_SECRET_BYTES} bytes"
+        )
+
     content = p.read_text(encoding="utf-8").strip()
     if not content:
         logger.warning("Secret file %s is empty", path)
