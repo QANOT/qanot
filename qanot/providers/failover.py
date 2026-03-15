@@ -197,12 +197,7 @@ class FailoverProvider(LLMProvider):
         system: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream with automatic failover."""
-        available = self._get_available_indices()
-        if not available:
-            available = [0]
-            logger.warning("All providers in cooldown, forcing first provider")
-
-        order = self._build_try_order(available)
+        order = self._resolve_try_order()
 
         last_error: Exception | None = None
         for idx in order:
