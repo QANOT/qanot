@@ -69,7 +69,7 @@ def register_cron_tools(
         if any(j["name"] == name for j in jobs):
             return json.dumps({"error": f"Job '{name}' already exists. Use cron_update to modify."})
 
-        job: dict = {
+        job = {
             "name": name,
             "mode": mode,
             "prompt": prompt,
