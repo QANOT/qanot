@@ -376,7 +376,7 @@ class TelegramAdapter:
 
         # For groups, use chat_id as coalescing key so all members share one conversation.
         # For DMs, use user_id.
-        coalesce_key = f"group_{message.chat.id}" if is_group else str(user_id)
+        coalesce_key = self._conv_key(message)
 
         # Add to pending buffer (before acquiring lock)
         self._pending_messages.setdefault(coalesce_key, []).append(
