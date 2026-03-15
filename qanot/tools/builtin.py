@@ -298,7 +298,10 @@ def register_builtin_tools(
                 else:
                     return approval_required_response
 
-        timeout = params.get("timeout", COMMAND_TIMEOUT)
+        try:
+            timeout = max(1, min(int(params.get("timeout", COMMAND_TIMEOUT)), COMMAND_TIMEOUT))
+        except (TypeError, ValueError):
+            timeout = COMMAND_TIMEOUT
         cwd = params.get("cwd", workspace_dir)
 
         logger.info("Executing command [%s]: %s", exec_security, command)
