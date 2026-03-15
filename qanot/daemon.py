@@ -103,9 +103,10 @@ WantedBy=default.target
 def _generate_launchd(config_path: Path) -> str:
     """Generate a macOS LaunchAgent plist."""
     qanot = _qanot_bin()
-    config = str(config_path.resolve())
-    working_dir = str(config_path.resolve().parent)
-    log_path = str(config_path.resolve().parent / "qanot.log")
+    resolved = config_path.resolve()
+    config = str(resolved)
+    working_dir = str(resolved.parent)
+    log_path = str(resolved.parent / "qanot.log")
     name = _service_name(config_path)
 
     # Split command for ProgramArguments
