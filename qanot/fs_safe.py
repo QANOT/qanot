@@ -5,12 +5,8 @@ OpenClaw-inspired: writeFileWithinRoot with symlink/traversal protection.
 
 from __future__ import annotations
 
-import logging
 import os
 import uuid
-from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 # System directories that should NEVER be written to
 _SYSTEM_DIRS = frozenset({
