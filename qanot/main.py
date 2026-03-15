@@ -228,6 +228,8 @@ async def main() -> None:
 
     _agent_ref.append(agent)
 
+    get_user_id = lambda: agent.current_user_id
+
     # Register RAG tools and hooks (needs agent reference for get_user_id)
     if rag_engine is not None and rag_indexer is not None:
         from qanot.tools.rag import register_rag_tools
@@ -237,7 +239,7 @@ async def main() -> None:
 
         register_rag_tools(
             tool_registry, rag_engine, config.workspace_dir,
-            get_user_id=lambda: agent.current_user_id,
+            get_user_id=get_user_id,
         )
 
         def _on_memory_write(content: str, source: str) -> None:
@@ -251,7 +253,7 @@ async def main() -> None:
         register_image_tools(
             tool_registry, gemini_api_key, config.workspace_dir,
             model=config.image_model,
-            get_user_id=lambda: agent.current_user_id,
+            get_user_id=get_user_id,
         )
         logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
@@ -268,8 +270,6 @@ async def main() -> None:
         scheduler=scheduler,
     )
     _telegram_ref.append(telegram)
-
-    get_user_id = lambda: agent.current_user_id
 
     # Register sub-agent tools (needs agent + telegram for delivery)
     from qanot.tools.subagent import register_sub_agent_tools
