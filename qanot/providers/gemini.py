@@ -84,8 +84,7 @@ class GeminiProvider(OpenAIProvider):
         self._pricing = (prices["input"], prices["output"])
 
     def _calc_cost(self, inp: int, out: int) -> float:
-        price_in, price_out = self._pricing
-        return inp * price_in / 1_000_000 + out * price_out / 1_000_000
+        return (inp * self._pricing[0] + out * self._pricing[1]) / 1_000_000
 
     def _prepare_messages(self, messages: list[dict], system: str | None) -> list[dict]:
         """Convert messages and ensure conversation starts with a user turn."""
