@@ -189,20 +189,7 @@ class AnthropicProvider(LLMProvider):
         }
 
         if system:
-            system_blocks = []
-            # OAuth tokens MUST include Claude Code identity for Opus/Sonnet access
-            if self._is_oauth:
-                system_blocks.append({
-                    "type": "text",
-                    "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-                    "cache_control": {"type": "ephemeral"},
-                })
-            system_blocks.append({
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            })
-            kwargs["system"] = system_blocks
+            kwargs["system"] = self._build_system_blocks(system)
 
         if tools:
             kwargs["tools"] = tools
