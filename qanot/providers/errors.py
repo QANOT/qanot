@@ -41,10 +41,13 @@ def classify_error(error: Exception) -> str:
     Returns one of the ERROR_* constants above.
     """
     # Detect Python built-in timeout/connection errors early
-    if isinstance(error, (TimeoutError, ConnectionAbortedError)):
-        return ERROR_TIMEOUT
-    if isinstance(error, ConnectionRefusedError):
-        return ERROR_OVERLOADED
+    _BUILTIN_MAP = (
+        ((TimeoutError, ConnectionAbortedError), ERROR_TIMEOUT),
+        ((ConnectionRefusedError,), ERROR_OVERLOADED),
+    )
+    for exc_types, error_code in _BUILTIN_MAP:
+        if isinstance(error, exc_types):
+            return error_code
 
     # Extract HTTP status code if available
     status = getattr(error, "status_code", None)
