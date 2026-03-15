@@ -212,9 +212,9 @@ class CronScheduler:
                 content = hb_path.read_text(encoding="utf-8").strip()
                 # Skip if file is empty or contains only comments
                 has_actionable = any(
-                    not s.startswith("#")
-                    for l in content.splitlines()
-                    if (s := l.strip())
+                    not stripped.startswith("#")
+                    for line in content.splitlines()
+                    if (stripped := line.strip())
                 )
                 if not has_actionable:
                     logger.info("Heartbeat skipped — HEARTBEAT.md is empty")
