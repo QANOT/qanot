@@ -87,7 +87,7 @@ def tool(
         func._tool_def = {  # type: ignore
             "name": name,
             "description": description,
-            "parameters": parameters or {"type": "object", "properties": {}},
+            "parameters": parameters if parameters is not None else {"type": "object", "properties": {}},
         }
         return func
     return decorator
