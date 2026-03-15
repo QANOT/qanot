@@ -1123,9 +1123,9 @@ def cmd_backup(args: list[str]) -> None:
         ("plugins_dir", "plugins"),
     ]
     dirs_to_backup: list[tuple[Path, str]] = [
-        (Path(raw.get(config_key, project_dir / name)), name)
+        (p, name)
         for config_key, name in backup_dirs_spec
-        if Path(raw.get(config_key, project_dir / name)).exists()
+        if (p := Path(raw.get(config_key, project_dir / name))).exists()
     ]
 
     # Always include config.json
