@@ -272,20 +272,21 @@ class SqliteVecStore(VectorStore):
         assert conn is not None
 
         now = time.time()
-        for h, embedding in items:
-            dims = len(embedding)
-            blob = struct.pack(f"<{dims}f", *embedding)
-            conn.execute(
-                "INSERT INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(provider, model, hash) DO UPDATE SET "
-                "embedding=excluded.embedding, dims=excluded.dims, updated_at=excluded.updated_at",
-                (provider, model, h, blob, dims, now),
-            )
-        conn.commit()
+        with self._lock:
+            for h, embedding in items:
+                dims = len(embedding)
+                blob = struct.pack(f"<{dims}f", *embedding)
+                conn.execute(
+                    "INSERT INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(provider, model, hash) DO UPDATE SET "
+                    "embedding=excluded.embedding, dims=excluded.dims, updated_at=excluded.updated_at",
+                    (provider, model, h, blob, dims, now),
+                )
+            conn.commit()
 
-        # LRU eviction
-        self._prune_cache()
+            # LRU eviction (called under lock; _prune_cache must not re-acquire)
+            self._prune_cache()
 
     def _prune_cache(self) -> None:
         """Evict oldest cache entries if over max_entries."""
