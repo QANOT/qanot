@@ -472,7 +472,7 @@ def register_web_tools(
         except aiohttp.TooManyRedirects:
             return json.dumps({"error": f"Too many redirects (max {FETCH_MAX_REDIRECTS})"})
         except aiohttp.ClientError as e:
-            if "timeout" in str(e).lower() or isinstance(e, asyncio.TimeoutError):
+            if "timeout" in str(e).lower():
                 return json.dumps({"error": f"Request timed out ({FETCH_TIMEOUT}s)"})
             logger.error("web_fetch network error for %s: %s", url, e)
             return json.dumps({"error": f"Request failed: {type(e).__name__}"})
