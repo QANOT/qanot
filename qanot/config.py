@@ -164,7 +164,6 @@ def load_config(path: str | None = None) -> Config:
 
     def _dict_to_dataclass(cls, data: dict):
         """Map a dict to a dataclass using field names and defaults."""
-        import dataclasses
         if not isinstance(data, dict):
             raise TypeError(
                 f"Expected dict for {cls.__name__}, got {type(data).__name__}"
