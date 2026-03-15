@@ -172,7 +172,6 @@ class RoutingProvider(LLMProvider):
 
         msg_score = classify_complexity(user_text)
         ctx_score = self._assess_context(messages)
-        effective = max(msg_score, ctx_score)
 
         self.stats.total += 1
 
