@@ -47,7 +47,9 @@ def classify_error(error: Exception) -> str:
         return ERROR_OVERLOADED
 
     # Extract HTTP status code if available
-    status = getattr(error, "status_code", None) or getattr(error, "status", None)
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(error, "status", None)
     if status is not None:
         try:
             mapped = _STATUS_MAP.get(int(status))
