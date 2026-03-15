@@ -7,8 +7,8 @@
   <p align="center">
     <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/v/qanot?color=blue&label=PyPI%20v2.0.1" alt="PyPI v2.0.1"></a>
     <a href="https://pypi.org/project/qanot/"><img src="https://img.shields.io/pypi/pyversions/qanot" alt="Python"></a>
-    <a href="https://github.com/sirli-ai/qanotai/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-    <a href="https://github.com/sirli-ai/qanotai/stargazers"><img src="https://img.shields.io/github/stars/sirli-ai/qanotai?style=social" alt="Stars"></a>
+    <a href="https://github.com/sirli-ai/qanot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+    <a href="https://github.com/sirli-ai/qanot/stargazers"><img src="https://img.shields.io/github/stars/sirli-ai/qanot?style=social" alt="Stars"></a>
   </p>
 </p>
 
@@ -210,7 +210,7 @@ User → Telegram → Agent Loop (25 iterations max)
 Contributions are welcome! Please read the existing code patterns before submitting PRs.
 
 ```bash
-git clone https://github.com/sirli-ai/qanotai.git
+git clone https://github.com/sirli-ai/qanot.git
 cd qanotai
 pip install -e .
 python -m pytest tests/ -v   # 757 tests
