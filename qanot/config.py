@@ -202,7 +202,6 @@ def load_config(path: str | None = None) -> Config:
 
     # Auto-map simple fields (str, int, float, bool, list, dict) from JSON to dataclass.
     # Only nested types (plugins, providers, agents) need manual parsing.
-    import dataclasses
     _NESTED_FIELDS = {"plugins", "providers", "agents"}
     simple = {}
     for f in dataclasses.fields(Config):
