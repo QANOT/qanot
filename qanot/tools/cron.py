@@ -27,6 +27,10 @@ def register_cron_tools(
     def _save_jobs(jobs: list[dict]) -> None:
         _save_jobs_to_file(jobs_path, jobs)
 
+    async def _reload_scheduler() -> None:
+        if scheduler_ref and hasattr(scheduler_ref, "reload_jobs"):
+            await scheduler_ref.reload_jobs()
+
     # ── cron_create ──
     async def cron_create(params: dict) -> str:
         name = str(params.get("name", "")).strip()
