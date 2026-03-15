@@ -113,15 +113,16 @@ async def main() -> None:
     # Wrap with routing provider if enabled (cost optimization)
     if config.routing_enabled:
         from qanot.routing import RoutingProvider
+        routing_mid_model = getattr(config, "routing_mid_model", "claude-sonnet-4-6")
         provider = RoutingProvider(
             provider=provider,
             cheap_model=config.routing_model,
-            mid_model=getattr(config, "routing_mid_model", "claude-sonnet-4-6"),
+            mid_model=routing_mid_model,
             threshold=config.routing_threshold,
         )
         logger.info(
             "3-tier routing: simple → %s, moderate → %s, complex → %s",
-            config.routing_model, getattr(config, "routing_mid_model", "claude-sonnet-4-6"), config.model,
+            config.routing_model, routing_mid_model, config.model,
         )
 
     # Create context tracker
