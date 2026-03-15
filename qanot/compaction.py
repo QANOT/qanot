@@ -482,9 +482,10 @@ async def summarize_in_stages(
         return valid_summaries[0]
 
     # Stage 2: Merge partial summaries
-    merge_text = MERGE_PROMPT
-    for i, summary in enumerate(valid_summaries, 1):
-        merge_text += f"### Part {i}\n{summary}\n\n"
+    merge_text = MERGE_PROMPT + "".join(
+        f"### Part {i}\n{summary}\n\n"
+        for i, summary in enumerate(valid_summaries, 1)
+    )
 
     try:
         response = await provider.chat(
