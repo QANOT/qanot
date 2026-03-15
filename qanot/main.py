@@ -168,7 +168,7 @@ async def main() -> None:
             return False
         adapter = _telegram_ref[0]
         agent = _agent_ref[0]
-        chat_id = agent._current_chat_id
+        chat_id = agent.current_chat_id
         if not chat_id:
             return False
         return await adapter.request_approval(
