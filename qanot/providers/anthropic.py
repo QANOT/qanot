@@ -170,7 +170,7 @@ class AnthropicProvider(LLMProvider):
         )
 
         return ProviderResponse(
-            content="\n".join(text_parts),
+            content="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=response.stop_reason or "end_turn",
             usage=usage,
