@@ -159,6 +159,9 @@ class BM25Index:
 
         scores: list[tuple[str, float]] = []
 
+        if self._avg_dl == 0.0:
+            return []
+
         k1_plus_1 = self.k1 + 1
         for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
