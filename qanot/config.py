@@ -90,7 +90,7 @@ class Config:
     reactions_enabled: bool = False  # Send emoji reactions (👀, ✅, ❌) on messages
     reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"
     # Group chat
-    group_mode: str = "off"  # "off" | "mention" | "all"
+    group_mode: str = "mention"  # "off" | "mention" | "all"
     # Self-healing / heartbeat
     heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
     heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule
