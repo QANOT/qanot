@@ -81,7 +81,7 @@ def _create_provider(config):
         provider_type=config.provider,
         api_key=config.api_key,
         model=config.model,
-        **thinking_kwargs,
+        **_anthropic_thinking_kwargs(config.provider, config),
     )
     return _create_single_provider(profile)
 
