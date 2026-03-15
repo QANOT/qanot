@@ -74,7 +74,7 @@ def backup_workspace(workspace_dir: str) -> str | None:
     for fpath in files_to_backup:
         try:
             dest = backup_dir / fpath.name
-            shutil.copy2(str(fpath), str(dest))
+            shutil.copy2(fpath, dest)
             copied += 1
         except OSError as e:
             logger.warning("Failed to backup %s: %s", fpath.name, e)
@@ -83,7 +83,7 @@ def backup_workspace(workspace_dir: str) -> str | None:
     for dpath in dirs_to_backup:
         try:
             dest = backup_dir / dpath.name
-            shutil.copytree(str(dpath), str(dest), dirs_exist_ok=True)
+            shutil.copytree(dpath, dest, dirs_exist_ok=True)
             copied += 1
         except OSError as e:
             logger.warning("Failed to backup directory %s: %s", dpath.name, e)
