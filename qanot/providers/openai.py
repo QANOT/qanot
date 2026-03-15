@@ -247,7 +247,7 @@ class OpenAIProvider(LLMProvider):
 
     def _calc_cost(self, input_tokens: int, output_tokens: int) -> float:
         prices = PRICING.get(self.model, DEFAULT_PRICING)
-        return input_tokens * prices["input"] / 1_000_000 + output_tokens * prices["output"] / 1_000_000
+        return (input_tokens * prices["input"] + output_tokens * prices["output"]) / 1_000_000
 
     @staticmethod
     def _stop_reason(tool_calls: list) -> str:
