@@ -25,6 +25,7 @@ MAX_RESULT_CHARS = 6000  # Max chars to deliver back
 
 # Track active sub-agents per user
 _active_tasks: dict[str, dict[str, asyncio.Task]] = {}  # user_id → {task_id → Task}
+MAX_TASK_CHARS = 10000  # Max chars for task description
 
 
 def _get_active_count(user_id: str) -> int:
