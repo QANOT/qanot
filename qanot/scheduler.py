@@ -182,8 +182,7 @@ class CronScheduler:
                 replace_existing=True,
             )
 
-            sched_desc = at or schedule
-            logger.info("Scheduled cron job: %s (%s, mode=%s)", name, sched_desc, mode)
+            logger.info("Scheduled cron job: %s (%s, mode=%s)", name, at or schedule, mode)
         except Exception as e:
             logger.error("Failed to schedule job %s: %s", name, e)
 
