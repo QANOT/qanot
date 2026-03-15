@@ -152,8 +152,7 @@ def register_cron_tools(
 
         _save_jobs(new_jobs)
 
-        if scheduler_ref and hasattr(scheduler_ref, "reload_jobs"):
-            await scheduler_ref.reload_jobs()
+        await _reload_scheduler()
 
         return json.dumps({"success": True, "deleted": name})
 
