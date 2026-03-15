@@ -35,7 +35,7 @@ class GroqProvider(OpenAIProvider):
         model: str = "llama-3.3-70b-versatile",
         base_url: str = "https://api.groq.com/openai/v1",
     ):
-        if not api_key or not isinstance(api_key, str) or not api_key.strip():
+        if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError("GroqProvider requires a non-empty api_key")
         if not isinstance(model, str) or not model.strip():
             raise ValueError("GroqProvider requires a non-empty model name")
