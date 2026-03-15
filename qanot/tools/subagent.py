@@ -65,7 +65,7 @@ async def _run_sub_agent(
     from qanot.agent import spawn_isolated_agent
 
     start = time.monotonic()
-    task_preview = task[:200] + ("..." if len(task) > 200 else "")
+    task_preview = task if len(task) <= 200 else task[:200] + "..."
     try:
         # Build a focused prompt for the sub-agent
         prompt = (
