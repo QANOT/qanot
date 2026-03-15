@@ -96,10 +96,11 @@ def safe_write_file(path: str, content: str, root: str | None = None) -> str:
 
     # Create parent directories
     parent = os.path.dirname(resolved)
+    basename = os.path.basename(resolved)
     os.makedirs(parent, exist_ok=True)
 
     # Atomic write: write to temp file, then rename
-    temp_path = os.path.join(parent, f".{os.path.basename(resolved)}.{uuid.uuid4().hex[:8]}.tmp")
+    temp_path = os.path.join(parent, f".{basename}.{uuid.uuid4().hex[:8]}.tmp")
     try:
         with open(temp_path, "w", encoding="utf-8") as f:
             f.write(content)
