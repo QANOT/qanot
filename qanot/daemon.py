@@ -353,11 +353,7 @@ def daemon_restart(config_path: Path) -> tuple[bool, str]:
             return True, f"Restarted {name}"
         return False, f"Failed: {result.stderr.strip()}"
 
-    elif plat == "macos":
-        daemon_stop(config_path)
-        return daemon_start(config_path)
-
-    elif plat == "windows":
+    elif plat in ("macos", "windows"):
         daemon_stop(config_path)
         return daemon_start(config_path)
 
