@@ -207,6 +207,15 @@ class SessionWriter:
                         if isinstance(content, str) and len(content) > 100_000:
                             logger.warning("Skipping oversized message in %s", filepath)
                             continue
+                        elif isinstance(content, list):
+                            total_len = sum(
+                                len(b.get("text", ""))
+                                for b in content
+                                if isinstance(b, dict)
+                            )
+                            if total_len > 100_000:
+                                logger.warning("Skipping oversized message in %s", filepath)
+                                continue
 
                         # Filter by user_id.
                         # Legacy entries without user_id are included (personal bot
