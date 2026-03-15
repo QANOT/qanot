@@ -632,6 +632,9 @@ async def text_to_speech(
     return await muxlisa_tts(text, api_key, voice)
 
 
+_ALLOWED_AUDIO_HOSTS = {"cdn.aisha.group", "service.muxlisa.uz", "developer.kotib.ai", "api.openai.com"}
+
+
 async def download_audio(url: str) -> str:
     """Download audio file from URL to a temp file.
 
@@ -641,9 +644,7 @@ async def download_audio(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("https", "http"):
         raise ValueError(f"Invalid audio URL scheme: {parsed.scheme}")
-    # Allow only known voice provider CDNs
-    _ALLOWED_HOSTS = {"cdn.aisha.group", "service.muxlisa.uz", "developer.kotib.ai", "api.openai.com"}
-    if parsed.hostname and not any(parsed.hostname.endswith(h) for h in _ALLOWED_HOSTS):
+    if parsed.hostname and not any(parsed.hostname.endswith(h) for h in _ALLOWED_AUDIO_HOSTS):
         raise ValueError(f"Audio download blocked: untrusted host {parsed.hostname}")
 
     async with aiohttp.ClientSession() as session:
