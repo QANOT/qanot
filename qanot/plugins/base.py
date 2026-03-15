@@ -90,11 +90,7 @@ def tool(
             "description": description,
             "parameters": parameters or {"type": "object", "properties": {}},
         }
-        @functools.wraps(func)
-        async def wrapper(self_or_params, *args, **kwargs):
-            return await func(self_or_params, *args, **kwargs)
-        wrapper._tool_def = func._tool_def  # type: ignore
-        return wrapper
+        return func
     return decorator
 
 
