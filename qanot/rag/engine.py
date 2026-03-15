@@ -22,9 +22,8 @@ def _text_similarity(a: str, b: str) -> float:
     words_b = set(b.lower().split())
     if not words_a or not words_b:
         return 0.0
-    intersection = words_a & words_b
-    union = words_a | words_b
-    return len(intersection) / len(union)
+    inter_len = len(words_a & words_b)
+    return inter_len / (len(words_a) + len(words_b) - inter_len)
 
 
 def _is_redundant(text: str, seen_texts: list[str]) -> bool:
