@@ -413,7 +413,7 @@ def register_web_tools(
                     content_length = resp.content_length
                     if content_length is not None and content_length > FETCH_MAX_BODY:
                         return json.dumps({
-                            "error": f"Response too large (>{FETCH_MAX_BODY // (1024 * 1024)}MB)",
+                            "error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)",
                         })
 
                     # Read body with size limit
@@ -422,7 +422,7 @@ def register_web_tools(
                         body_bytes += chunk
                         if len(body_bytes) > FETCH_MAX_BODY:
                             return json.dumps({
-                                "error": f"Response too large (>{FETCH_MAX_BODY // (1024 * 1024)}MB)",
+                                "error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)",
                             })
 
                     content_type = resp.content_type or ""
