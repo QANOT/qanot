@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from qanot.providers.openai import OpenAIProvider, PRICING as OAI_PRICING
+from qanot.providers.openai import OpenAIProvider
 
 # Groq pricing per million tokens (March 2026)
 GROQ_PRICING = {
