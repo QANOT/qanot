@@ -58,7 +58,6 @@ class ProviderProfile:
 
         # Thinking level downgrade: if thinking is on and we're failing, try lower
         if self.thinking_level != "off" and self._failure_count >= 2:
-            _THINKING_DOWNGRADE = {"high": "medium", "medium": "low", "low": "off"}
             new_level = _THINKING_DOWNGRADE.get(self.thinking_level)
             if new_level:
                 logger.info("Downgrading thinking: %s → %s for %s",
