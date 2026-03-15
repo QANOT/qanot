@@ -106,6 +106,13 @@ class GeminiEmbedder(Embedder):
         return all_embeddings
 
 
+_OPENAI_MODEL_DIMS: dict[str, int] = {
+    "nomic-embed-text": 768,
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+}
+
+
 class OpenAIEmbedder(Embedder):
     """OpenAI text-embedding-3-small (1536 dims, $0.02/MTok)."""
 
@@ -119,9 +126,7 @@ class OpenAIEmbedder(Embedder):
             kwargs["base_url"] = base_url
         self.client = openai.AsyncOpenAI(**kwargs)
         self.model = model
-        # nomic-embed-text = 768, OpenAI text-embedding-3-small = 1536
-        _MODEL_DIMS = {"nomic-embed-text": 768, "text-embedding-3-small": 1536, "text-embedding-3-large": 3072}
-        self.dimensions = _MODEL_DIMS.get(model, 768 if base_url and "11434" in base_url else 1536)
+        self.dimensions = _OPENAI_MODEL_DIMS.get(model, 768 if base_url and "11434" in base_url else 1536)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts in batches of 100."""
