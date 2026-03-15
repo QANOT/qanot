@@ -60,16 +60,17 @@ def _create_provider(config):
 
     # Multi-provider mode
     if config.providers:
-        profiles = []
-        for pc in config.providers:
-            profiles.append(ProviderProfile(
+        profiles = [
+            ProviderProfile(
                 name=pc.name,
                 provider_type=pc.provider,
                 api_key=pc.api_key,
                 model=pc.model,
                 base_url=pc.base_url or None,
                 **_anthropic_thinking_kwargs(pc.provider, config),
-            ))
+            )
+            for pc in config.providers
+        ]
         provider = FailoverProvider(profiles)
         names = [p.name for p in profiles]
         logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(names))
