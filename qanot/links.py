@@ -269,8 +269,6 @@ async def fetch_link_previews(
     if max_urls <= 0:
         return ""
     urls = urls[:max_urls]
-    if not urls:
-        return ""
 
     # Fetch all URLs concurrently
     if max_total_chars <= 0:
