@@ -90,12 +90,13 @@ class MemoryIndexer:
 
         content_hash = hash(content)
         source = str(path.relative_to(self.workspace_dir))
+        old_hash = self._indexed_hashes.get(source)
 
-        if self._indexed_hashes.get(source) == content_hash:
+        if old_hash == content_hash:
             return 0
 
         # Delete stale chunks only when a prior version exists, then ingest fresh content
-        if source in self._indexed_hashes:
+        if old_hash is not None:
             self.engine.store.delete_source(source)
         chunk_ids = await self.engine.ingest(
             content,
