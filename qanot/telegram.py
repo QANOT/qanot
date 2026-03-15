@@ -227,8 +227,7 @@ class TelegramAdapter:
                 return True
             # Check if message is a reply to bot's own message
             if message.reply_to_message and message.reply_to_message.from_user:
-                me = await self.bot.me()
-                if message.reply_to_message.from_user.id == me.id:
+                if message.reply_to_message.from_user.username == bot_username:
                     return True
             return False
         return False
