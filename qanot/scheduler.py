@@ -294,6 +294,10 @@ class CronScheduler:
         logger.info("Cron scheduler stopped")
 
 
+# Maximum response length that still qualifies as a heartbeat-OK (nothing substantive to report)
+_HEARTBEAT_OK_MAX_LEN = 300
+
+
 def _is_heartbeat_ok(text: str) -> bool:
     """Check if the agent response is a HEARTBEAT_OK (nothing to report).
 
@@ -301,4 +305,4 @@ def _is_heartbeat_ok(text: str) -> bool:
     """
     stripped = text.strip().upper()
     # Exact match or with minor surrounding text (e.g. "Everything is fine. HEARTBEAT_OK")
-    return HEARTBEAT_OK_TOKEN in stripped and len(stripped) < 300
+    return HEARTBEAT_OK_TOKEN in stripped and len(stripped) < _HEARTBEAT_OK_MAX_LEN
