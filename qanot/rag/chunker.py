@@ -47,7 +47,7 @@ def chunk_text(
         segments = re.split(r"\n{2,}", text)
 
     # Remove empty segments
-    segments = [s.strip() for s in segments if s.strip()]
+    segments = [stripped for s in segments if (stripped := s.strip())]
 
     # If a single segment is too long, split by sentences
     expanded: list[str] = []
