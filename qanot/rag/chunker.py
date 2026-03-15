@@ -162,7 +162,7 @@ class BM25Index:
         for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
 
-            for token in query_tokens:
+            for token in set(query_tokens):
                 if token not in freq:
                     continue
                 tf = freq[token]
