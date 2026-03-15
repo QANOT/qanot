@@ -78,5 +78,13 @@ class RateLimiter:
         """Remove stale entries for users who haven't made requests recently."""
         now = time.monotonic()
         cutoff = now - self.window * 2
-        self._requests = {uid: timestamps for uid, timestamps in self._requests.items() if timestamps and timestamps[-1] >= cutoff}
-        self._locked_until = {uid: unlock_time for uid, unlock_time in self._locked_until.items() if now < unlock_time}
+        self._requests = {
+            uid: timestamps
+            for uid, timestamps in self._requests.items()
+            if timestamps and timestamps[-1] >= cutoff
+        }
+        self._locked_until = {
+            uid: unlock_time
+            for uid, unlock_time in self._locked_until.items()
+            if now < unlock_time
+        }
