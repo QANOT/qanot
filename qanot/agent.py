@@ -111,6 +111,8 @@ def _strip_verbose_result(result: str) -> str:
     Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
     from JSON results while preserving the core data.
     """
+    if not result or result[0] != '{':
+        return result
     try:
         data = json.loads(result)
         if not isinstance(data, dict):
