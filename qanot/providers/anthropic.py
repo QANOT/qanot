@@ -98,6 +98,23 @@ class AnthropicProvider(LLMProvider):
             + cw * prices["cache_write"] / 1_000_000
         )
 
+    def _build_system_blocks(self, system: str) -> list[dict]:
+        """Build the system prompt block list, prepending OAuth identity block if needed."""
+        blocks: list[dict] = []
+        # OAuth tokens MUST include Claude Code identity for Opus/Sonnet access
+        if self._is_oauth:
+            blocks.append({
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+                "cache_control": {"type": "ephemeral"},
+            })
+        blocks.append({
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        })
+        return blocks
+
     async def chat(
         self,
         messages: list[dict],
@@ -111,20 +128,7 @@ class AnthropicProvider(LLMProvider):
         }
 
         if system:
-            system_blocks = []
-            # OAuth tokens MUST include Claude Code identity for Opus/Sonnet access
-            if self._is_oauth:
-                system_blocks.append({
-                    "type": "text",
-                    "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-                    "cache_control": {"type": "ephemeral"},
-                })
-            system_blocks.append({
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            })
-            kwargs["system"] = system_blocks
+            kwargs["system"] = self._build_system_blocks(system)
 
         if tools:
             kwargs["tools"] = tools
