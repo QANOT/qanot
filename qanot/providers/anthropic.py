@@ -102,11 +102,11 @@ class AnthropicProvider(LLMProvider):
         cr = usage.get("cache_read_input_tokens", 0)
         cw = usage.get("cache_creation_input_tokens", 0)
         return (
-            inp * prices["input"] / 1_000_000
-            + out * prices["output"] / 1_000_000
-            + cr * prices["cache_read"] / 1_000_000
-            + cw * prices["cache_write"] / 1_000_000
-        )
+            inp * prices["input"]
+            + out * prices["output"]
+            + cr * prices["cache_read"]
+            + cw * prices["cache_write"]
+        ) / 1_000_000
 
     def _build_system_blocks(self, system: str) -> list[dict]:
         """Build the system prompt block list, prepending OAuth identity block if needed."""
