@@ -50,6 +50,20 @@ nav:
   - Telegram: telegram.md
   - Scheduler: scheduler.md
   - API Reference: api-reference.md
+  - "O'zbekcha":
+    - Bosh sahifa: uz/index.md
+    - Boshlash: uz/getting-started.md
+    - Qo'llanma: uz/GUIDE.md
+    - Sozlash: uz/configuration.md
+    - Arxitektura: uz/architecture.md
+    - Providerlar: uz/providers.md
+    - Toollar: uz/tools.md
+    - Pluginlar: uz/plugins.md
+    - Xotira: uz/memory.md
+    - RAG: uz/rag.md
+    - Telegram: uz/telegram.md
+    - Scheduler: uz/scheduler.md
+    - API Reference: uz/api-reference.md
 
 markdown_extensions:
   - pymdownx.highlight:
