@@ -79,9 +79,14 @@ class MemoryIndexer:
             metadata=metadata,
         )
 
+    _MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
+
     async def _index_file(self, path: Path, user_id: str) -> int:
         """Index a single file if its content has changed."""
         try:
+            if path.stat().st_size > self._MAX_FILE_BYTES:
+                logger.warning("Skipping %s: exceeds %d-byte limit", path, self._MAX_FILE_BYTES)
+                return 0
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning("Failed to read %s: %s", path, exc)
