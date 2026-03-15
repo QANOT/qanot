@@ -224,14 +224,10 @@ def _check_rag(config: "Config") -> dict:
                 cursor = conn.cursor()
 
                 # Check FTS5
-                fts5_available = False
-                try:
-                    cursor.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
-                    )
-                    fts5_available = cursor.fetchone() is not None
-                except sqlite3.OperationalError:
-                    pass
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+                )
+                fts5_available = cursor.fetchone() is not None
                 details.append(f"FTS5: {'available' if fts5_available else 'not available'}")
 
                 # Embedding cache count
