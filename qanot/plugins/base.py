@@ -183,7 +183,6 @@ def _check_type(value: Any, expected: str) -> bool:
     # to avoid booleans passing as integers/numbers.
     if isinstance(value, bool):
         return expected == "boolean"
-    expected_types = _JSON_SCHEMA_TYPE_MAP.get(expected)
-    if expected_types is None:
+    if (expected_types := _JSON_SCHEMA_TYPE_MAP.get(expected)) is None:
         return True  # Unknown type, skip validation
     return isinstance(value, expected_types)
