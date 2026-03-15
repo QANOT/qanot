@@ -304,8 +304,7 @@ class ContextTracker:
             if path.exists():
                 try:
                     # Check file size before reading to avoid loading huge files
-                    file_size = path.stat().st_size
-                    if file_size > MAX_RECOVERY_FILE_CHARS * 4:  # rough UTF-8 estimate
+                    if (file_size := path.stat().st_size) > MAX_RECOVERY_FILE_CHARS * 4:  # rough UTF-8 estimate
                         logger.warning(
                             "Recovery file %s is too large (%d bytes), truncating",
                             path, file_size,
