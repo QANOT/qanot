@@ -80,4 +80,4 @@ class RateLimiter:
         now = time.monotonic()
         cutoff = now - self.window * 2
         self._requests = {uid: ts for uid, ts in self._requests.items() if ts and ts[-1] >= cutoff}
-        self._locked_until = {uid: t for uid, t in self._locked_until.items() if now < t}
+        self._locked_until = {uid: unlock_time for uid, unlock_time in self._locked_until.items() if now < unlock_time}
