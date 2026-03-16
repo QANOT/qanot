@@ -1,0 +1,8 @@
+{
+    "name": "bito",
+    "version": "1.0.0",
+    "description": "Bito POS/ERP integration — sotuvlar, tovarlar, mijozlar, ombor",
+    "author": "Qanot AI",
+    "dependencies": ["aiohttp"],
+    "required_config": ["api_key"]
+}
