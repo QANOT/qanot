@@ -8,7 +8,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 
 # --- generate_image tests ---------------------------------------------------

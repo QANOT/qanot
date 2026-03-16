@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.tools.jobs_io import load_jobs as _load_jobs_from_file, save_jobs as _save_jobs_to_file
 
 logger = logging.getLogger(__name__)

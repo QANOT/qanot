@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from qanot.rag.engine import RAGEngine

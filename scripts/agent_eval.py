@@ -194,7 +194,8 @@ async def run_single_eval(
 async def run_eval(scenarios_count: int = 50, focus: str = "all"):
     """Run full evaluation suite."""
     from qanot.config import load_config
-    from qanot.agent import Agent, ToolRegistry
+    from qanot.agent import Agent
+    from qanot.registry import ToolRegistry
     from qanot.context import ContextTracker
     from qanot.session import SessionWriter
     from qanot.providers.failover import FailoverProvider, ProviderProfile, _create_single_provider

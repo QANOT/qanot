@@ -96,7 +96,7 @@ class TestExecSecurityModes:
     """Integration tests for run_command with different security modes."""
 
     def _make_registry(self, exec_security="cautious", exec_allowlist=None):
-        from qanot.agent import ToolRegistry
+        from qanot.registry import ToolRegistry
         from qanot.context import ContextTracker
         from qanot.tools.builtin import register_builtin_tools
 

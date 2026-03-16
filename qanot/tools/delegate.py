@@ -19,12 +19,15 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from qanot.config import Config
     from qanot.providers.base import LLMProvider
 
@@ -680,651 +683,688 @@ async def _create_delegate_agent(
     return result
 
 
+# ── Context for tool handlers ────────────────────────────────
+
+
+@dataclass
+class DelegateContext:
+    """Holds all state that delegate tool handlers need."""
+
+    config: Any  # Config
+    provider: Any  # LLMProvider
+    parent_registry: ToolRegistry
+    available_agents: dict[str, dict]
+    get_user_id: Callable[[], str]
+    current_depth: int
+    caller_agent_id: str
+
+
+# ── Tool handlers ────────────────────────────────────────────
+
+
+async def _handle_delegate_to_agent(ctx: DelegateContext, params: dict) -> str:
+    """Delegate a task to a specialist agent and wait for the result."""
+    task = params.get("task", "")
+    if not isinstance(task, str):
+        return json.dumps({"error": "task must be a string"})
+    task = task.strip()
+    if not task:
+        return json.dumps({"error": "task is required"})
+    if len(task) > 10000:
+        return json.dumps({"error": f"task too long ({len(task)} chars, max 10000)"})
+
+    agent_id = params.get("agent_id", "researcher")
+    if not isinstance(agent_id, str):
+        return json.dumps({"error": "agent_id must be a string"})
+    agent_id = agent_id.lower()
+    if agent_id not in ctx.available_agents:
+        return json.dumps({
+            "error": f"Unknown agent: {agent_id}",
+            "available_agents": list(ctx.available_agents.keys()),
+        })
+
+    # Check delegate_allow access control
+    if not _check_delegate_allow(ctx.caller_agent_id, agent_id, ctx.config):
+        return json.dumps({
+            "error": f"Agent '{ctx.caller_agent_id}' is not allowed to delegate to '{agent_id}'.",
+            "hint": "Check delegate_allow in agent config.",
+        })
+
+    context = params.get("context", "").strip()
+    depth = ctx.current_depth + 1
+
+    if depth > MAX_DELEGATION_DEPTH:
+        return json.dumps({
+            "error": f"Maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached.",
+        })
+
+    agent_info = ctx.available_agents[agent_id]
+    timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
+    user_id = ctx.get_user_id() or "delegate"
+
+    # Loop detection
+    loop_msg = _check_for_loop(user_id, agent_id, task)
+    if loop_msg:
+        return json.dumps({"error": loop_msg, "status": "loop_detected"})
+
+    # Log start
+    _log_activity(
+        user_id, "delegate_start",
+        from_agent=ctx.caller_agent_id, to_agent=agent_id,
+        task=task, depth=depth,
+    )
+
+    # Get project board for context
+    board_summary = _get_board_summary(user_id, exclude_agent=agent_id)
+
+    prompt = _build_agent_prompt(
+        agent_info, agent_id, ctx.config.workspace_dir,
+        task, context, board_summary,
+    )
+
+    child_registry = _build_delegate_registry(
+        ctx.parent_registry, depth,
+        tools_allow=agent_info.get("tools_allow") or None,
+        tools_deny=agent_info.get("tools_deny") or None,
+    )
+    delegate_provider = _create_provider_for_agent(agent_info, ctx.provider, ctx.config)
+
+    start = time.monotonic()
+    logger.info("Delegating to '%s' (depth=%d) for user %s: %s", agent_id, depth, user_id, task[:80])
+
+    # Mirror task to monitoring group — posted by requester's bot
+    await _mirror_to_group(
+        ctx.config, ctx.caller_agent_id or "main", agent_id,
+        task[:3000], direction="delegate",
+    )
+
+    try:
+        # Send typing indicator in monitoring group
+        await _send_typing_to_group(ctx.config, agent_id)
+
+        result = await _create_delegate_agent(
+            ctx.config, delegate_provider, child_registry, prompt, agent_id, timeout,
+        )
+        elapsed = time.monotonic() - start
+
+        if len(result) > MAX_RESULT_CHARS:
+            result = result[:MAX_RESULT_CHARS] + "\n\n[... result truncated]"
+
+        # Post to shared project board
+        _post_to_board(user_id, agent_id, agent_info["name"], task, result)
+
+        # Record in session history
+        _record_session_message(user_id, agent_id, "user", f"[delegation] {task}")
+        _record_session_message(user_id, agent_id, "assistant", result)
+
+        # Log completion
+        _log_activity(
+            user_id, "delegate_done",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=task, status="completed",
+            detail=f"{elapsed:.1f}s, {len(result)} chars",
+        )
+
+        # Mirror result to monitoring group — posted by the AGENT's bot
+        await _mirror_to_group(
+            ctx.config, agent_id, ctx.caller_agent_id or "main",
+            result[:3000], direction="result",
+        )
+
+        logger.info("Delegation to '%s' completed in %.1fs", agent_id, elapsed)
+        return json.dumps({
+            "status": "completed",
+            "agent_id": agent_id,
+            "agent_name": agent_info["name"],
+            "result": result,
+            "elapsed_seconds": round(elapsed, 1),
+        })
+
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - start
+        logger.warning("Delegation to '%s' timed out after %.0fs", agent_id, elapsed)
+        _log_activity(
+            user_id, "delegate_timeout",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=task, status="timeout",
+            detail=f"Timed out after {timeout}s",
+        )
+        return json.dumps({
+            "status": "timeout", "agent_id": agent_id,
+            "error": f"Agent timed out after {timeout}s.",
+            "elapsed_seconds": round(elapsed, 1),
+        })
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        logger.error("Delegation to '%s' failed: %s", agent_id, e)
+        _log_activity(
+            user_id, "delegate_error",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=task, status="error",
+            detail=str(e)[:200],
+        )
+        return json.dumps({
+            "status": "error", "agent_id": agent_id,
+            "error": str(e), "elapsed_seconds": round(elapsed, 1),
+        })
+
+
+async def _run_ping_pong_turns(
+    ctx: DelegateContext,
+    *,
+    agent_id: str,
+    agent_info: dict,
+    agent_prompt: str,
+    delegate_provider: Any,
+    child_registry: ToolRegistry,
+    board_summary: str,
+    message: str,
+    max_turns: int,
+    timeout: int,
+    user_id: str,
+    conversation_log: list[dict],
+) -> None:
+    """Execute the ping-pong turn loop for converse_with_agent."""
+    current_message = message
+
+    for turn in range(1, max_turns + 1):
+        # Send typing indicator in monitoring group
+        await _send_typing_to_group(ctx.config, agent_id)
+
+        # Build prompt with conversation history
+        turn_prompt_parts = [
+            agent_prompt,
+            "",
+            "You are in a multi-turn conversation with another agent.",
+            f"This is turn {turn} of {max_turns}.",
+            "",
+        ]
+
+        if board_summary:
+            turn_prompt_parts.extend([
+                "PROJECT BOARD (other agents' completed work):",
+                board_summary,
+                "",
+            ])
+
+        if conversation_log:
+            turn_prompt_parts.append("CONVERSATION SO FAR:")
+            for entry in conversation_log:
+                role_label = "Requesting agent" if entry["role"] == "requester" else f"{agent_info['name']}"
+                turn_prompt_parts.append(f"[{role_label}]: {entry['message']}")
+            turn_prompt_parts.append("")
+
+        turn_prompt_parts.extend([
+            f"[Requesting agent]: {current_message}",
+            "",
+            "INSTRUCTIONS:",
+            "- Respond to the message above.",
+            "- Use tools if needed to research or verify.",
+            f"- If you have completed your work, say DONE at the start of your response.",
+            f"- You have {max_turns - turn} turns remaining after this one.",
+        ])
+
+        turn_prompt = "\n".join(turn_prompt_parts)
+
+        result = await _create_delegate_agent(
+            ctx.config, delegate_provider, child_registry,
+            turn_prompt, agent_id, timeout,
+        )
+
+        conversation_log.append({"role": "requester", "message": current_message})
+        conversation_log.append({"role": "agent", "message": result})
+
+        # Log turn
+        _log_activity(
+            user_id, "converse_turn",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=message, detail=f"{turn}/{max_turns}",
+        )
+
+        # Mirror agent's response to group — posted by the AGENT's bot
+        # This makes it look like a real chat: Bot A writes, Bot B responds
+        await asyncio.sleep(0.5)  # Small delay for natural feel
+        await _mirror_to_group(
+            ctx.config, agent_id, ctx.caller_agent_id or "main",
+            result[:3000], direction="turn",
+        )
+
+        logger.debug("Ping-pong turn %d/%d with '%s'", turn, max_turns, agent_id)
+
+        # Check if agent signaled completion
+        if result.strip().upper().startswith("DONE"):
+            break
+
+        # For next turn, the result becomes the context
+        if turn < max_turns:
+            current_message = result
+            # Mirror the requester's next message (which is the agent's
+            # previous response being relayed back) — skip this to avoid
+            # duplicate messages in group since the agent already posted
+
+
+async def _handle_converse_with_agent(ctx: DelegateContext, params: dict) -> str:
+    """Start a multi-turn conversation with an agent (ping-pong)."""
+    message = params.get("message", "")
+    if not isinstance(message, str):
+        return json.dumps({"error": "message must be a string"})
+    message = message.strip()
+    if not message:
+        return json.dumps({"error": "message is required"})
+    if len(message) > 10000:
+        return json.dumps({"error": f"message too long ({len(message)} chars, max 10000)"})
+
+    agent_id = params.get("agent_id", "researcher").lower()
+    if agent_id not in ctx.available_agents:
+        return json.dumps({
+            "error": f"Unknown agent: {agent_id}",
+            "available_agents": list(ctx.available_agents.keys()),
+        })
+
+    # Check delegate_allow access control
+    if not _check_delegate_allow(ctx.caller_agent_id, agent_id, ctx.config):
+        return json.dumps({
+            "error": f"Agent '{ctx.caller_agent_id}' is not allowed to converse with '{agent_id}'.",
+            "hint": "Check delegate_allow in agent config.",
+        })
+
+    max_turns = min(params.get("max_turns", 3), MAX_PING_PONG_TURNS)
+    depth = ctx.current_depth + 1
+
+    if depth > MAX_DELEGATION_DEPTH:
+        return json.dumps({
+            "error": f"Maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached.",
+        })
+
+    agent_info = ctx.available_agents[agent_id]
+    timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
+    user_id = ctx.get_user_id() or "delegate"
+
+    # Loop detection
+    loop_msg = _check_for_loop(user_id, agent_id, message)
+    if loop_msg:
+        return json.dumps({"error": loop_msg, "status": "loop_detected"})
+
+    # Log start
+    _log_activity(
+        user_id, "converse_start",
+        from_agent=ctx.caller_agent_id, to_agent=agent_id,
+        task=message, depth=depth,
+    )
+
+    child_registry = _build_delegate_registry(
+        ctx.parent_registry, depth,
+        tools_allow=agent_info.get("tools_allow") or None,
+        tools_deny=agent_info.get("tools_deny") or None,
+    )
+    delegate_provider = _create_provider_for_agent(agent_info, ctx.provider, ctx.config)
+    board_summary = _get_board_summary(user_id, exclude_agent=agent_id)
+
+    # Load agent identity
+    identity = _load_agent_identity(ctx.config.workspace_dir, agent_id)
+    agent_prompt = identity if identity else agent_info["prompt"]
+
+    start = time.monotonic()
+    conversation_log: list[dict] = []
+
+    logger.info(
+        "Starting ping-pong with '%s' (max %d turns) for user %s",
+        agent_id, max_turns, user_id,
+    )
+
+    # Mirror first message to group — posted by the REQUESTER bot
+    await _mirror_to_group(
+        ctx.config, ctx.caller_agent_id or "main", agent_id,
+        message[:3000], direction="converse",
+    )
+
+    try:
+        await _run_ping_pong_turns(
+            ctx,
+            agent_id=agent_id,
+            agent_info=agent_info,
+            agent_prompt=agent_prompt,
+            delegate_provider=delegate_provider,
+            child_registry=child_registry,
+            board_summary=board_summary,
+            message=message,
+            max_turns=max_turns,
+            timeout=timeout,
+            user_id=user_id,
+            conversation_log=conversation_log,
+        )
+
+        elapsed = time.monotonic() - start
+
+        # Compile final result
+        final_result = conversation_log[-1]["message"] if conversation_log else ""
+        if len(final_result) > MAX_RESULT_CHARS:
+            final_result = final_result[:MAX_RESULT_CHARS] + "\n\n[... truncated]"
+
+        # Post final result to board
+        _post_to_board(user_id, agent_id, agent_info["name"], message[:200], final_result)
+
+        # Record conversation in session history
+        for entry in conversation_log:
+            role = "user" if entry["role"] == "requester" else "assistant"
+            _record_session_message(user_id, agent_id, role, entry["message"])
+
+        # Log completion
+        turns_done = len(conversation_log) // 2
+        _log_activity(
+            user_id, "converse_done",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=message, status="completed",
+            detail=f"{turns_done} turns, {elapsed:.1f}s",
+        )
+
+        logger.info(
+            "Ping-pong with '%s' completed: %d turns in %.1fs",
+            agent_id, turns_done, elapsed,
+        )
+
+        return json.dumps({
+            "status": "completed",
+            "agent_id": agent_id,
+            "agent_name": agent_info["name"],
+            "turns": turns_done,
+            "conversation": [
+                {"role": e["role"], "message": e["message"][:1000]}
+                for e in conversation_log
+            ],
+            "final_result": final_result,
+            "elapsed_seconds": round(elapsed, 1),
+        })
+
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - start
+        logger.warning("Ping-pong with '%s' timed out", agent_id)
+        _log_activity(
+            user_id, "delegate_timeout",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=message, status="timeout",
+            detail=f"Timed out after {timeout}s",
+        )
+        return json.dumps({
+            "status": "timeout", "agent_id": agent_id,
+            "turns_completed": len(conversation_log) // 2,
+            "error": f"Conversation timed out after {timeout}s.",
+            "elapsed_seconds": round(elapsed, 1),
+        })
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        logger.error("Ping-pong with '%s' failed: %s", agent_id, e)
+        _log_activity(
+            user_id, "delegate_error",
+            from_agent=ctx.caller_agent_id, to_agent=agent_id,
+            task=message, status="error",
+            detail=str(e)[:200],
+        )
+        return json.dumps({
+            "status": "error", "agent_id": agent_id,
+            "error": str(e), "elapsed_seconds": round(elapsed, 1),
+        })
+
+
+async def _handle_view_project_board(ctx: DelegateContext, params: dict) -> str:
+    """View the shared project board -- see what other agents have done."""
+    user_id = ctx.get_user_id() or "default"
+    board = _project_boards.get(user_id, [])
+
+    if not board:
+        return json.dumps({"entries": [], "message": "Project board is empty."})
+
+    agent_filter = params.get("agent_id", "").strip()
+    entries = [
+        {
+            "agent_id": entry["agent_id"],
+            "agent_name": entry["agent_name"],
+            "task": entry["task"],
+            "result": entry["result"][:1000],
+            "timestamp": entry["timestamp"],
+        }
+        for entry in board
+        if not agent_filter or entry["agent_id"] == agent_filter
+    ]
+
+    return json.dumps({"entries": entries, "total": len(entries)})
+
+
+async def _handle_clear_project_board(ctx: DelegateContext, params: dict) -> str:
+    """Clear the shared project board."""
+    user_id = ctx.get_user_id() or "default"
+    count = len(_project_boards.get(user_id, []))
+    _project_boards.pop(user_id, None)
+    return json.dumps({"cleared": count})
+
+
+async def _handle_list_agents(ctx: DelegateContext, params: dict) -> str:
+    """List all available agents and their capabilities."""
+    agents_list = []
+    for aid, info in ctx.available_agents.items():
+        agent_entry = {
+            "agent_id": aid,
+            "name": info["name"],
+            "description": info["prompt"][:120] + ("..." if len(info["prompt"]) > 120 else ""),
+            "source": info.get("source", "builtin"),
+            "has_identity_file": Path(ctx.config.workspace_dir, "agents", aid, "SOUL.md").exists(),
+        }
+        if info.get("model"):
+            agent_entry["model"] = info["model"]
+        agents_list.append(agent_entry)
+
+    return json.dumps({
+        "agents": agents_list,
+        "total": len(agents_list),
+        "max_depth": MAX_DELEGATION_DEPTH,
+        "current_depth": ctx.current_depth,
+        "can_delegate": ctx.current_depth < MAX_DELEGATION_DEPTH,
+    })
+
+
+async def _handle_agent_session_history(ctx: DelegateContext, params: dict) -> str:
+    """Read another agent's conversation transcript."""
+    agent_id = params.get("agent_id", "").strip()
+    if not agent_id:
+        return json.dumps({"error": "agent_id is required"})
+
+    if agent_id not in ctx.available_agents:
+        return json.dumps({
+            "error": f"Unknown agent: {agent_id}",
+            "available_agents": list(ctx.available_agents.keys()),
+        })
+
+    user_id = ctx.get_user_id() or "default"
+    limit = min(params.get("limit", MAX_SESSION_HISTORY_RETURN), MAX_SESSION_HISTORY_RETURN)
+    include_tools = params.get("include_tools", False)
+
+    history = _get_session_history(user_id, agent_id, limit, include_tools)
+
+    if not history:
+        return json.dumps({
+            "agent_id": agent_id,
+            "messages": [],
+            "message": f"No session history for agent '{agent_id}'.",
+        })
+
+    return json.dumps({
+        "agent_id": agent_id,
+        "agent_name": ctx.available_agents[agent_id]["name"],
+        "messages": history,
+        "total": len(history),
+    })
+
+
+async def _handle_agent_sessions_list(ctx: DelegateContext, params: dict) -> str:
+    """List all active agent sessions with metadata."""
+    user_id = ctx.get_user_id() or "default"
+    sessions = _get_active_sessions(user_id)
+
+    if not sessions:
+        return json.dumps({
+            "sessions": [],
+            "message": "No active agent sessions.",
+        })
+
+    return json.dumps({
+        "sessions": sessions,
+        "total": len(sessions),
+    })
+
+
+async def _handle_view_agent_activity(ctx: DelegateContext, params: dict) -> str:
+    """View real-time agent activity log -- see what agents are doing."""
+    user_id = ctx.get_user_id() or "default"
+    limit = min(params.get("limit", 20), 50)
+    agent_filter = params.get("agent_id", "").strip()
+
+    log = get_activity_log(user_id, limit=limit)
+
+    if agent_filter:
+        log = [
+            e for e in log
+            if e["from_agent"] == agent_filter or e["to_agent"] == agent_filter
+        ]
+
+    if not log:
+        return json.dumps({
+            "entries": [],
+            "message": "No agent activity yet.",
+        })
+
+    return json.dumps({
+        "entries": log,
+        "total": len(log),
+    })
+
+
+async def _handle_set_monitor_group(ctx: DelegateContext, params: dict) -> str:
+    """Set a Telegram group for live agent monitoring."""
+    group_id = params.get("group_id", 0)
+    if not group_id:
+        return json.dumps({"error": "group_id is required (negative number for groups)"})
+
+    try:
+        group_id_int = int(group_id)
+    except (ValueError, TypeError):
+        return json.dumps({"error": f"group_id must be an integer, got: {type(group_id).__name__}"})
+
+    if group_id_int == 0:
+        return json.dumps({"error": "group_id cannot be zero"})
+
+    if group_id_int > 0:
+        logger.warning("set_monitor_group called with positive group_id=%d; Telegram group IDs are typically negative", group_id_int)
+
+    ctx.config.monitor_group_id = group_id_int
+
+    # Persist to config.json
+    config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
+    p = Path(config_path)
+    try:
+        if p.exists():
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            raw["monitor_group_id"] = ctx.config.monitor_group_id
+            # Write to temp file first, then rename for atomicity
+            tmp_path = p.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp_path.replace(p)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Failed to persist monitor_group_id to config: %s", e)
+        return json.dumps({
+            "status": "partial",
+            "monitor_group_id": ctx.config.monitor_group_id,
+            "warning": f"Group set in memory but failed to persist to config file: {e}",
+        })
+
+    return json.dumps({
+        "status": "configured",
+        "monitor_group_id": ctx.config.monitor_group_id,
+        "message": (
+            f"Monitoring group set to {group_id_int}. "
+            "All agent-to-agent interactions will be mirrored there. "
+            "Make sure all agent bots are added to this group."
+        ),
+    })
+
+
 # ── Registration ─────────────────────────────────────────────
 
 
-def register_delegate_tools(
+def _register_delegation_tools(
     registry: ToolRegistry,
-    config: "Config",
-    provider: "LLMProvider",
-    parent_registry: ToolRegistry,
-    *,
-    get_user_id: callable,
-    current_depth: int = 0,
-    caller_agent_id: str = "",
+    ctx: DelegateContext,
 ) -> None:
-    """Register agent-to-agent delegation, conversation, and project board tools."""
-    available_agents = _get_available_agents(config)
-
-    # ── 1. delegate_to_agent (one-shot) ──
-
-    async def delegate_to_agent(params: dict) -> str:
-        """Delegate a task to a specialist agent and wait for the result."""
-        task = params.get("task", "")
-        if not isinstance(task, str):
-            return json.dumps({"error": "task must be a string"})
-        task = task.strip()
-        if not task:
-            return json.dumps({"error": "task is required"})
-        if len(task) > 10000:
-            return json.dumps({"error": f"task too long ({len(task)} chars, max 10000)"})
-
-        agent_id = params.get("agent_id", "researcher")
-        if not isinstance(agent_id, str):
-            return json.dumps({"error": "agent_id must be a string"})
-        agent_id = agent_id.lower()
-        if agent_id not in available_agents:
-            return json.dumps({
-                "error": f"Unknown agent: {agent_id}",
-                "available_agents": list(available_agents.keys()),
-            })
-
-        # Check delegate_allow access control
-        if not _check_delegate_allow(caller_agent_id, agent_id, config):
-            return json.dumps({
-                "error": f"Agent '{caller_agent_id}' is not allowed to delegate to '{agent_id}'.",
-                "hint": "Check delegate_allow in agent config.",
-            })
-
-        context = params.get("context", "").strip()
-        depth = current_depth + 1
-
-        if depth > MAX_DELEGATION_DEPTH:
-            return json.dumps({
-                "error": f"Maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached.",
-            })
-
-        agent_info = available_agents[agent_id]
-        timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
-        user_id = get_user_id() or "delegate"
-
-        # Loop detection
-        loop_msg = _check_for_loop(user_id, agent_id, task)
-        if loop_msg:
-            return json.dumps({"error": loop_msg, "status": "loop_detected"})
-
-        # Log start
-        _log_activity(
-            user_id, "delegate_start",
-            from_agent=caller_agent_id, to_agent=agent_id,
-            task=task, depth=depth,
-        )
-
-        # Get project board for context
-        board_summary = _get_board_summary(user_id, exclude_agent=agent_id)
-
-        prompt = _build_agent_prompt(
-            agent_info, agent_id, config.workspace_dir,
-            task, context, board_summary,
-        )
-
-        child_registry = _build_delegate_registry(
-            parent_registry, depth,
-            tools_allow=agent_info.get("tools_allow") or None,
-            tools_deny=agent_info.get("tools_deny") or None,
-        )
-        delegate_provider = _create_provider_for_agent(agent_info, provider, config)
-
-        start = time.monotonic()
-        logger.info("Delegating to '%s' (depth=%d) for user %s: %s", agent_id, depth, user_id, task[:80])
-
-        # Mirror task to monitoring group — posted by requester's bot
-        await _mirror_to_group(
-            config, caller_agent_id or "main", agent_id,
-            task[:3000], direction="delegate",
-        )
-
-        try:
-            # Send typing indicator in monitoring group
-            await _send_typing_to_group(config, agent_id)
-
-            result = await _create_delegate_agent(
-                config, delegate_provider, child_registry, prompt, agent_id, timeout,
-            )
-            elapsed = time.monotonic() - start
-
-            if len(result) > MAX_RESULT_CHARS:
-                result = result[:MAX_RESULT_CHARS] + "\n\n[... result truncated]"
-
-            # Post to shared project board
-            _post_to_board(user_id, agent_id, agent_info["name"], task, result)
-
-            # Record in session history
-            _record_session_message(user_id, agent_id, "user", f"[delegation] {task}")
-            _record_session_message(user_id, agent_id, "assistant", result)
-
-            # Log completion
-            _log_activity(
-                user_id, "delegate_done",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=task, status="completed",
-                detail=f"{elapsed:.1f}s, {len(result)} chars",
-            )
-
-            # Mirror result to monitoring group — posted by the AGENT's bot
-            await _mirror_to_group(
-                config, agent_id, caller_agent_id or "main",
-                result[:3000], direction="result",
-            )
-
-            logger.info("Delegation to '%s' completed in %.1fs", agent_id, elapsed)
-            return json.dumps({
-                "status": "completed",
-                "agent_id": agent_id,
-                "agent_name": agent_info["name"],
-                "result": result,
-                "elapsed_seconds": round(elapsed, 1),
-            })
-
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - start
-            logger.warning("Delegation to '%s' timed out after %.0fs", agent_id, elapsed)
-            _log_activity(
-                user_id, "delegate_timeout",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=task, status="timeout",
-                detail=f"Timed out after {timeout}s",
-            )
-            return json.dumps({
-                "status": "timeout", "agent_id": agent_id,
-                "error": f"Agent timed out after {timeout}s.",
-                "elapsed_seconds": round(elapsed, 1),
-            })
-        except Exception as e:
-            elapsed = time.monotonic() - start
-            logger.error("Delegation to '%s' failed: %s", agent_id, e)
-            _log_activity(
-                user_id, "delegate_error",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=task, status="error",
-                detail=str(e)[:200],
-            )
-            return json.dumps({
-                "status": "error", "agent_id": agent_id,
-                "error": str(e), "elapsed_seconds": round(elapsed, 1),
-            })
-
-    # ── 2. converse_with_agent (ping-pong) ──
-
-    async def converse_with_agent(params: dict) -> str:
-        """Start a multi-turn conversation with an agent (ping-pong)."""
-        message = params.get("message", "")
-        if not isinstance(message, str):
-            return json.dumps({"error": "message must be a string"})
-        message = message.strip()
-        if not message:
-            return json.dumps({"error": "message is required"})
-        if len(message) > 10000:
-            return json.dumps({"error": f"message too long ({len(message)} chars, max 10000)"})
-
-        agent_id = params.get("agent_id", "researcher").lower()
-        if agent_id not in available_agents:
-            return json.dumps({
-                "error": f"Unknown agent: {agent_id}",
-                "available_agents": list(available_agents.keys()),
-            })
-
-        # Check delegate_allow access control
-        if not _check_delegate_allow(caller_agent_id, agent_id, config):
-            return json.dumps({
-                "error": f"Agent '{caller_agent_id}' is not allowed to converse with '{agent_id}'.",
-                "hint": "Check delegate_allow in agent config.",
-            })
-
-        max_turns = min(params.get("max_turns", 3), MAX_PING_PONG_TURNS)
-        depth = current_depth + 1
-
-        if depth > MAX_DELEGATION_DEPTH:
-            return json.dumps({
-                "error": f"Maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached.",
-            })
-
-        agent_info = available_agents[agent_id]
-        timeout = agent_info.get("timeout", DELEGATION_TIMEOUT)
-        user_id = get_user_id() or "delegate"
-
-        # Loop detection
-        loop_msg = _check_for_loop(user_id, agent_id, message)
-        if loop_msg:
-            return json.dumps({"error": loop_msg, "status": "loop_detected"})
-
-        # Log start
-        _log_activity(
-            user_id, "converse_start",
-            from_agent=caller_agent_id, to_agent=agent_id,
-            task=message, depth=depth,
-        )
-
-        child_registry = _build_delegate_registry(
-            parent_registry, depth,
-            tools_allow=agent_info.get("tools_allow") or None,
-            tools_deny=agent_info.get("tools_deny") or None,
-        )
-        delegate_provider = _create_provider_for_agent(agent_info, provider, config)
-        board_summary = _get_board_summary(user_id, exclude_agent=agent_id)
-
-        # Load agent identity
-        identity = _load_agent_identity(config.workspace_dir, agent_id)
-        agent_prompt = identity if identity else agent_info["prompt"]
-
-        start = time.monotonic()
-        conversation_log: list[dict] = []
-
-        logger.info(
-            "Starting ping-pong with '%s' (max %d turns) for user %s",
-            agent_id, max_turns, user_id,
-        )
-
-        # Mirror first message to group — posted by the REQUESTER bot
-        await _mirror_to_group(
-            config, caller_agent_id or "main", agent_id,
-            message[:3000], direction="converse",
-        )
-
-        # Turn 1: send initial message to agent
-        current_message = message
-
-        try:
-            for turn in range(1, max_turns + 1):
-                # Send typing indicator in monitoring group
-                await _send_typing_to_group(config, agent_id)
-
-                # Build prompt with conversation history
-                turn_prompt_parts = [
-                    agent_prompt,
-                    "",
-                    "You are in a multi-turn conversation with another agent.",
-                    f"This is turn {turn} of {max_turns}.",
-                    "",
-                ]
-
-                if board_summary:
-                    turn_prompt_parts.extend([
-                        "PROJECT BOARD (other agents' completed work):",
-                        board_summary,
-                        "",
-                    ])
-
-                if conversation_log:
-                    turn_prompt_parts.append("CONVERSATION SO FAR:")
-                    for entry in conversation_log:
-                        role_label = "Requesting agent" if entry["role"] == "requester" else f"{agent_info['name']}"
-                        turn_prompt_parts.append(f"[{role_label}]: {entry['message']}")
-                    turn_prompt_parts.append("")
-
-                turn_prompt_parts.extend([
-                    f"[Requesting agent]: {current_message}",
-                    "",
-                    "INSTRUCTIONS:",
-                    "- Respond to the message above.",
-                    "- Use tools if needed to research or verify.",
-                    f"- If you have completed your work, say DONE at the start of your response.",
-                    f"- You have {max_turns - turn} turns remaining after this one.",
-                ])
-
-                turn_prompt = "\n".join(turn_prompt_parts)
-
-                result = await _create_delegate_agent(
-                    config, delegate_provider, child_registry,
-                    turn_prompt, agent_id, timeout,
-                )
-
-                conversation_log.append({"role": "requester", "message": current_message})
-                conversation_log.append({"role": "agent", "message": result})
-
-                # Log turn
-                _log_activity(
-                    user_id, "converse_turn",
-                    from_agent=caller_agent_id, to_agent=agent_id,
-                    task=message, detail=f"{turn}/{max_turns}",
-                )
-
-                # Mirror agent's response to group — posted by the AGENT's bot
-                # This makes it look like a real chat: Bot A writes, Bot B responds
-                await asyncio.sleep(0.5)  # Small delay for natural feel
-                await _mirror_to_group(
-                    config, agent_id, caller_agent_id or "main",
-                    result[:3000], direction="turn",
-                )
-
-                logger.debug("Ping-pong turn %d/%d with '%s'", turn, max_turns, agent_id)
-
-                # Check if agent signaled completion
-                if result.strip().upper().startswith("DONE"):
-                    break
-
-                # For next turn, the result becomes the context
-                if turn < max_turns:
-                    current_message = result
-                    # Mirror the requester's next message (which is the agent's
-                    # previous response being relayed back) — skip this to avoid
-                    # duplicate messages in group since the agent already posted
-
-            elapsed = time.monotonic() - start
-
-            # Compile final result
-            final_result = conversation_log[-1]["message"] if conversation_log else ""
-            if len(final_result) > MAX_RESULT_CHARS:
-                final_result = final_result[:MAX_RESULT_CHARS] + "\n\n[... truncated]"
-
-            # Post final result to board
-            _post_to_board(user_id, agent_id, agent_info["name"], message[:200], final_result)
-
-            # Record conversation in session history
-            for entry in conversation_log:
-                role = "user" if entry["role"] == "requester" else "assistant"
-                _record_session_message(user_id, agent_id, role, entry["message"])
-
-            # Log completion
-            turns_done = len(conversation_log) // 2
-            _log_activity(
-                user_id, "converse_done",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=message, status="completed",
-                detail=f"{turns_done} turns, {elapsed:.1f}s",
-            )
-
-            logger.info(
-                "Ping-pong with '%s' completed: %d turns in %.1fs",
-                agent_id, turns_done, elapsed,
-            )
-
-            return json.dumps({
-                "status": "completed",
-                "agent_id": agent_id,
-                "agent_name": agent_info["name"],
-                "turns": turns_done,
-                "conversation": [
-                    {"role": e["role"], "message": e["message"][:1000]}
-                    for e in conversation_log
-                ],
-                "final_result": final_result,
-                "elapsed_seconds": round(elapsed, 1),
-            })
-
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - start
-            logger.warning("Ping-pong with '%s' timed out", agent_id)
-            _log_activity(
-                user_id, "delegate_timeout",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=message, status="timeout",
-                detail=f"Timed out after {timeout}s",
-            )
-            return json.dumps({
-                "status": "timeout", "agent_id": agent_id,
-                "turns_completed": len(conversation_log) // 2,
-                "error": f"Conversation timed out after {timeout}s.",
-                "elapsed_seconds": round(elapsed, 1),
-            })
-        except Exception as e:
-            elapsed = time.monotonic() - start
-            logger.error("Ping-pong with '%s' failed: %s", agent_id, e)
-            _log_activity(
-                user_id, "delegate_error",
-                from_agent=caller_agent_id, to_agent=agent_id,
-                task=message, status="error",
-                detail=str(e)[:200],
-            )
-            return json.dumps({
-                "status": "error", "agent_id": agent_id,
-                "error": str(e), "elapsed_seconds": round(elapsed, 1),
-            })
-
-    # ── 3. project_board (shared results) ──
-
-    async def view_project_board(params: dict) -> str:
-        """View the shared project board — see what other agents have done."""
-        user_id = get_user_id() or "default"
-        board = _project_boards.get(user_id, [])
-
-        if not board:
-            return json.dumps({"entries": [], "message": "Project board is empty."})
-
-        agent_filter = params.get("agent_id", "").strip()
-        entries = [
-            {
-                "agent_id": entry["agent_id"],
-                "agent_name": entry["agent_name"],
-                "task": entry["task"],
-                "result": entry["result"][:1000],
-                "timestamp": entry["timestamp"],
-            }
-            for entry in board
-            if not agent_filter or entry["agent_id"] == agent_filter
-        ]
-
-        return json.dumps({"entries": entries, "total": len(entries)})
-
-    async def clear_project_board(params: dict) -> str:
-        """Clear the shared project board."""
-        user_id = get_user_id() or "default"
-        count = len(_project_boards.get(user_id, []))
-        _project_boards.pop(user_id, None)
-        return json.dumps({"cleared": count})
-
-    # ── 4. list_agents ──
-
-    async def list_agents(params: dict) -> str:
-        """List all available agents and their capabilities."""
-        agents_list = []
-        for aid, info in available_agents.items():
-            agent_entry = {
-                "agent_id": aid,
-                "name": info["name"],
-                "description": info["prompt"][:120] + ("..." if len(info["prompt"]) > 120 else ""),
-                "source": info.get("source", "builtin"),
-                "has_identity_file": Path(config.workspace_dir, "agents", aid, "SOUL.md").exists(),
-            }
-            if info.get("model"):
-                agent_entry["model"] = info["model"]
-            agents_list.append(agent_entry)
-
-        return json.dumps({
-            "agents": agents_list,
-            "total": len(agents_list),
-            "max_depth": MAX_DELEGATION_DEPTH,
-            "current_depth": current_depth,
-            "can_delegate": current_depth < MAX_DELEGATION_DEPTH,
-        })
-
-    # ── 5. agent_session_history ──
-
-    async def agent_session_history(params: dict) -> str:
-        """Read another agent's conversation transcript."""
-        agent_id = params.get("agent_id", "").strip()
-        if not agent_id:
-            return json.dumps({"error": "agent_id is required"})
-
-        if agent_id not in available_agents:
-            return json.dumps({
-                "error": f"Unknown agent: {agent_id}",
-                "available_agents": list(available_agents.keys()),
-            })
-
-        user_id = get_user_id() or "default"
-        limit = min(params.get("limit", MAX_SESSION_HISTORY_RETURN), MAX_SESSION_HISTORY_RETURN)
-        include_tools = params.get("include_tools", False)
-
-        history = _get_session_history(user_id, agent_id, limit, include_tools)
-
-        if not history:
-            return json.dumps({
-                "agent_id": agent_id,
-                "messages": [],
-                "message": f"No session history for agent '{agent_id}'.",
-            })
-
-        return json.dumps({
-            "agent_id": agent_id,
-            "agent_name": available_agents[agent_id]["name"],
-            "messages": history,
-            "total": len(history),
-        })
-
-    # ── 6. agent_sessions_list ──
-
-    async def agent_sessions_list(params: dict) -> str:
-        """List all active agent sessions with metadata."""
-        user_id = get_user_id() or "default"
-        sessions = _get_active_sessions(user_id)
-
-        if not sessions:
-            return json.dumps({
-                "sessions": [],
-                "message": "No active agent sessions.",
-            })
-
-        return json.dumps({
-            "sessions": sessions,
-            "total": len(sessions),
-        })
-
-    # ── 7. view_agent_activity ──
-
-    async def view_agent_activity(params: dict) -> str:
-        """View real-time agent activity log — see what agents are doing."""
-        user_id = get_user_id() or "default"
-        limit = min(params.get("limit", 20), 50)
-        agent_filter = params.get("agent_id", "").strip()
-
-        log = get_activity_log(user_id, limit=limit)
-
-        if agent_filter:
-            log = [
-                e for e in log
-                if e["from_agent"] == agent_filter or e["to_agent"] == agent_filter
-            ]
-
-        if not log:
-            return json.dumps({
-                "entries": [],
-                "message": "No agent activity yet.",
-            })
-
-        return json.dumps({
-            "entries": log,
-            "total": len(log),
-        })
-
-    # ── 8. set_monitor_group ──
-
-    async def set_monitor_group(params: dict) -> str:
-        """Set a Telegram group for live agent monitoring.
-
-        Add both agent bots and the main bot to the group,
-        then use this tool to start mirroring conversations there.
-        """
-        group_id = params.get("group_id", 0)
-        if not group_id:
-            return json.dumps({"error": "group_id is required (negative number for groups)"})
-
-        try:
-            group_id_int = int(group_id)
-        except (ValueError, TypeError):
-            return json.dumps({"error": f"group_id must be an integer, got: {type(group_id).__name__}"})
-
-        if group_id_int == 0:
-            return json.dumps({"error": "group_id cannot be zero"})
-
-        if group_id_int > 0:
-            logger.warning("set_monitor_group called with positive group_id=%d; Telegram group IDs are typically negative", group_id_int)
-
-        config.monitor_group_id = group_id_int
-
-        # Persist to config.json
-        config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
-        p = Path(config_path)
-        try:
-            if p.exists():
-                raw = json.loads(p.read_text(encoding="utf-8"))
-                raw["monitor_group_id"] = config.monitor_group_id
-                # Write to temp file first, then rename for atomicity
-                tmp_path = p.with_suffix(".tmp")
-                tmp_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
-                tmp_path.replace(p)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error("Failed to persist monitor_group_id to config: %s", e)
-            return json.dumps({
-                "status": "partial",
-                "monitor_group_id": config.monitor_group_id,
-                "warning": f"Group set in memory but failed to persist to config file: {e}",
-            })
-
-        return json.dumps({
-            "status": "configured",
-            "monitor_group_id": config.monitor_group_id,
-            "message": (
-                f"Monitoring group set to {group_id_int}. "
-                "All agent-to-agent interactions will be mirrored there. "
-                "Make sure all agent bots are added to this group."
-            ),
-        })
-
-    # ── Register all tools ──
-
-    if current_depth < MAX_DELEGATION_DEPTH:
-        agents_desc = ", ".join(f"{aid} ({info['name']})" for aid, info in available_agents.items())
-
-        registry.register(
-            name="delegate_to_agent",
-            description=(
-                "Vazifani agentga topshirish va natijani kutish (bir martalik). "
-                f"Mavjud agentlar: {agents_desc}."
-            ),
-            parameters={
-                "type": "object",
-                "required": ["task", "agent_id"],
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "Vazifa tavsifi — aniq va batafsil.",
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "enum": list(available_agents.keys()),
-                        "description": "Agent identifikatori.",
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "Ixtiyoriy kontekst — faqat vazifaga tegishli ma'lumot.",
-                    },
+    """Register delegate_to_agent and converse_with_agent (depth-gated)."""
+    available_agents = ctx.available_agents
+    agents_desc = ", ".join(f"{aid} ({info['name']})" for aid, info in available_agents.items())
+
+    registry.register(
+        name="delegate_to_agent",
+        description=(
+            "Vazifani agentga topshirish va natijani kutish (bir martalik). "
+            f"Mavjud agentlar: {agents_desc}."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["task", "agent_id"],
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Vazifa tavsifi — aniq va batafsil.",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "enum": list(available_agents.keys()),
+                    "description": "Agent identifikatori.",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Ixtiyoriy kontekst — faqat vazifaga tegishli ma'lumot.",
                 },
             },
-            handler=delegate_to_agent,
-            category="agent",
-        )
+        },
+        handler=lambda p: _handle_delegate_to_agent(ctx, p),
+        category="agent",
+    )
 
-        registry.register(
-            name="converse_with_agent",
-            description=(
-                "Agent bilan ko'p bosqichli suhbat boshlash (ping-pong). "
-                "Agent javob beradi, siz javob berasiz, agent yana javob beradi. "
-                f"Maksimum {MAX_PING_PONG_TURNS} tur. "
-                "Murakkab muzokaralar va hamkorlik uchun."
-            ),
-            parameters={
-                "type": "object",
-                "required": ["message", "agent_id"],
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Agentga yuboriladigan xabar.",
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "enum": list(available_agents.keys()),
-                        "description": "Suhbatlashadigan agent.",
-                    },
-                    "max_turns": {
-                        "type": "integer",
-                        "description": f"Maksimum turlar soni (1-{MAX_PING_PONG_TURNS}, default: 3).",
-                    },
+    registry.register(
+        name="converse_with_agent",
+        description=(
+            "Agent bilan ko'p bosqichli suhbat boshlash (ping-pong). "
+            "Agent javob beradi, siz javob berasiz, agent yana javob beradi. "
+            f"Maksimum {MAX_PING_PONG_TURNS} tur. "
+            "Murakkab muzokaralar va hamkorlik uchun."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["message", "agent_id"],
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Agentga yuboriladigan xabar.",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "enum": list(available_agents.keys()),
+                    "description": "Suhbatlashadigan agent.",
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": f"Maksimum turlar soni (1-{MAX_PING_PONG_TURNS}, default: 3).",
                 },
             },
-            handler=converse_with_agent,
-            category="agent",
-        )
+        },
+        handler=lambda p: _handle_converse_with_agent(ctx, p),
+        category="agent",
+    )
+
+
+def _register_shared_tools(
+    registry: ToolRegistry,
+    ctx: DelegateContext,
+) -> None:
+    """Register board, session, activity, and monitoring tools."""
+    available_agents = ctx.available_agents
 
     registry.register(
         name="view_project_board",
@@ -1341,7 +1381,7 @@ def register_delegate_tools(
                 },
             },
         },
-        handler=view_project_board,
+        handler=lambda p: _handle_view_project_board(ctx, p),
         category="agent",
     )
 
@@ -1349,7 +1389,7 @@ def register_delegate_tools(
         name="clear_project_board",
         description="Loyiha doskasini tozalash.",
         parameters={"type": "object", "properties": {}},
-        handler=clear_project_board,
+        handler=lambda p: _handle_clear_project_board(ctx, p),
         category="agent",
     )
 
@@ -1357,7 +1397,7 @@ def register_delegate_tools(
         name="list_agents",
         description="Mavjud agentlar ro'yxatini ko'rsatish — har birining modeli, roli va imkoniyatlari.",
         parameters={"type": "object", "properties": {}},
-        handler=list_agents,
+        handler=lambda p: _handle_list_agents(ctx, p),
         category="agent",
     )
 
@@ -1387,7 +1427,7 @@ def register_delegate_tools(
                 },
             },
         },
-        handler=agent_session_history,
+        handler=lambda p: _handle_agent_session_history(ctx, p),
         category="agent",
     )
 
@@ -1399,7 +1439,7 @@ def register_delegate_tools(
             "OpenClaw sessions_list ga o'xshash."
         ),
         parameters={"type": "object", "properties": {}},
-        handler=agent_sessions_list,
+        handler=lambda p: _handle_agent_sessions_list(ctx, p),
         category="agent",
     )
 
@@ -1422,7 +1462,7 @@ def register_delegate_tools(
                 },
             },
         },
-        handler=view_agent_activity,
+        handler=lambda p: _handle_view_agent_activity(ctx, p),
         category="agent",
     )
 
@@ -1443,6 +1483,35 @@ def register_delegate_tools(
                 },
             },
         },
-        handler=set_monitor_group,
+        handler=lambda p: _handle_set_monitor_group(ctx, p),
         category="agent",
     )
+
+
+def register_delegate_tools(
+    registry: ToolRegistry,
+    config: "Config",
+    provider: "LLMProvider",
+    parent_registry: ToolRegistry,
+    *,
+    get_user_id: callable,
+    current_depth: int = 0,
+    caller_agent_id: str = "",
+) -> None:
+    """Register agent-to-agent delegation, conversation, and project board tools."""
+    available_agents = _get_available_agents(config)
+
+    ctx = DelegateContext(
+        config=config,
+        provider=provider,
+        parent_registry=parent_registry,
+        available_agents=available_agents,
+        get_user_id=get_user_id,
+        current_depth=current_depth,
+        caller_agent_id=caller_agent_id,
+    )
+
+    if current_depth < MAX_DELEGATION_DEPTH:
+        _register_delegation_tools(registry, ctx)
+
+    _register_shared_tools(registry, ctx)

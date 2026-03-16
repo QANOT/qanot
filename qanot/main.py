@@ -7,7 +7,8 @@ import logging
 import sys
 
 from qanot.config import load_config
-from qanot.agent import Agent, ToolRegistry
+from qanot.agent import Agent
+from qanot.registry import ToolRegistry
 from qanot.context import ContextTracker
 from qanot.session import SessionWriter
 from qanot.scheduler import CronScheduler

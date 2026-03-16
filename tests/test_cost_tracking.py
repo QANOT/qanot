@@ -6,7 +6,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.context import CostTracker
 
 

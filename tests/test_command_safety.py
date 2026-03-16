@@ -168,7 +168,7 @@ class TestRunCommandBlocking:
 
     @pytest.mark.asyncio
     async def test_blocks_dangerous_and_returns_json_error(self):
-        from qanot.agent import ToolRegistry
+        from qanot.registry import ToolRegistry
         from qanot.context import ContextTracker
         from qanot.tools.builtin import register_builtin_tools
 
@@ -184,7 +184,7 @@ class TestRunCommandBlocking:
 
     @pytest.mark.asyncio
     async def test_allows_safe_command(self):
-        from qanot.agent import ToolRegistry
+        from qanot.registry import ToolRegistry
         from qanot.context import ContextTracker
         from qanot.tools.builtin import register_builtin_tools
 

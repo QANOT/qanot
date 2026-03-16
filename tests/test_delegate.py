@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import MagicMock
 from pathlib import Path
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.config import AgentDefinition
 from qanot.tools.delegate import (
     BUILTIN_ROLES,

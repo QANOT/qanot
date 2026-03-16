@@ -16,7 +16,8 @@ from apscheduler.triggers.date import DateTrigger
 from qanot.tools.jobs_io import load_jobs, save_jobs
 
 if TYPE_CHECKING:
-    from qanot.agent import Agent, ToolRegistry
+    from qanot.agent import Agent
+    from qanot.registry import ToolRegistry
     from qanot.config import Config
     from qanot.providers.base import LLMProvider
 

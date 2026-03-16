@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.context import ContextTracker
 from qanot.memory import memory_search as _memory_search
 

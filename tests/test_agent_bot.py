@@ -6,7 +6,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.config import AgentDefinition, Config
 from qanot.agent_bot import AgentBot, start_agent_bots
 

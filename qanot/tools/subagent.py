@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from qanot.agent import Agent

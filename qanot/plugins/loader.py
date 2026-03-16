@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from qanot.plugins.base import Plugin, PluginManifest
 
 if TYPE_CHECKING:
-    from qanot.agent import ToolRegistry
+    from qanot.registry import ToolRegistry
     from qanot.config import Config
 
 logger = logging.getLogger(__name__)

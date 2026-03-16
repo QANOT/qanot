@@ -21,7 +21,8 @@ from aiogram.types import Message
 
 if TYPE_CHECKING:
     from qanot.config import AgentDefinition, Config
-    from qanot.agent import Agent, ToolRegistry
+    from qanot.agent import Agent
+    from qanot.registry import ToolRegistry
     from qanot.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -204,7 +205,8 @@ class AgentBot:
         if self._agent is not None:
             return self._agent
 
-        from qanot.agent import Agent, ToolRegistry
+        from qanot.agent import Agent
+        from qanot.registry import ToolRegistry
         from qanot.context import ContextTracker
         from qanot.session import SessionWriter
         from qanot.tools.builtin import register_builtin_tools

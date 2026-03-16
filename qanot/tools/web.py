@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

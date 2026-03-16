@@ -8,7 +8,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.config import AgentDefinition, Config
 from qanot.tools.agent_manager import (
     _sanitize_agent_id,

@@ -356,7 +356,8 @@ class TestSkillIndexEntry:
 
 class TestAgentLoadSkills:
     def test_load_skills(self, tmp_path):
-        from qanot.agent import Agent, ToolRegistry
+        from qanot.agent import Agent
+        from qanot.registry import ToolRegistry
         from qanot.config import Config
 
         config = Config(
@@ -389,7 +390,8 @@ class TestAgentLoadSkills:
         assert agent._skills[0].name == "test-skill"
 
     def test_load_skills_no_directory(self, tmp_path):
-        from qanot.agent import Agent, ToolRegistry
+        from qanot.agent import Agent
+        from qanot.registry import ToolRegistry
         from qanot.config import Config
         from qanot.providers.base import LLMProvider, ProviderResponse
 

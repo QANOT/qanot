@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.config import AgentDefinition
 
 if TYPE_CHECKING:

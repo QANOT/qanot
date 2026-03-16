@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 from qanot.config import Config
 from qanot.context import ContextTracker
 from qanot.tools.doctor import (

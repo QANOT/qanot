@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

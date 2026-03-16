@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from qanot.agent import ToolRegistry
+from qanot.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from qanot.config import Config

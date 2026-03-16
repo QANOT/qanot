@@ -881,7 +881,7 @@ class TestPluginConflictDetection:
     @pytest.mark.asyncio
     async def test_tool_name_conflict_logged(self, tmp_path):
         """When a plugin registers a tool that already exists, a warning should be logged."""
-        from qanot.agent import ToolRegistry
+        from qanot.registry import ToolRegistry
 
         registry = ToolRegistry()
 

@@ -778,7 +778,7 @@ class TestMemoryHooks:
 class TestRAGTools:
     def _setup_tools(self, tmp_path):
         """Set up a ToolRegistry with RAG tools registered."""
-        from qanot.agent import ToolRegistry
+        from qanot.registry import ToolRegistry
         from qanot.rag.engine import RAGEngine
         from qanot.rag.store import SqliteVecStore
         from qanot.tools.rag import register_rag_tools

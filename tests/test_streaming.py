@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import pytest
 
-from qanot.agent import Agent, ToolRegistry
+from qanot.agent import Agent
+from qanot.registry import ToolRegistry
 from qanot.config import Config
 from qanot.providers.base import (
     LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage,
