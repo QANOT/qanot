@@ -1,6 +1,13 @@
 # Getting Started
 
-This guide walks you through installing Qanot AI, creating your first bot, and sending your first message.
+Two commands — your bot is live.
+
+```bash
+pip install qanot
+qanot init
+```
+
+`qanot init` is an interactive wizard — it asks for your bot token, provider, model, and API key. No need to edit any files manually.
 
 ## Prerequisites
 

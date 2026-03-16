@@ -1,11 +1,18 @@
 # Boshlash
 
-Bu qo'llanma Qanot AI ni o'rnatish, birinchi bot yaratish va birinchi xabar yuborishni ko'rsatadi.
+Ikki buyruq — bot ishlaydi.
+
+```bash
+pip install qanot
+qanot init
+```
+
+`qanot init` — interactive wizard. Bot token, provider, model, API key so'raydi. Hech qanday faylni qo'lda tahrirlash kerak emas.
 
 ## Oldindan kerak bo'ladigan narsalar
 
 - Python 3.11 yoki undan yuqori
-- Telegram bot token -- [@BotFather](https://t.me/BotFather) dan oling
+- Telegram bot token — [@BotFather](https://t.me/BotFather) dan oling
 - Kamida bitta LLM provider uchun API key (Anthropic, OpenAI, Google Gemini, yoki Groq)
 
 ## O'rnatish
@@ -53,7 +60,7 @@ mybot/
 
 ## Sozlash
 
-`config.json` ni oching va kerakli maydonlarni to'ldiring:
+`qanot init` wizard hammasini so'raydi — qo'lda tahrirlash shart emas. Lekin keyin o'zgartirmoqchi bo'lsangiz, `config.json` shunday ko'rinadi:
 
 ```json
 {
