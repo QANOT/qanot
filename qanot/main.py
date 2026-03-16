@@ -342,6 +342,9 @@ async def main() -> None:
                 logger.warning("Error stopping agent bot '%s': %s", ab.agent_def.id, e)
         await shutdown_plugins()
         scheduler.stop()
+        # Close shared voice HTTP session
+        from qanot.voice import close_voice_session
+        await close_voice_session()
         logger.info("Qanot AI shut down")
 
 

@@ -1,5 +1,7 @@
 """Static HTML template string for the Qanot AI web dashboard."""
 
+from __future__ import annotations
+
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>

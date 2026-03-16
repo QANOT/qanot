@@ -1,5 +1,7 @@
 """Tests for qanot.voice — Muxlisa.uz and KotibAI STT/TTS integration."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -26,6 +28,7 @@ from qanot.voice import (
     transcribe,
     text_to_speech,
     download_audio,
+    close_voice_session,
 )
 
 
@@ -177,18 +180,19 @@ def _mock_session(post_status=200, post_json=None, post_bytes=None,
 
 
 class _patch_session:
-    """Context manager that patches aiohttp.ClientSession to return mock_session."""
+    """Context manager that patches _get_session to return mock_session."""
 
     def __init__(self, mock_session):
         self.mock_session = mock_session
         self._patcher = None
 
     def __enter__(self):
-        self._patcher = patch("qanot.voice.aiohttp.ClientSession")
-        mock = self._patcher.start()
-        mock.return_value.__aenter__ = AsyncMock(return_value=self.mock_session)
-        mock.return_value.__aexit__ = AsyncMock(return_value=False)
-        return mock
+        async def _fake_get_session():
+            return self.mock_session
+
+        self._patcher = patch("qanot.voice._get_session", new=_fake_get_session)
+        self._patcher.start()
+        return self.mock_session
 
     def __exit__(self, *args):
         if self._patcher:

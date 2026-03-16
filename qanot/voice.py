@@ -21,6 +21,27 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# ── Shared session management ───────────────────────────
+
+_session: aiohttp.ClientSession | None = None
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    """Return a shared aiohttp session, creating one if needed."""
+    global _session
+    if _session is None or _session.closed:
+        _session = aiohttp.ClientSession()
+    return _session
+
+
+async def close_voice_session() -> None:
+    """Close the shared aiohttp session (call on shutdown)."""
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+        _session = None
+
+
 MUXLISA_BASE_URL = "https://service.muxlisa.uz/api/v2"
 MUXLISA_ASYNC_URL = "https://service.muxlisa.uz/api/v1/async"
 KOTIB_BASE_URL = "https://developer.kotib.ai/api/v1"
@@ -153,23 +174,23 @@ async def muxlisa_transcribe(
             filename=os.path.basename(audio_path),
         )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{MUXLISA_BASE_URL}/stt",
-                headers=headers,
-                data=data,
-            ) as resp:
-                if resp.status == 402:
-                    raise RuntimeError("Muxlisa STT: balance depleted (402)")
-                if resp.status == 429:
-                    raise RuntimeError("Muxlisa STT: rate limit exceeded (40 req/min)")
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise RuntimeError(f"Muxlisa STT error: HTTP {resp.status} — {body[:200]}")
+        session = await _get_session()
+        async with session.post(
+            f"{MUXLISA_BASE_URL}/stt",
+            headers=headers,
+            data=data,
+        ) as resp:
+            if resp.status == 402:
+                raise RuntimeError("Muxlisa STT: balance depleted (402)")
+            if resp.status == 429:
+                raise RuntimeError("Muxlisa STT: rate limit exceeded (40 req/min)")
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Muxlisa STT error: HTTP {resp.status} — {body[:200]}")
 
-                result = await resp.json()
-                text = result.get("text", "") if isinstance(result, dict) else str(result)
-                return TranscriptionResult(text=text)
+            result = await resp.json()
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            return TranscriptionResult(text=text)
     finally:
         file_handle.close()
 
@@ -208,26 +229,26 @@ async def muxlisa_tts(
         "speaker": speaker,
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{MUXLISA_BASE_URL}/tts",
-            headers=headers,
-            json=payload,
-        ) as resp:
-            if resp.status == 402:
-                raise RuntimeError("Muxlisa TTS: balance depleted (402)")
-            if resp.status == 429:
-                raise RuntimeError("Muxlisa TTS: rate limit exceeded (60 req/min)")
-            if resp.status != 200:
-                body = await resp.text()
-                raise RuntimeError(f"Muxlisa TTS error: HTTP {resp.status} — {body[:200]}")
+    session = await _get_session()
+    async with session.post(
+        f"{MUXLISA_BASE_URL}/tts",
+        headers=headers,
+        json=payload,
+    ) as resp:
+        if resp.status == 402:
+            raise RuntimeError("Muxlisa TTS: balance depleted (402)")
+        if resp.status == 429:
+            raise RuntimeError("Muxlisa TTS: rate limit exceeded (60 req/min)")
+        if resp.status != 200:
+            body = await resp.text()
+            raise RuntimeError(f"Muxlisa TTS error: HTTP {resp.status} — {body[:200]}")
 
-            # Muxlisa returns WAV binary directly
-            audio_data = await resp.read()
-            return TTSResult(
-                audio_data=audio_data,
-                character_count=len(text),
-            )
+        # Muxlisa returns WAV binary directly
+        audio_data = await resp.read()
+        return TTSResult(
+            audio_data=audio_data,
+            character_count=len(text),
+        )
 
 
 # ══════════════════════════════════════════════════════════
@@ -272,22 +293,22 @@ async def kotib_transcribe(
         if language:
             data.add_field("language", language)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{KOTIB_BASE_URL}/stt",
-                headers=headers,
-                data=data,
-            ) as resp:
-                result = await resp.json()
-                if resp.status != 200:
-                    error = result.get("error", f"HTTP {resp.status}")
-                    raise RuntimeError(f"KotibAI STT error: {error}")
-                if result.get("status") != "success":
-                    raise RuntimeError(f"KotibAI STT failed: {result}")
-                text = result.get("text", "")
-                # Strip "Speaker N:" prefixes from diarization output
-                text = re.sub(r"Speaker \d+:\s*", "", text).strip()
-                return TranscriptionResult(text=text, language=language)
+        session = await _get_session()
+        async with session.post(
+            f"{KOTIB_BASE_URL}/stt",
+            headers=headers,
+            data=data,
+        ) as resp:
+            result = await resp.json()
+            if resp.status != 200:
+                error = result.get("error", f"HTTP {resp.status}")
+                raise RuntimeError(f"KotibAI STT error: {error}")
+            if result.get("status") != "success":
+                raise RuntimeError(f"KotibAI STT failed: {result}")
+            text = result.get("text", "")
+            # Strip "Speaker N:" prefixes from diarization output
+            text = re.sub(r"Speaker \d+:\s*", "", text).strip()
+            return TranscriptionResult(text=text, language=language)
     finally:
         file_handle.close()
 
@@ -318,28 +339,28 @@ async def kotib_tts(
         "blocking": blocking,
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{KOTIB_BASE_URL}/tts",
-            headers=headers,
-            json=payload,
-        ) as resp:
-            result = await resp.json()
-            if resp.status != 200:
-                raise RuntimeError(f"KotibAI TTS error: {result.get('error', resp.status)}")
+    session = await _get_session()
+    async with session.post(
+        f"{KOTIB_BASE_URL}/tts",
+        headers=headers,
+        json=payload,
+    ) as resp:
+        result = await resp.json()
+        if resp.status != 200:
+            raise RuntimeError(f"KotibAI TTS error: {result.get('error', resp.status)}")
 
-            if blocking:
-                if result.get("status") != "success":
-                    raise RuntimeError(f"KotibAI TTS failed: {result}")
-                return TTSResult(
-                    audio_url=result.get("audio_url", ""),
-                    character_count=result.get("character_count", 0),
-                )
+        if blocking:
+            if result.get("status") != "success":
+                raise RuntimeError(f"KotibAI TTS failed: {result}")
+            return TTSResult(
+                audio_url=result.get("audio_url", ""),
+                character_count=result.get("character_count", 0),
+            )
 
-            task_id = result.get("id", "")
-            if not task_id:
-                raise RuntimeError(f"KotibAI TTS: no task_id: {result}")
-            return await _kotib_poll_task(task_id, api_key, session)
+        task_id = result.get("id", "")
+        if not task_id:
+            raise RuntimeError(f"KotibAI TTS: no task_id: {result}")
+        return await _kotib_poll_task(task_id, api_key, session)
 
 
 async def _kotib_poll_task(
@@ -414,57 +435,57 @@ async def aisha_transcribe(
             data.add_field("language", language)
         data.add_field("has_diarization", "false")
 
-        async with aiohttp.ClientSession() as session:
-            # Step 1: Submit audio
-            async with session.post(
-                AISHA_STT_URL,
-                headers=headers,
-                data=data,
-            ) as resp:
-                if resp.status not in (200, 201):
-                    body = await resp.text()
-                    raise RuntimeError(f"Aisha STT error: HTTP {resp.status} — {body[:200]}")
+        session = await _get_session()
+        # Step 1: Submit audio
+        async with session.post(
+            AISHA_STT_URL,
+            headers=headers,
+            data=data,
+        ) as resp:
+            if resp.status not in (200, 201):
+                body = await resp.text()
+                raise RuntimeError(f"Aisha STT error: HTTP {resp.status} — {body[:200]}")
 
-                result = await resp.json()
+            result = await resp.json()
 
-                # If text is directly returned
-                if result.get("text"):
-                    return TranscriptionResult(text=result["text"], language=language)
+            # If text is directly returned
+            if result.get("text"):
+                return TranscriptionResult(text=result["text"], language=language)
 
-                # Async mode: get task_id and poll
-                task_id = result.get("task_id") or result.get("id")
-                if not task_id:
-                    raise RuntimeError(f"Aisha STT: no task_id in response: {result}")
+            # Async mode: get task_id and poll
+            task_id = result.get("task_id") or result.get("id")
+            if not task_id:
+                raise RuntimeError(f"Aisha STT: no task_id in response: {result}")
 
-            # Step 2: Poll for result
-            logger.info("Aisha STT task submitted: %s, polling...", task_id)
-            poll_url = f"https://back.aisha.group/api/v1/stt/get/{task_id}/"
-            elapsed = 0.0
-            interval = 1.5
-            max_wait = 30.0
+        # Step 2: Poll for result
+        logger.info("Aisha STT task submitted: %s, polling...", task_id)
+        poll_url = f"https://back.aisha.group/api/v1/stt/get/{task_id}/"
+        elapsed = 0.0
+        interval = 1.5
+        max_wait = 30.0
 
-            while elapsed < max_wait:
-                await asyncio.sleep(interval)
-                elapsed += interval
+        while elapsed < max_wait:
+            await asyncio.sleep(interval)
+            elapsed += interval
 
-                async with session.get(poll_url, headers=headers) as poll_resp:
-                    if poll_resp.status != 200:
-                        continue
-                    poll_result = await poll_resp.json()
+            async with session.get(poll_url, headers=headers) as poll_resp:
+                if poll_resp.status != 200:
+                    continue
+                poll_result = await poll_resp.json()
 
-                    # Aisha returns transcript even while status is PENDING
-                    text = poll_result.get("transcript", "")
-                    if text:
-                        logger.info("Aisha STT result: %s", text[:50])
-                        return TranscriptionResult(text=text, language=language)
+                # Aisha returns transcript even while status is PENDING
+                text = poll_result.get("transcript", "")
+                if text:
+                    logger.info("Aisha STT result: %s", text[:50])
+                    return TranscriptionResult(text=text, language=language)
 
-                    status = poll_result.get("status", "")
-                    if status in ("FAILED", "failed", "ERROR", "error"):
-                        raise RuntimeError(f"Aisha STT task failed: {poll_result}")
+                status = poll_result.get("status", "")
+                if status in ("FAILED", "failed", "ERROR", "error"):
+                    raise RuntimeError(f"Aisha STT task failed: {poll_result}")
 
-                interval = min(interval * 1.2, 3.0)
+            interval = min(interval * 1.2, 3.0)
 
-            raise RuntimeError(f"Aisha STT timed out after {max_wait}s")
+        raise RuntimeError(f"Aisha STT timed out after {max_wait}s")
     finally:
         file_handle.close()
 
@@ -499,33 +520,33 @@ async def aisha_tts(
     data.add_field("model", model)
     data.add_field("mood", mood)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            AISHA_TTS_URL,
-            headers=headers,
-            data=data,
-        ) as resp:
-            if resp.status not in (200, 201):
-                body = await resp.text()
-                raise RuntimeError(f"Aisha TTS error: HTTP {resp.status} — {body[:200]}")
+    session = await _get_session()
+    async with session.post(
+        AISHA_TTS_URL,
+        headers=headers,
+        data=data,
+    ) as resp:
+        if resp.status not in (200, 201):
+            body = await resp.text()
+            raise RuntimeError(f"Aisha TTS error: HTTP {resp.status} — {body[:200]}")
 
-            # Read body once, then try JSON or raw audio
-            raw = await resp.read()
-            try:
-                result = json.loads(raw)
-                audio_url = result.get("audio_path", "") or result.get("audio_url", "")
-                if audio_url:
-                    return TTSResult(
-                        audio_url=audio_url,
-                        character_count=len(text),
-                    )
-            except (ValueError, UnicodeDecodeError):
-                pass
-            # Raw audio bytes
-            return TTSResult(
-                audio_data=raw,
-                character_count=len(text),
-            )
+        # Read body once, then try JSON or raw audio
+        raw = await resp.read()
+        try:
+            result = json.loads(raw)
+            audio_url = result.get("audio_path", "") or result.get("audio_url", "")
+            if audio_url:
+                return TTSResult(
+                    audio_url=audio_url,
+                    character_count=len(text),
+                )
+        except (ValueError, UnicodeDecodeError):
+            pass
+        # Raw audio bytes
+        return TTSResult(
+            audio_data=raw,
+            character_count=len(text),
+        )
 
 
 # ══════════════════════════════════════════════════════════
@@ -566,19 +587,19 @@ async def whisper_transcribe(
         if language:
             data.add_field("language", language)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                WHISPER_STT_URL,
-                headers=headers,
-                data=data,
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise RuntimeError(f"Whisper STT error: HTTP {resp.status} — {body[:200]}")
+        session = await _get_session()
+        async with session.post(
+            WHISPER_STT_URL,
+            headers=headers,
+            data=data,
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Whisper STT error: HTTP {resp.status} — {body[:200]}")
 
-                result = await resp.json()
-                text = result.get("text", "")
-                return TranscriptionResult(text=text, language=language)
+            result = await resp.json()
+            text = result.get("text", "")
+            return TranscriptionResult(text=text, language=language)
     finally:
         file_handle.close()
 
@@ -648,11 +669,11 @@ async def download_audio(url: str) -> str:
     if parsed.hostname and not any(parsed.hostname.endswith(h) for h in _ALLOWED_AUDIO_HOSTS):
         raise ValueError(f"Audio download blocked: untrusted host {parsed.hostname}")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Failed to download audio: HTTP {resp.status}")
-            data = await resp.read()
+    session = await _get_session()
+    async with session.get(url) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"Failed to download audio: HTTP {resp.status}")
+        data = await resp.read()
 
     _, ext = os.path.splitext(parsed.path)
     suffix = ext.lower() if ext.lower() in (".wav", ".ogg", ".mp3") else ".mp3"
