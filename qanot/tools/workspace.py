@@ -14,6 +14,16 @@ _pkg_templates = _pkg_root / "templates"
 _repo_templates = _pkg_root.parent / "templates"
 TEMPLATE_DIR = _pkg_templates if _pkg_templates.exists() else _repo_templates
 
+# Plugin template directories registered by loader
+_plugin_template_dirs: list[Path] = []
+
+
+def register_template_dir(path: str | Path) -> None:
+    """Register a plugin template directory."""
+    p = Path(path)
+    if p.is_dir():
+        _plugin_template_dirs.append(p)
+
 
 def init_workspace(workspace_dir: str) -> None:
     """Initialize workspace on first run by copying template files.
@@ -46,6 +56,17 @@ def init_workspace(workspace_dir: str) -> None:
         if not dst.exists() and src.exists():
             shutil.copy2(src, dst)
             logger.info("Copied %s template", dst.name)
+
+    # Copy plugin templates (don't overwrite existing files)
+    for tdir in _plugin_template_dirs:
+        for src in tdir.rglob("*"):
+            if src.is_file():
+                rel = src.relative_to(tdir)
+                dst = ws / rel
+                if not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    logger.info("Copied plugin template: %s", rel)
 
     logger.info("Workspace initialized at %s", workspace_dir)
 

@@ -36,29 +36,37 @@ def _notify_hooks(content: str, source: str) -> None:
             logger.warning("Memory write hook failed: %s", e)
 
 
-# WAL trigger patterns (English + Uzbek)
-WAL_PATTERNS = [
+# WAL trigger patterns (English + Uzbek) — compiled regex + category
+WAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Corrections (EN + UZ)
-    (r"(?:it'?s|actually|no,?\s*i\s*meant|not\s+\w+,?\s+(?:but|it'?s))", "correction"),
-    (r"(?:yo'q|aslida|men\s+aytmoqchi|to'g'ri\s+emas)", "correction"),
+    (re.compile(r"(?:it'?s|actually|no,?\s*i\s*meant|not\s+\w+,?\s+(?:but|it'?s))", re.IGNORECASE), "correction"),
+    (re.compile(r"(?:yo'q|aslida|men\s+aytmoqchi|to'g'ri\s+emas)", re.IGNORECASE), "correction"),
     # Proper nouns (capitalized words after common intros)
-    (r"(?:my\s+name\s+is|i'?m|call\s+me|this\s+is)\s+([A-Z][a-z]+)", "proper_noun"),
-    (r"(?:mening?\s+ismim|men\s+)\s*([A-Z][a-z]+)", "proper_noun"),
-    (r"(?:sen(?:i|ing)?\s+(?:isming|nom))\s+(\w+)", "proper_noun"),
+    (re.compile(r"(?:my\s+name\s+is|i'?m|call\s+me|this\s+is)\s+([A-Z][a-z]+)", re.IGNORECASE), "proper_noun"),
+    (re.compile(r"(?:mening?\s+ismim|men\s+)\s*([A-Z][a-z]+)", re.IGNORECASE), "proper_noun"),
+    (re.compile(r"(?:sen(?:i|ing)?\s+(?:isming|nom))\s+(\w+)", re.IGNORECASE), "proper_noun"),
     # Preferences (EN + UZ)
-    (r"(?:i\s+(?:like|prefer|want|don'?t\s+like|hate|love))", "preference"),
-    (r"(?:men\s+(?:yoqtiraman|xohlayman|istardim|yomon\s+ko'raman))", "preference"),
+    (re.compile(r"(?:i\s+(?:like|prefer|want|don'?t\s+like|hate|love))", re.IGNORECASE), "preference"),
+    (re.compile(r"(?:men\s+(?:yoqtiraman|xohlayman|istardim|yomon\s+ko'raman))", re.IGNORECASE), "preference"),
     # Decisions (EN + UZ)
-    (r"(?:let'?s\s+(?:do|go|use|try)|go\s+with|use\s+)", "decision"),
-    (r"(?:qani|keling|ishlataylik|sinab\s+ko'raylik)", "decision"),
+    (re.compile(r"(?:let'?s\s+(?:do|go|use|try)|go\s+with|use\s+)", re.IGNORECASE), "decision"),
+    (re.compile(r"(?:qani|keling|ishlataylik|sinab\s+ko'raylik)", re.IGNORECASE), "decision"),
     # Specific values
-    (r"(?:\d{4}[-/]\d{2}[-/]\d{2}|https?://\S+|\b\d{5,}\b)", "specific_value"),
+    (re.compile(r"(?:\d{4}[-/]\d{2}[-/]\d{2}|https?://\S+|\b\d{5,}\b)", re.IGNORECASE), "specific_value"),
     # Remember commands (EN + UZ)
-    (r"(?:remember\s+(?:this|that)|don'?t\s+forget|eslab\s+qol|unutma|yodda\s+tut)", "remember"),
+    (re.compile(r"(?:remember\s+(?:this|that)|don'?t\s+forget|eslab\s+qol|unutma|yodda\s+tut)", re.IGNORECASE), "remember"),
 ]
 
 # Patterns that should also be saved to MEMORY.md (durable facts)
-DURABLE_CATEGORIES = {"proper_noun", "preference", "remember"}
+DURABLE_CATEGORIES: set[str] = {"proper_noun", "preference", "remember"}
+
+
+def register_wal_pattern(pattern: str, category: str, durable: bool = False) -> None:
+    """Register a custom WAL pattern. Called by plugin loader."""
+    compiled = re.compile(pattern, re.IGNORECASE)
+    WAL_PATTERNS.append((compiled, category))
+    if durable:
+        DURABLE_CATEGORIES.add(category)
 
 
 class WALEntry:
@@ -82,7 +90,7 @@ def wal_scan(user_message: str) -> list[WALEntry]:
         return entries
 
     for pattern, category in WAL_PATTERNS:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = pattern.search(text)
         if match:
             # Extract relevant snippet (up to 200 chars around the match)
             start = max(0, match.start() - 50)

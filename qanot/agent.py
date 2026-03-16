@@ -458,6 +458,9 @@ class Agent:
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
         self._pending_files: dict[str, list[str]] = {}
+        # Plugin lifecycle hooks
+        self._pre_turn_hooks: list[Callable] = []
+        self._post_turn_hooks: list[Callable] = []
         Agent._instance = self
 
     # Class-level reference for tools to push images without direct agent access
@@ -480,6 +483,22 @@ class Agent:
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection."""
         self._rag_indexer = rag_indexer
+
+    def register_plugin_hooks(self, plugins: list) -> None:
+        """Register plugins that have lifecycle hooks."""
+        from qanot.plugins.base import Plugin
+
+        for p in plugins:
+            try:
+                if p.on_pre_turn.__func__ is not Plugin.on_pre_turn:
+                    self._pre_turn_hooks.append(p.on_pre_turn)
+            except AttributeError:
+                pass
+            try:
+                if p.on_post_turn.__func__ is not Plugin.on_post_turn:
+                    self._post_turn_hooks.append(p.on_post_turn)
+            except AttributeError:
+                pass
 
     @property
     def current_user_id(self) -> str:
@@ -1014,6 +1033,16 @@ class Agent:
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
+        # Plugin pre-turn hooks
+        if self._pre_turn_hooks:
+            for hook in self._pre_turn_hooks:
+                try:
+                    modified = await hook(user_id or "", user_message)
+                    if modified is not None:
+                        user_message = modified
+                except Exception as e:
+                    logger.warning("Pre-turn hook error: %s", e)
+
         final_text = ""
         recent_fingerprints: list[str] = []
         result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
@@ -1109,6 +1138,16 @@ class Agent:
             final_text = "(Agent reached maximum iterations)"
             logger.warning("Agent hit max iterations (%d)", MAX_ITERATIONS)
 
+        # Plugin post-turn hooks
+        if self._post_turn_hooks:
+            for hook in self._post_turn_hooks:
+                try:
+                    modified = await hook(user_id or "", user_message, final_text)
+                    if modified is not None:
+                        final_text = modified
+                except Exception as e:
+                    logger.warning("Post-turn hook error: %s", e)
+
         return final_text
 
     async def run_turn_stream(
@@ -1140,6 +1179,16 @@ class Agent:
             self.cost_tracker.add_turn(user_id)
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
+
+        # Plugin pre-turn hooks
+        if self._pre_turn_hooks:
+            for hook in self._pre_turn_hooks:
+                try:
+                    modified = await hook(user_id or "", user_message)
+                    if modified is not None:
+                        user_message = modified
+                except Exception as e:
+                    logger.warning("Pre-turn hook error: %s", e)
 
         recent_fingerprints: list[str] = []
         result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
@@ -1282,6 +1331,16 @@ class Agent:
                 final_text = response.content if response else "".join(text_parts)
                 usage = response.usage if response else Usage()
                 self._handle_end_turn(final_text, user_message, messages, usage)
+
+                # Plugin post-turn hooks
+                if self._post_turn_hooks:
+                    for hook in self._post_turn_hooks:
+                        try:
+                            modified = await hook(user_id or "", user_message, final_text)
+                            if modified is not None:
+                                final_text = modified
+                        except Exception as e:
+                            logger.warning("Post-turn hook error: %s", e)
 
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return

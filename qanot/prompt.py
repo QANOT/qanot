@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_CHARS = 20_000
 
+# ── Plugin registries ──
+_plugin_prompt_sections: list[dict] = []  # [{"name": str, "content": str}]
+_plugin_template_vars: dict[str, str] = {}
+
+
+def register_prompt_section(name: str, content: str) -> None:
+    """Register a plugin prompt section. Appended after core sections."""
+    _plugin_prompt_sections.append({"name": name, "content": content})
+
+
+def register_template_var(key: str, value: str) -> None:
+    """Register a custom template variable for prompt injection."""
+    _plugin_template_vars[key] = value
+
 
 def _truncate_content(content: str, max_chars: int) -> str:
     return truncate_with_marker(content, max_chars)
@@ -142,12 +156,20 @@ def build_system_prompt(
         + ("- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n" if context_percent >= 50 else "")
     )
 
+    # Plugin prompt sections
+    for section in _plugin_prompt_sections:
+        _add(f"# {section['name']}\n\n{section['content']}")
+
     # Variable injection
     full = "\n\n---\n\n".join(parts)
     full = full.replace("{date}", date_str)
     full = full.replace("{bot_name}", bot_name)
     full = full.replace("{owner_name}", owner_name)
     full = full.replace("{timezone}", timezone_str)
+
+    # Plugin template vars
+    for key, value in _plugin_template_vars.items():
+        full = full.replace(key, value)
 
     return full
 

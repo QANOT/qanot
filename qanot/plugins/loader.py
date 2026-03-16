@@ -117,6 +117,9 @@ class PluginManager:
             # Merge TOOLS.md and SOUL_APPEND into workspace
             _deploy_plugin_files(config.workspace_dir, plugin)
 
+            # ── Collect extension points ──
+            self._collect_extensions(plugin)
+
             # Track loaded plugin
             self._plugins[name] = plugin
             self._manifests[name] = manifest
@@ -128,6 +131,36 @@ class PluginManager:
 
         except Exception as e:
             logger.error("Failed to load plugin '%s': %s", name, e, exc_info=True)
+
+    def _collect_extensions(self, plugin: Plugin) -> None:
+        """Collect all extension points declared by a plugin."""
+        from qanot.memory import register_wal_pattern
+        from qanot.prompt import register_prompt_section, register_template_var
+
+        # WAL patterns
+        for pattern, category, durable in plugin.get_wal_patterns():
+            register_wal_pattern(pattern, category, durable)
+            logger.info("[%s] WAL pattern registered: %s", plugin.name, category)
+
+        # Prompt sections
+        for section in plugin.get_prompt_sections():
+            register_prompt_section(section.get("name", ""), section.get("content", ""))
+            logger.info("[%s] Prompt section registered: %s", plugin.name, section.get("name", ""))
+
+        # Template vars
+        for key, value in plugin.get_template_vars().items():
+            register_template_var(key, value)
+
+        # Template dirs
+        template_dir = plugin.get_template_dir()
+        if template_dir:
+            from qanot.tools.workspace import register_template_dir
+            register_template_dir(template_dir)
+            logger.info("[%s] Template dir registered: %s", plugin.name, template_dir)
+
+        # Store cron jobs and commands for later wiring (main.py will pass them to scheduler/telegram)
+        plugin._pending_cron_jobs = plugin.get_cron_jobs()  # type: ignore[attr-defined]
+        plugin._pending_commands = plugin.get_commands()  # type: ignore[attr-defined]
 
     def _check_plugin_deps(self, manifest: PluginManifest) -> list[str]:
         """Check if required plugin dependencies are loaded."""

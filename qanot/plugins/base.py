@@ -127,6 +127,52 @@ class Plugin(ABC):
             if callable(attr := getattr(self, attr_name, None)) and hasattr(attr, "_tool_def")
         ]
 
+    # ── Extensibility hooks (all optional, empty defaults) ──
+
+    def get_wal_patterns(self) -> list[tuple[str, str, bool]]:
+        """Return WAL patterns: [(regex, category, is_durable)].
+
+        Core will register these automatically. No need to edit memory.py.
+        """
+        return []
+
+    def get_prompt_sections(self) -> list[dict]:
+        """Return prompt sections: [{"name": str, "content": str, "after": str}].
+
+        Injected into system prompt. No need to edit prompt.py.
+        """
+        return []
+
+    def get_template_dir(self) -> str | None:
+        """Return path to workspace template files directory.
+
+        Files copied on init_workspace() if they don't exist.
+        """
+        return None
+
+    def get_cron_jobs(self) -> list[dict]:
+        """Return cron jobs: [{"name": str, "schedule": str, "prompt": str, "mode": str}].
+
+        Registered with scheduler on load.
+        """
+        return []
+
+    def get_commands(self) -> list[dict]:
+        """Return Telegram commands: [{"command": str, "description": str, "handler": Callable}]."""
+        return []
+
+    def get_template_vars(self) -> dict[str, str]:
+        """Return custom template variables for prompt: {"{key}": "value"}."""
+        return {}
+
+    async def on_pre_turn(self, user_id: str, message: str) -> str | None:
+        """Called before each agent turn. Return modified message or None."""
+        return None
+
+    async def on_post_turn(self, user_id: str, message: str, response: str) -> str | None:
+        """Called after agent response. Return modified response or None."""
+        return None
+
 
 def validate_tool_params(params: dict, schema: dict) -> list[str]:
     """Validate tool parameters against JSON schema (lightweight).
