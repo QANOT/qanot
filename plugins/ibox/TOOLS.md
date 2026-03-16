@@ -1,49 +1,56 @@
-# ibox.io Tools
+# TOOLS.md - Tool Configuration & Notes
 
-ibox.io ombor boshqaruv tizimi bilan integratsiya. Tovarlar, qoldiq, sotuvlar, xaridlar, to'lovlar va hisobotlar.
+## ibox.io Ombor Integration (ibox_*)
 
-## Tovarlar
-- `ibox_search_products` — Tovar qidirish (nomi, shtrix-kod, SKU)
-- `ibox_get_product` — Bitta tovar tafsilotlari
-- `ibox_get_categories` — Kategoriyalar
-- `ibox_get_brands` — Brendlar
-- `ibox_get_units` — O'lchov birliklari
+Siz ibox.io ombor boshqaruv tizimiga to'g'ridan-to'g'ri ulangansiz. 27 ta ibox_* tool mavjud.
 
-## Ombor / Qoldiq
-- `ibox_get_stock` — Ombordagi qoldiq
-- `ibox_get_stock_by_product` — Bitta tovar qoldig'i (barcha omborlarda)
-- `ibox_get_stock_by_warehouse` — Bitta ombordagi barcha tovarlar
-- `ibox_get_warehouses` — Omborlar ro'yxati
+**MUHIM:** Login ma'lumotlari OLDINDAN sozlangan. Foydalanuvchidan HECH QACHON login, parol yoki tenant so'ramang. Tizimga kirish avtomatik amalga oshiriladi.
 
-## Sotuvlar
-- `ibox_get_orders` — Buyurtmalar ro'yxati
-- `ibox_get_order` — Bitta buyurtma tafsilotlari
-- `ibox_get_sales_by_product` — Tovar bo'yicha sotuv
-- `ibox_get_shipments` — Yetkazib berish hisoboti
+### Tovarlar:
+- `ibox_search_products` — Tovarlar ro'yxati. Nomi, shtrix-kod, SKU bo'yicha qidirish.
+- `ibox_get_product` — Bitta tovar tafsilotlari (ID bo'yicha).
+- `ibox_get_categories` — Tovar kategoriyalari ro'yxati.
+- `ibox_get_brands` — Tovar brendlari ro'yxati.
+- `ibox_get_units` — O'lchov birliklari (dona, kg, litr).
 
-## Xaridlar
-- `ibox_get_purchases` — Xaridlar hisoboti
-- `ibox_get_purchase_returns` — Qaytarilgan xaridlar
+### Ombor / Qoldiq:
+- `ibox_get_stock` — Ombordagi tovarlar qoldig'i. Tovar, ombor, kategoriya bo'yicha filter.
+- `ibox_get_stock_by_product` — Bitta tovar bo'yicha barcha ombordagi qoldiq.
+- `ibox_get_stock_by_warehouse` — Bitta ombor bo'yicha barcha tovarlar qoldig'i.
+- `ibox_get_warehouses` — Omborlar ro'yxati.
 
-## To'lovlar
-- `ibox_get_payments_received` — Qabul qilingan to'lovlar
-- `ibox_get_payments_made` — Qilingan to'lovlar
-- `ibox_get_installments` — Nasiyalar
+### Sotuvlar:
+- `ibox_get_orders` — Buyurtmalar (sotuvlar) ro'yxati. Sana, mijoz bo'yicha filter.
+- `ibox_get_order` — Bitta buyurtma tafsilotlari (ID bo'yicha).
+- `ibox_get_sales_by_product` — Tovar bo'yicha sotuv hisoboti.
+- `ibox_get_shipments` — Yetkazib berish (jo'natish) hisoboti.
 
-## Hisobotlar
-- `ibox_get_dashboard` — Umumiy statistika
-- `ibox_get_profit_loss` — Foyda va zarar
-- `ibox_get_profitability` — Rentabellik
-- `ibox_get_abc_analysis` — ABC tahlil
-- `ibox_get_days_in_stock` — Omborda yotish muddati
+### Xaridlar:
+- `ibox_get_purchases` — Xaridlar hisoboti. Sana bo'yicha filter.
+- `ibox_get_purchase_returns` — Qaytarilgan xaridlar hisoboti.
 
-## Mijozlar
-- `ibox_get_customers` — Mijozlar hisoboti
-- `ibox_get_outlets` — Savdo nuqtalari
-- `ibox_get_customer_daily` — Kunlik hisobot
+### To'lovlar:
+- `ibox_get_payments_received` — Mijozlardan qabul qilingan to'lovlar.
+- `ibox_get_payments_made` — Ta'minotchilarga qilingan to'lovlar.
+- `ibox_get_installments` — Nasiya (bo'lib to'lash) ro'yxati.
 
-## Qoidalar
-- Narxlarni so'm (UZS) formatida ko'rsat
-- Qoldiq so'raganda `ibox_get_stock` ishlatiladi
-- Dashboard uchun default `filter_by: month`
-- Texnik tafsilotlarni (API, token) foydalanuvchiga ko'rsatma
+### Hisobotlar:
+- `ibox_get_dashboard` — Umumiy dashboard — sotuv, xarid, foyda statistikasi.
+- `ibox_get_profit_loss` — Foyda va zarar hisoboti.
+- `ibox_get_profitability` — Rentabellik hisoboti (tovar/kategoriya bo'yicha).
+- `ibox_get_abc_analysis` — ABC tahlil — tovarlarni A/B/C guruhga ajratish.
+- `ibox_get_days_in_stock` — Omborda necha kun yotganligi hisoboti.
+
+### Mijozlar:
+- `ibox_get_customers` — Mijozlar hisoboti — qarz, to'lov, buyurtma statistikasi.
+- `ibox_get_outlets` — Savdo nuqtalari (do'konlar) ro'yxati.
+- `ibox_get_customer_daily` — Mijoz kunlik hisoboti.
+
+### Umumiy:
+- `ibox_get_profile` — Akkaunt ma'lumotlari — kim sifatida ulangan.
+
+### Ishlatish namunalari:
+- "Omborda grafin bormi?" → `ibox_get_stock` bilan qidiring
+- "Bugun qancha savdo bo'ldi?" → `ibox_get_dashboard` (filter_by: today)
+- "Eng ko'p sotiladigan tovar?" → `ibox_get_sales_by_product`
+- "Mijoz qarzi qancha?" → `ibox_get_customers`
