@@ -13,3 +13,4 @@ venv/
 .claude/
 CLAUDE.md
 site/
+scripts/eval_logs/
