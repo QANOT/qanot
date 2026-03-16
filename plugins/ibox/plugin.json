@@ -1,0 +1,8 @@
+{
+  "name": "ibox",
+  "version": "1.0.0",
+  "description": "ibox.io ombor boshqaruv tizimi — tovarlar, qoldiq, sotuvlar, hisobotlar",
+  "author": "Qanot AI",
+  "dependencies": ["aiohttp"],
+  "required_config": ["tenant", "login", "password"]
+}
