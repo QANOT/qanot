@@ -105,8 +105,11 @@ def _parse_skill(path: Path) -> Skill | None:
     if len(description) > MAX_DESCRIPTION_CHARS:
         description = description[:MAX_DESCRIPTION_CHARS]
 
+    # Replace {skill_dir} placeholder with actual path
+    skill_dir = str(path.parent)
+    content = body.strip().replace("{skill_dir}", skill_dir)
+
     # Sanitize content
-    content = body.strip()
     if len(content) > MAX_SKILL_CHARS:
         content = content[:MAX_SKILL_CHARS] + "\n\n[Truncated — skill exceeds size limit]"
 
