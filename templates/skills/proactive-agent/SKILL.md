@@ -1,11 +1,11 @@
 ---
 name: proactive-agent
 version: 3.1.0
-description: "Transform AI agents from task-followers into proactive partners that anticipate needs and continuously improve. Now with WAL Protocol, Working Buffer, Autonomous Crons, and battle-tested patterns. Part of Qanot AI "
+description: "Transform AI agents from task-followers into proactive partners that anticipate needs and continuously improve. Now with WAL Protocol, Working Buffer, Autonomous Crons, and battle-tested patterns. Part of Qanot AI"
 author: qanot
 ---
 
-# Proactive Agent 
+# Proactive Agent
 
 **By Hal Labs** — Part of Qanot AI
 
@@ -627,6 +627,6 @@ For comprehensive agent capabilities, combine this with:
 
 ---
 
-*Part of Qanot AI *
+*Part of Qanot AI*
 
 *"Every day, ask: How can I surprise my human with something amazing?"*
