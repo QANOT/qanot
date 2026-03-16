@@ -155,12 +155,21 @@ def _send_notification(callback, event: str, entry: dict) -> None:
 
     try:
         if inspect.iscoroutinefunction(callback):
-            asyncio.create_task(callback(text))
+            coro = callback(text)
+            try:
+                asyncio.create_task(coro)
+            except RuntimeError:
+                coro.close()
+                logger.debug("No event loop for notification (non-fatal)")
         elif callable(callback):
             # Sync callback — wrap in coroutine
             result = callback(text)
             if inspect.isawaitable(result):
-                asyncio.create_task(result)
+                try:
+                    asyncio.create_task(result)
+                except RuntimeError:
+                    result.close()
+                    logger.debug("No event loop for notification (non-fatal)")
     except Exception as e:
         logger.debug("Notification send failed (non-fatal): %s", e)
 
