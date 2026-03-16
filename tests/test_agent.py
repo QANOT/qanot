@@ -273,10 +273,10 @@ class TestAgent:
 
         agent.reset(user_id="a")
         # After reset, "a" is evicted from in-memory cache.
+        assert not agent._conv_manager.has_user("a")  # State was cleared
         # _get_messages will restore from session history (JSONL).
         restored_a = agent._get_messages("a")
         assert len(restored_a) >= 0  # May restore from session files
-        assert "a" not in agent._locks  # Lock was cleared
         assert len(agent._get_messages("b")) == 2  # "b" unchanged
 
     @pytest.mark.asyncio

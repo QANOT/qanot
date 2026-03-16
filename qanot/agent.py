@@ -13,6 +13,7 @@ from typing import Any, Callable, Awaitable
 
 from qanot.config import Config
 from qanot.context import ContextTracker, CostTracker, truncate_tool_result
+from qanot.conversation import ConversationManager
 from qanot.memory import wal_scan, wal_write, write_daily_note
 from qanot.prompt import build_system_prompt
 from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage
@@ -329,9 +330,12 @@ class Agent:
         self.cost_tracker = CostTracker(config.workspace_dir)
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
-        self._conversations: dict[str | None, list[dict]] = {}
-        self._locks: dict[str | None, asyncio.Lock] = {}
-        self._last_active: dict[str | None, float] = {}
+        self._conv_manager = ConversationManager(
+            history_limit=config.history_limit,
+            ttl=CONVERSATION_TTL,
+        )
+        # Backward compat: expose raw dict for dashboard / tests
+        self._conversations = self._conv_manager._conversations
         self._last_user_msg_id = ""
         # Loaded skills (populated by load_skills)
         self._skills: list = []
@@ -398,30 +402,19 @@ class Agent:
 
     def get_conversation(self, user_id: str | None) -> list[dict]:
         """Get conversation history for a user (read-only view)."""
-        return self._conversations.get(user_id, [])
+        return self._conv_manager.get_messages(user_id)
 
     def _get_lock(self, user_id: str | None) -> asyncio.Lock:
         """Get or create a per-user lock for write safety."""
-        if user_id not in self._locks:
-            self._locks[user_id] = asyncio.Lock()
-        return self._locks[user_id]
+        return self._conv_manager.get_lock(user_id)
 
     def _remove_user_state(self, user_id: str | None) -> None:
         """Remove all per-user state (conversation, lock, activity timestamp)."""
-        self._conversations.pop(user_id, None)
-        self._locks.pop(user_id, None)
-        self._last_active.pop(user_id, None)
+        self._conv_manager.remove(user_id)
 
     def _evict_stale(self) -> None:
         """Remove conversation state for users idle longer than CONVERSATION_TTL."""
-        now = time.monotonic()
-        stale = [
-            uid for uid, ts in self._last_active.items()
-            if now - ts > CONVERSATION_TTL
-        ]
-        for uid in stale:
-            self._remove_user_state(uid)
-            logger.debug("Evicted stale conversation for user_id=%s", uid)
+        self._conv_manager.evict_stale()
 
     def _get_messages(self, user_id: str | None = None) -> list[dict]:
         """Get or create conversation history for a user.
@@ -431,8 +424,7 @@ class Agent:
         remembers previous conversations.
         """
         self._evict_stale()
-        self._last_active[user_id] = time.monotonic()
-        if user_id not in self._conversations:
+        if not self._conv_manager.has_user(user_id):
             # Try to restore from session history
             restored: list[dict] = []
             if user_id is not None:
@@ -443,8 +435,8 @@ class Agent:
                     )
                 except Exception as e:
                     logger.warning("Session restore failed for user %s: %s", user_id, e)
-            self._conversations[user_id] = restored
-        return self._conversations[user_id]
+            return self._conv_manager.restore_from_session(user_id, restored)
+        return self._conv_manager.ensure_messages(user_id)
 
     def _build_system_prompt(self, active_skills_content: str = "") -> str:
         """Build the system prompt from workspace files."""
@@ -686,7 +678,7 @@ class Agent:
             await self._memory_flush(messages)
             summary = await self._summarize_for_compaction(messages)
             compacted = self.context.compact_messages(messages, summary_text=summary)
-            self._conversations[user_id] = compacted
+            self._conv_manager.set_messages(user_id, compacted)
             messages = compacted
             logger.info("Proactive compaction triggered at %.1f%% (mode=%s)",
                        self.context.get_context_percent(), self.config.compaction_mode)
@@ -695,7 +687,7 @@ class Agent:
         if cached_system is None:
             messages = _strip_thinking_blocks(messages)
             messages = _repair_messages(messages)
-            self._conversations[user_id] = messages
+            self._conv_manager.set_messages(user_id, messages)
 
         if cached_system is not None:
             system = cached_system
@@ -724,7 +716,7 @@ class Agent:
         await self._memory_flush(messages)
         summary = await self._summarize_for_compaction(messages)
         compacted = self.context.compact_messages(messages, summary_text=summary)
-        self._conversations[user_id] = compacted
+        self._conv_manager.set_messages(user_id, compacted)
         return compacted
 
     def _track_usage(self, response: ProviderResponse) -> None:
@@ -1262,9 +1254,7 @@ class Agent:
         if user_id is not None:
             self._remove_user_state(user_id)
         else:
-            self._conversations.clear()
-            self._locks.clear()
-            self._last_active.clear()
+            self._conv_manager.clear_all()
 
 
 async def spawn_isolated_agent(

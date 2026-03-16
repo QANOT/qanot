@@ -61,7 +61,7 @@ class Dashboard:
             "turn_count": status["turn_count"],
             "api_calls": status["api_calls"],
             "buffer_active": status["buffer_active"],
-            "active_conversations": len(self.agent._conversations),
+            "active_conversations": self.agent._conv_manager.active_count(),
         }
         return web.json_response(data)
 
