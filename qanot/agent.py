@@ -454,6 +454,8 @@ class Agent:
         self._locks: dict[str | None, asyncio.Lock] = {}
         self._last_active: dict[str | None, float] = {}
         self._last_user_msg_id = ""
+        # Loaded skills (populated by load_skills)
+        self._skills: list = []
         # Per-user pending images queue (populated by generate_image tool)
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
@@ -483,6 +485,11 @@ class Agent:
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection."""
         self._rag_indexer = rag_indexer
+
+    def load_skills(self, workspace_dir: str) -> None:
+        """Discover and load skills from workspace/skills/ directory."""
+        from qanot.skills import discover_skills
+        self._skills = discover_skills(workspace_dir)
 
     def register_plugin_hooks(self, plugins: list) -> None:
         """Register plugins that have lifecycle hooks."""
@@ -560,10 +567,14 @@ class Agent:
             self._conversations[user_id] = restored
         return self._conversations[user_id]
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, active_skills_content: str = "") -> str:
         """Build the system prompt from workspace files."""
         if self._system_prompt_override:
             return self._system_prompt_override
+
+        from qanot.skills import build_skill_index
+        skill_index = build_skill_index(self._skills) if self._skills else ""
+
         return build_system_prompt(
             workspace_dir=self.config.workspace_dir,
             owner_name=self.config.owner_name,
@@ -573,6 +584,8 @@ class Agent:
             total_tokens=self.context.total_tokens,
             mode=self.prompt_mode,
             user_id=str(self._current_user_id) if self._current_user_id else "",
+            skill_index=skill_index,
+            active_skills_content=active_skills_content,
         )
 
     async def _prepare_turn(self, user_message: str, messages: list[dict], *, images: list[dict] | None = None) -> str:
@@ -805,7 +818,17 @@ class Agent:
             messages = _repair_messages(messages)
             self._conversations[user_id] = messages
 
-        system = cached_system or self._build_system_prompt()
+        if cached_system is not None:
+            system = cached_system
+        else:
+            # Match skills on the first iteration only
+            active_skills_content = ""
+            if self._skills and user_message:
+                from qanot.skills import match_skills, format_active_skills
+                matched = match_skills(self._skills, user_message)
+                if matched:
+                    active_skills_content = format_active_skills(matched)
+            system = self._build_system_prompt(active_skills_content=active_skills_content)
         # Lazy tool loading: only send tools the user likely needs
         if cached_tool_defs is not None:
             tool_defs = cached_tool_defs

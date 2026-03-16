@@ -228,6 +228,9 @@ async def main() -> None:
 
     _agent_ref.append(agent)
 
+    # Load skills from workspace
+    agent.load_skills(config.workspace_dir)
+
     get_user_id = lambda: agent.current_user_id
 
     # Register RAG tools and hooks (needs agent reference for get_user_id)

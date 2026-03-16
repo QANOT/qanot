@@ -44,6 +44,8 @@ def build_system_prompt(
     skill_path: str | None = None,
     mode: str = "full",
     user_id: str = "",
+    skill_index: str = "",
+    active_skills_content: str = "",
 ) -> str:
     """Build the full system prompt from workspace files.
 
@@ -127,6 +129,14 @@ def build_system_prompt(
         # 8. BOOTSTRAP.md — first-run ritual (only if it exists)
         if bootstrap := _read_file(ws / "BOOTSTRAP.md"):
             _add(bootstrap)
+
+        # 9. Skill index (compact list of all available skills)
+        if skill_index:
+            _add(skill_index)
+
+        # 10. Active skill content (full content for skills matched this turn)
+        if active_skills_content:
+            _add(active_skills_content)
 
     # Hardcoded behavioral rules (not in templates — cannot be overwritten by agent)
     parts.append(
