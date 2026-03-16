@@ -1,4 +1,4 @@
-"""Document generation tools — Word (.docx) and Excel (.xlsx)."""
+"""Document generation tools — Word, Excel, PDF, and PowerPoint."""
 
 from __future__ import annotations
 
@@ -10,6 +10,26 @@ from pathlib import Path
 from qanot.agent import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_page_range(pages_str: str, total: int) -> list[int]:
+    """Parse '1-3' or '1,3,5' into zero-based page indices."""
+    indices: list[int] = []
+    for part in pages_str.split(","):
+        part = part.strip()
+        if "-" in part:
+            start, end = part.split("-", 1)
+            try:
+                s, e = int(start) - 1, int(end) - 1
+                indices.extend(range(max(0, s), min(total, e + 1)))
+            except ValueError:
+                pass
+        else:
+            try:
+                indices.append(int(part) - 1)
+            except ValueError:
+                pass
+    return indices
 
 
 def register_document_tools(registry: ToolRegistry, workspace_dir: str) -> None:
@@ -532,4 +552,317 @@ def register_document_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         handler=edit_xlsx,
     )
 
-    logger.info("Document tools registered: create_docx, create_xlsx, read_docx, edit_docx, read_xlsx, edit_xlsx")
+    # ── create_pdf ──
+    async def create_pdf(params: dict) -> str:
+        """Create a PDF document."""
+        try:
+            from fpdf import FPDF
+        except ImportError:
+            return json.dumps({"error": "fpdf2 kutubxonasi o'rnatilmagan. pip install fpdf2"})
+
+        filename = params.get("filename", "document.pdf")
+        if not filename.endswith(".pdf"):
+            filename += ".pdf"
+
+        title = params.get("title", "")
+        content = params.get("content", "")
+        rows = params.get("rows")
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+
+        # Use built-in font (supports basic latin)
+        pdf.set_font("Helvetica", size=12)
+
+        # Title
+        if title:
+            pdf.set_font("Helvetica", "B", 18)
+            pdf.cell(0, 15, title, new_x="LMARGIN", new_y="NEXT", align="C")
+            pdf.ln(5)
+            pdf.set_font("Helvetica", size=12)
+
+        # Content — parse line by line
+        if content:
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line:
+                    pdf.ln(5)
+                elif line.startswith("# "):
+                    pdf.set_font("Helvetica", "B", 16)
+                    pdf.cell(0, 10, line[2:], new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_font("Helvetica", size=12)
+                elif line.startswith("## "):
+                    pdf.set_font("Helvetica", "B", 14)
+                    pdf.cell(0, 9, line[3:], new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_font("Helvetica", size=12)
+                elif line.startswith("- ") or line.startswith("* "):
+                    pdf.cell(10)
+                    pdf.cell(0, 7, f"\u2022 {line[2:]}", new_x="LMARGIN", new_y="NEXT")
+                else:
+                    pdf.multi_cell(0, 7, line)
+
+        # Table
+        if rows and isinstance(rows, list) and len(rows) > 0:
+            pdf.ln(5)
+            col_count = len(rows[0])
+            col_width = (pdf.w - 20) / col_count
+
+            # Header row
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_fill_color(37, 99, 235)
+            pdf.set_text_color(255, 255, 255)
+            for cell in rows[0]:
+                pdf.cell(col_width, 8, str(cell), border=1, fill=True, align="C")
+            pdf.ln()
+
+            # Data rows
+            pdf.set_font("Helvetica", size=10)
+            pdf.set_text_color(0, 0, 0)
+            for row in rows[1:]:
+                for cell in row:
+                    pdf.cell(col_width, 7, str(cell), border=1)
+                pdf.ln()
+
+        filepath = Path(workspace_dir) / filename
+        pdf.output(str(filepath))
+
+        return json.dumps({
+            "status": "ok",
+            "file": str(filepath),
+            "filename": filename,
+            "message": f"{filename} yaratildi",
+        })
+
+    # ── read_pdf ──
+    async def read_pdf(params: dict) -> str:
+        """Read content from a PDF file."""
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return json.dumps({"error": "PyMuPDF kutubxonasi o'rnatilmagan. pip install PyMuPDF"})
+
+        filepath = params.get("file", "")
+        if not filepath:
+            return json.dumps({"error": "file parametri kerak"})
+
+        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
+        if not path.exists():
+            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+
+        doc = fitz.open(str(path))
+        total_pages = len(doc)
+
+        # Parse page range
+        pages = params.get("pages")
+        page_indices = list(range(total_pages))
+        if pages:
+            page_indices = _parse_page_range(pages, total_pages)
+
+        content = []
+        for i in page_indices:
+            if 0 <= i < total_pages:
+                page = doc[i]
+                text = page.get_text()
+                content.append(f"--- Sahifa {i + 1} ---\n{text}")
+
+        doc.close()
+
+        full_text = "\n\n".join(content)
+        if len(full_text) > 50000:
+            full_text = full_text[:50000] + "\n\n[Truncated \u2014 juda katta fayl]"
+
+        return json.dumps({
+            "content": full_text,
+            "total_pages": total_pages,
+            "pages_read": len(page_indices),
+        }, ensure_ascii=False)
+
+    # ── create_pptx ──
+    async def create_pptx(params: dict) -> str:
+        """Create a PowerPoint presentation."""
+        try:
+            from pptx import Presentation
+        except ImportError:
+            return json.dumps({"error": "python-pptx kutubxonasi o'rnatilmagan. pip install python-pptx"})
+
+        filename = params.get("filename", "presentation.pptx")
+        if not filename.endswith(".pptx"):
+            filename += ".pptx"
+
+        title = params.get("title", "Prezentatsiya")
+        slides = params.get("slides", [])
+
+        prs = Presentation()
+
+        # Title slide
+        slide_layout = prs.slide_layouts[0]
+        slide = prs.slides.add_slide(slide_layout)
+        slide.shapes.title.text = title
+        if slide.placeholders[1]:
+            slide.placeholders[1].text = params.get("subtitle", "")
+
+        # Content slides
+        for slide_data in slides:
+            if isinstance(slide_data, str):
+                parts = slide_data.split("\n")
+                slide_data = {"title": parts[0], "content": "\n".join(parts[1:])}
+
+            slide_layout = prs.slide_layouts[1]
+            slide = prs.slides.add_slide(slide_layout)
+
+            slide.shapes.title.text = slide_data.get("title", "")
+
+            content = slide_data.get("content", "")
+            if content and slide.placeholders[1]:
+                tf = slide.placeholders[1].text_frame
+                tf.text = ""
+                first_line = True
+                for line in content.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if first_line:
+                        tf.text = line.lstrip("- *\u2022")
+                        first_line = False
+                    else:
+                        p = tf.add_paragraph()
+                        p.text = line.lstrip("- *\u2022")
+                        if line.startswith(("- ", "* ", "\u2022 ")):
+                            p.level = 1
+
+        filepath = Path(workspace_dir) / filename
+        prs.save(str(filepath))
+
+        return json.dumps({
+            "status": "ok",
+            "file": str(filepath),
+            "filename": filename,
+            "slides_count": len(prs.slides),
+            "message": f"{filename} yaratildi ({len(prs.slides)} slayd)",
+        })
+
+    # ── read_pptx ──
+    async def read_pptx(params: dict) -> str:
+        """Read content from a PowerPoint presentation."""
+        try:
+            from pptx import Presentation
+        except ImportError:
+            return json.dumps({"error": "python-pptx kutubxonasi o'rnatilmagan. pip install python-pptx"})
+
+        filepath = params.get("file", "")
+        if not filepath:
+            return json.dumps({"error": "file parametri kerak"})
+
+        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
+        if not path.exists():
+            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+
+        prs = Presentation(str(path))
+        slides_data = []
+        for i, slide in enumerate(prs.slides):
+            slide_text = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        if para.text.strip():
+                            slide_text.append(para.text)
+            slides_data.append({
+                "slide": i + 1,
+                "content": "\n".join(slide_text),
+            })
+
+        return json.dumps({
+            "total_slides": len(slides_data),
+            "slides": slides_data,
+        }, ensure_ascii=False)
+
+    # Register PDF tools
+    registry.register(
+        name="create_pdf",
+        description=(
+            "PDF hujjat yaratish. Shartnoma, hisobot, faktura uchun. "
+            "Markdown format qo'llanadi: # sarlavha, ## kichik sarlavha, - ro'yxat. "
+            "Jadval uchun rows parametrini ishlating."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["filename"],
+            "properties": {
+                "filename": {"type": "string", "description": "Fayl nomi (masalan: hisobot.pdf)"},
+                "title": {"type": "string", "description": "Hujjat sarlavhasi"},
+                "content": {"type": "string", "description": "Hujjat matni (Markdown format)"},
+                "rows": {
+                    "type": "array",
+                    "description": "Jadval ma'lumotlari. Birinchi qator — sarlavha.",
+                    "items": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        handler=create_pdf,
+    )
+
+    registry.register(
+        name="read_pdf",
+        description="PDF faylni o'qish. Barcha yoki tanlangan sahifalar matnini qaytaradi.",
+        parameters={
+            "type": "object",
+            "required": ["file"],
+            "properties": {
+                "file": {"type": "string", "description": "Fayl nomi yoki to'liq path"},
+                "pages": {
+                    "type": "string",
+                    "description": "Sahifa diapazoni: '1-3' yoki '1,3,5' (ixtiyoriy, standart — hammasi)",
+                },
+            },
+        },
+        handler=read_pdf,
+    )
+
+    # Register PowerPoint tools
+    registry.register(
+        name="create_pptx",
+        description=(
+            "PowerPoint (.pptx) prezentatsiya yaratish. Sarlavha va slaydlar bering. "
+            "Har bir slayd title va content dan iborat."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["filename"],
+            "properties": {
+                "filename": {"type": "string", "description": "Fayl nomi (masalan: taqdimot.pptx)"},
+                "title": {"type": "string", "description": "Prezentatsiya sarlavhasi"},
+                "subtitle": {"type": "string", "description": "Sarlavha ostidagi matn"},
+                "slides": {
+                    "type": "array",
+                    "description": "Slaydlar ro'yxati: [{title, content}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+        handler=create_pptx,
+    )
+
+    registry.register(
+        name="read_pptx",
+        description="PowerPoint (.pptx) prezentatsiyani o'qish. Barcha slaydlar matnini qaytaradi.",
+        parameters={
+            "type": "object",
+            "required": ["file"],
+            "properties": {
+                "file": {"type": "string", "description": "Fayl nomi yoki to'liq path"},
+            },
+        },
+        handler=read_pptx,
+    )
+
+    logger.info(
+        "Document tools registered: create_docx, create_xlsx, read_docx, edit_docx, "
+        "read_xlsx, edit_xlsx, create_pdf, read_pdf, create_pptx, read_pptx"
+    )
