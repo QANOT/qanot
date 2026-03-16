@@ -62,7 +62,13 @@ DURABLE_CATEGORIES: set[str] = {"proper_noun", "preference", "remember"}
 
 
 def register_wal_pattern(pattern: str, category: str, durable: bool = False) -> None:
-    """Register a custom WAL pattern. Called by plugin loader."""
+    """Register a custom WAL trigger pattern.
+
+    Args:
+        pattern: Regex pattern string (compiled with IGNORECASE).
+        category: Category tag for matched entries (e.g. "preference").
+        durable: If True, matches are also persisted to MEMORY.md.
+    """
     compiled = re.compile(pattern, re.IGNORECASE)
     WAL_PATTERNS.append((compiled, category))
     if durable:

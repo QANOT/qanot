@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
 
+from qanot.circuit import (
+    MAX_SAME_ACTION,
+    tool_call_fingerprint,
+    result_fingerprint,
+    strip_verbose_result,
+    is_deterministic_error,
+    is_loop_detected,
+    is_no_progress,
+)
 from qanot.config import Config
 from qanot.context import ContextTracker, CostTracker, truncate_tool_result
 from qanot.conversation import ConversationManager
+from qanot.flush import memory_flush, summarize_for_compaction, handle_overflow
 from qanot.memory import wal_scan, wal_write, write_daily_note
+from qanot.messages import strip_thinking_blocks, repair_messages
 from qanot.prompt import build_system_prompt
 from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent, ToolCall, Usage
 from qanot.providers.errors import (
@@ -34,7 +43,6 @@ from qanot.session import SessionWriter
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 25
-MAX_SAME_ACTION = 3  # Break after N identical consecutive tool calls
 TOOL_TIMEOUT = 30  # seconds per tool execution
 # Tools that run LLM agents internally need much longer timeouts
 _LONG_RUNNING_TOOLS = frozenset({
@@ -44,261 +52,7 @@ _LONG_RUNNING_TOOLS = frozenset({
 })
 LONG_TOOL_TIMEOUT = 300  # 5 minutes for delegation/conversation tools
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
-MAX_COMPACTION_RETRIES = 2  # Max overflow→compact→retry cycles
-
-COMPACTION_SUMMARY_PROMPT = (
-    "You are summarizing a conversation for context compaction. "
-    "Create a concise summary that preserves:\n"
-    "1. **Key decisions** made during the conversation\n"
-    "2. **Open tasks/TODOs** that are still pending\n"
-    "3. **Important facts** (names, numbers, IDs, URLs, file paths)\n"
-    "4. **User preferences** expressed during the conversation\n"
-    "5. **Current goal** — what the user is trying to accomplish\n\n"
-    "Be concise but preserve all actionable information. "
-    "Do NOT add commentary — just summarize the facts.\n\n"
-    "---\n\n"
-    "Conversation to summarize:\n\n"
-)
-
-MEMORY_FLUSH_PROMPT = (
-    "Pre-compaction memory flush. Context is about to be compacted and older messages will be lost.\n\n"
-    "Save any durable memories to files using write_file tool:\n"
-    "- Save to `memory/{date}.md` (append, don't overwrite) for daily logs\n"
-    "- Save to `MEMORY.md` for long-term curated facts\n\n"
-    "What to save:\n"
-    "- User's name, preferences, important personal info\n"
-    "- Decisions made during this conversation\n"
-    "- Project context, URLs, IDs, paths that might be needed later\n"
-    "- Lessons learned, mistakes to avoid\n"
-    "- Things the user explicitly asked to remember\n\n"
-    "What NOT to save:\n"
-    "- Routine greetings or small talk\n"
-    "- Information already in MEMORY.md or USER.md\n"
-    "- Temporary debugging details\n\n"
-    "If nothing worth saving, reply with just: NO_SAVE\n"
-    "Be concise. Append to existing files, never overwrite."
-)
-
-# Only allow read/write tools during memory flush (no shell, no web)
-MEMORY_FLUSH_TOOL_NAMES = {"read_file", "write_file", "list_files", "memory_search"}
-
-# Errors that should NOT be retried (deterministic failures)
-DETERMINISTIC_ERRORS = (
-    "unknown tool",
-    "missing required",
-    "invalid parameter",
-    "not found",
-    "permission denied",
-    "validation error",
-    "invalid input",
-)
-
-def _tool_call_fingerprint(name: str, input_data: dict) -> str:
-    """Hash a tool call for duplicate detection."""
-    raw = f"{name}:{json.dumps(input_data, sort_keys=True)}"
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _result_fingerprint(result: str) -> str:
-    """Hash a tool result for no-progress detection."""
-    return hashlib.sha256(result.encode()).hexdigest()[:16]
-
-
-_VERBOSE_KEYS = frozenset({"details", "debug", "trace", "raw", "stacktrace", "verbose", "raw_response"})
-
-
-def _strip_verbose_result(result: str) -> str:
-    """Strip verbose fields from tool results to save context tokens.
-
-    Removes common bloat fields like 'details', 'debug', 'trace', 'raw'
-    from JSON results while preserving the core data.
-    """
-    if not result or result[0] != '{':
-        return result
-    try:
-        data = json.loads(result)
-        if not isinstance(data, dict):
-            return result
-        stripped = False
-        for key in _VERBOSE_KEYS:
-            if key in data:
-                val = data[key]
-                if isinstance(val, str) and len(val) > 200:
-                    data[key] = val[:100] + f"... [{len(val)} chars stripped]"
-                    stripped = True
-                elif isinstance(val, (list, dict)) and len(json.dumps(val)) > 500:
-                    data[key] = f"[{type(val).__name__} with {len(val)} items stripped]"
-                    stripped = True
-        return json.dumps(data) if stripped else result
-    except (json.JSONDecodeError, TypeError):
-        return result
-
-
-def _is_deterministic_error(result: str) -> bool:
-    """Check if a tool error is deterministic (should not be retried)."""
-    try:
-        data = json.loads(result)
-        error = data.get("error", "").lower()
-        return any(marker in error for marker in DETERMINISTIC_ERRORS)
-    except (json.JSONDecodeError, AttributeError):
-        return False
-
-
-def _is_loop_detected(recent_fingerprints: list[str], new_key: str) -> bool:
-    """Check if adding new_key would create a loop BEFORE executing tools.
-
-    Detects:
-    1. Same exact call repeated N times
-    2. Alternating patterns (A-B-A-B)
-    """
-    # Check exact repetition
-    recent_same = sum(1 for fp in recent_fingerprints if fp == new_key)
-    if recent_same >= MAX_SAME_ACTION - 1:  # Would be Nth occurrence
-        return True
-
-    # Check alternating pattern (A-B-A-B) in last 4
-    if len(recent_fingerprints) >= 3:
-        last4 = recent_fingerprints[-3:] + [new_key]
-        if len(last4) == 4 and last4[0] == last4[2] and last4[1] == last4[3] and last4[0] != last4[1]:
-            return True
-
-    return False
-
-
-def _is_no_progress(result_history: list[tuple[str, str]], call_key: str, result_hash: str) -> bool:
-    """Detect no-progress: same call producing same result repeatedly.
-
-    result_history: list of (call_fingerprint, result_hash) tuples.
-    Returns True if the same call+result pair has occurred 2+ times already.
-    """
-    pair = (call_key, result_hash)
-    same_count = sum(1 for entry in result_history if entry == pair)
-    return same_count >= 2
-
-
-def _strip_old_images(messages: list[dict]) -> list[dict]:
-    """Strip base64 image blocks from all user messages except the last one.
-
-    Images are huge (~130K+ chars each) and bloat context fast.
-    Once the model has seen and responded to an image, the base64 data
-    is no longer needed — replace with a lightweight placeholder.
-    """
-    if not messages:
-        return messages
-
-    # Find the index of the last user message that contains images
-    last_image_idx = -1
-    for i in range(len(messages) - 1, -1, -1):
-        msg = messages[i]
-        if msg.get("role") == "user" and isinstance(msg.get("content"), list):
-            if any(
-                isinstance(b, dict) and b.get("type") == "image"
-                for b in msg["content"]
-            ):
-                last_image_idx = i
-                break
-
-    if last_image_idx < 0:
-        return messages
-
-    result = []
-    for i, msg in enumerate(messages):
-        if (
-            i != last_image_idx
-            and msg.get("role") == "user"
-            and isinstance(msg.get("content"), list)
-        ):
-            # Replace image blocks with placeholder text
-            new_content = []
-            image_count = 0
-            for block in msg["content"]:
-                if isinstance(block, dict) and block.get("type") == "image":
-                    image_count += 1
-                else:
-                    new_content.append(block)
-            if image_count:
-                new_content.append({
-                    "type": "text",
-                    "text": f"[{image_count} image(s) were analyzed in this turn]",
-                })
-            result.append({"role": msg["role"], "content": new_content})
-        else:
-            result.append(msg)
-
-    return result
-
-
-def _strip_thinking_blocks(messages: list[dict]) -> list[dict]:
-    """Strip thinking blocks from assistant messages in conversation history.
-
-    Thinking blocks are internal reasoning from the model (extended thinking).
-    They must not be sent back in context — the API rejects them and they
-    waste tokens. Like OpenClaw's dropThinkingBlocks().
-    """
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        filtered = [
-            block for block in content
-            if not (isinstance(block, dict) and block.get("type") == "thinking")
-        ]
-        if len(filtered) != len(content):
-            msg["content"] = filtered if filtered else [{"type": "text", "text": ""}]
-    return messages
-
-
-def _repair_messages(messages: list[dict]) -> list[dict]:
-    """Repair message history to fix common corruption issues.
-
-    Fixes:
-    - Orphaned tool_result blocks (no matching tool_use)
-    - Consecutive same-role messages (merge or remove)
-    - Base64 image bloat in older messages
-    """
-    if not messages:
-        return messages
-
-    # Strip old images first to prevent context bloat
-    messages = _strip_old_images(messages)
-
-    repaired = []
-    # Track tool_use IDs that exist
-    active_tool_ids: set[str] = set()
-
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content")
-
-        if role == "assistant" and isinstance(content, list):
-            # Track tool_use IDs from assistant messages
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    active_tool_ids.add(block.get("id", ""))
-            repaired.append(msg)
-
-        elif role == "user" and isinstance(content, list):
-            # Filter tool_results: only keep those with matching tool_use
-            valid_results = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    tool_use_id = block.get("tool_use_id", "")
-                    if tool_use_id in active_tool_ids:
-                        valid_results.append(block)
-                        active_tool_ids.discard(tool_use_id)
-                    else:
-                        logger.warning("Removing orphaned tool_result: %s", tool_use_id)
-                else:
-                    valid_results.append(block)
-
-            if valid_results:
-                repaired.append({"role": "user", "content": valid_results})
-        else:
-            repaired.append(msg)
-
-    return repaired
+MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
 
 
 class Agent:
@@ -531,134 +285,6 @@ class Agent:
         )
         return user_message
 
-    async def _memory_flush(self, messages: list[dict]) -> None:
-        """Run a hidden LLM turn to save durable memories before compaction.
-
-        Like OpenClaw's pre-compaction flush: gives the agent a chance to
-        write important facts to memory files before context is lost.
-        Only read/write tools are available during flush.
-        """
-        if len(messages) < 4:
-            return  # Too little context to flush
-
-        # Build a condensed view of the conversation for the flush prompt
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        flush_prompt = MEMORY_FLUSH_PROMPT.replace("{date}", today)
-
-        # Filter tools to only safe ones (read/write)
-        flush_tools = [
-            t for t in self.tools.get_definitions()
-            if t.get("name") in MEMORY_FLUSH_TOOL_NAMES
-        ]
-
-        if not flush_tools:
-            logger.warning("No flush tools available, skipping memory flush")
-            return
-
-        try:
-            # Run up to 5 iterations (read existing → write new)
-            flush_messages: list[dict] = list(messages)  # Copy current conversation
-            flush_messages.append({"role": "user", "content": flush_prompt})
-
-            for _ in range(5):
-                response = await self.provider.chat(
-                    messages=flush_messages,
-                    tools=flush_tools,
-                    system=self._build_system_prompt(),
-                )
-
-                if response.stop_reason == "tool_use" and response.tool_calls:
-                    # Execute only allowed tools
-                    flush_messages.append(
-                        self._build_assistant_tool_message(response.content, response.tool_calls)
-                    )
-                    tool_results: list[dict] = []
-                    for tc in response.tool_calls:
-                        if tc.name in MEMORY_FLUSH_TOOL_NAMES:
-                            result = await self.tools.execute(tc.name, tc.input)
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tc.id,
-                                "content": result,
-                            })
-                        else:
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tc.id,
-                                "content": "Tool not available during memory flush.",
-                            })
-                    flush_messages.append({"role": "user", "content": tool_results})
-                else:
-                    # end_turn or NO_SAVE — done
-                    if response.content and "NO_SAVE" not in response.content:
-                        logger.info("Memory flush completed with text response")
-                    break
-
-            logger.info("Pre-compaction memory flush completed")
-
-        except Exception as e:
-            logger.warning("Memory flush failed (non-fatal): %s", e)
-
-    async def _summarize_for_compaction(self, messages: list[dict]) -> str | None:
-        """Use multi-stage LLM summarization for compaction (OpenClaw-style).
-
-        Returns summary text, or None if summarization fails (falls back to truncation).
-        """
-        from qanot.compaction import summarize_in_stages, estimate_messages_tokens
-
-        if self.config.compaction_mode == "truncate":
-            return None
-
-        # Pre-compaction backup: save full context before it's dropped
-        try:
-            from pathlib import Path
-            text_to_summarize = self.context.extract_compaction_text(messages)
-            if text_to_summarize and len(text_to_summarize) > 100:
-                backup_dir = Path(self.config.workspace_dir) / "memory"
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                backup_path = backup_dir / f"pre-compact-{int(time.time())}.md"
-                backup_path.write_text(
-                    f"# Pre-Compaction Backup\n\n{text_to_summarize}",
-                    encoding="utf-8",
-                )
-                logger.info("Pre-compaction backup saved: %s", backup_path.name)
-        except Exception as e:
-            logger.warning("Failed to save pre-compaction backup: %s", e)
-
-        # Extract messages to summarize (middle section)
-        if len(messages) <= 6:
-            return None
-
-        keep_recent = min(4, len(messages) // 2)
-        middle = messages[2:-keep_recent]
-        if not middle:
-            return None
-
-        total_tokens = estimate_messages_tokens(middle)
-        logger.info(
-            "Multi-stage compaction: %d messages (~%d tokens)",
-            len(middle), total_tokens,
-        )
-
-        # Determine number of parts based on size
-        parts = 2 if total_tokens < 50_000 else 3
-
-        try:
-            summary = await summarize_in_stages(
-                provider=self.provider,
-                messages=middle,
-                context_window=self.config.max_context_tokens,
-                parts=parts,
-            )
-            if summary and len(summary) > 20:
-                logger.info("Multi-stage compaction summary: %d chars", len(summary))
-                return summary
-        except Exception as e:
-            logger.warning("Multi-stage compaction failed, falling back to truncation: %s", e)
-
-        return None
-
     async def _prepare_iteration(
         self, messages: list[dict], user_id: str | None, *,
         cached_system: str | None = None,
@@ -675,8 +301,13 @@ class Agent:
         """
         if self.context.needs_compaction() and len(messages) > 6:
             # Memory flush: save durable memories BEFORE context is lost
-            await self._memory_flush(messages)
-            summary = await self._summarize_for_compaction(messages)
+            await memory_flush(
+                messages, self.provider, self.tools,
+                self._build_system_prompt, self._build_assistant_tool_message,
+            )
+            summary = await summarize_for_compaction(
+                messages, self.provider, self.config, self.context,
+            )
             compacted = self.context.compact_messages(messages, summary_text=summary)
             self._conv_manager.set_messages(user_id, compacted)
             messages = compacted
@@ -685,8 +316,8 @@ class Agent:
 
         # Repair messages only on the first iteration (cached_system is None)
         if cached_system is None:
-            messages = _strip_thinking_blocks(messages)
-            messages = _repair_messages(messages)
+            messages = strip_thinking_blocks(messages)
+            messages = repair_messages(messages)
             self._conv_manager.set_messages(user_id, messages)
 
         if cached_system is not None:
@@ -708,16 +339,12 @@ class Agent:
         return messages, system, tool_defs
 
     async def _handle_overflow(self, messages: list[dict], user_id: str | None) -> list[dict]:
-        """Handle context overflow by force-compacting the conversation.
-
-        Called reactively when the API returns a context_overflow error.
-        """
-        logger.warning("Context overflow detected — forcing compaction")
-        await self._memory_flush(messages)
-        summary = await self._summarize_for_compaction(messages)
-        compacted = self.context.compact_messages(messages, summary_text=summary)
-        self._conv_manager.set_messages(user_id, compacted)
-        return compacted
+        """Handle context overflow by force-compacting the conversation."""
+        return await handle_overflow(
+            messages, self.provider, self.tools,
+            self.config, self.context, self._conv_manager, user_id,
+            self._build_system_prompt, self._build_assistant_tool_message,
+        )
 
     def _track_usage(self, response: ProviderResponse) -> None:
         """Track usage and check context threshold."""
@@ -744,9 +371,9 @@ class Agent:
         self, tool_calls: list[ToolCall], recent_fingerprints: list[str]
     ) -> str | None:
         """Check for tool call loops. Returns loop message if detected, None otherwise."""
-        batch_key = ":".join(sorted(_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls))
+        batch_key = ":".join(sorted(tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls))
 
-        if _is_loop_detected(recent_fingerprints, batch_key):
+        if is_loop_detected(recent_fingerprints, batch_key):
             logger.warning(
                 "Loop detected BEFORE execution: %s (count=%d)",
                 tool_calls[0].name, MAX_SAME_ACTION,
@@ -809,9 +436,9 @@ class Agent:
             result = await self.tools.execute(tc.name, tc.input, timeout=timeout)
 
             # Strip verbose detail fields from JSON results to save context
-            result = _strip_verbose_result(result)
+            result = strip_verbose_result(result)
 
-            if _is_deterministic_error(result):
+            if is_deterministic_error(result):
                 result_data = json.loads(result)
                 result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
                 result = json.dumps(result_data)
@@ -822,7 +449,7 @@ class Agent:
                 "content": result,
             })
             result_parts.append(result)
-        combined_hash = _result_fingerprint("|".join(result_parts))
+        combined_hash = result_fingerprint("|".join(result_parts))
         return tool_results, combined_hash
 
     def _handle_end_turn(
@@ -965,7 +592,7 @@ class Agent:
                 error_type = classify_error(e)
                 logger.error("Provider failed after retries: %s [%s]", e, error_type)
 
-                # Context overflow → compact and retry
+                # Context overflow -> compact and retry
                 if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
                     overflow_retries += 1
                     logger.info("Overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
@@ -1002,9 +629,9 @@ class Agent:
                 tool_results, result_hash = await self._execute_tools(response.tool_calls)
 
                 # No-progress detection: same call + same result = stuck
-                batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in response.tool_calls]
+                batch_fps = [tool_call_fingerprint(tc.name, tc.input) for tc in response.tool_calls]
                 call_key = ":".join(sorted(batch_fps))
-                if _is_no_progress(result_history, call_key, result_hash):
+                if is_no_progress(result_history, call_key, result_hash):
                     logger.warning("No-progress loop: same call producing same result")
                     self._log_error_lesson(
                         f"No-progress loop: {response.tool_calls[0].name}",
@@ -1121,7 +748,7 @@ class Agent:
                 error_type = classify_error(e)
                 logger.error("Stream error: %s [%s]", e, error_type)
 
-                # Context overflow → compact and retry the iteration
+                # Context overflow -> compact and retry the iteration
                 if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
                     overflow_retries += 1
                     logger.info("Stream overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
@@ -1201,9 +828,9 @@ class Agent:
                 tool_results, result_hash = await self._execute_tools(tool_calls)
 
                 # No-progress detection: same call + same result = stuck
-                batch_fps = [_tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
+                batch_fps = [tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
                 call_key = ":".join(sorted(batch_fps))
-                if _is_no_progress(result_history, call_key, result_hash):
+                if is_no_progress(result_history, call_key, result_hash):
                     logger.warning("No-progress loop (stream): same call producing same result")
                     no_progress_msg = (
                         f"Kechirasiz, {tool_calls[0].name} "

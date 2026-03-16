@@ -23,7 +23,10 @@ def register_prompt_section(name: str, content: str) -> None:
 
 
 def register_template_var(key: str, value: str) -> None:
-    """Register a custom template variable for prompt injection."""
+    """Register a custom template variable for prompt injection.
+
+    Occurrences of ``key`` in the assembled prompt are replaced with ``value``.
+    """
     _plugin_template_vars[key] = value
 
 

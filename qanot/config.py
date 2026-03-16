@@ -13,6 +13,8 @@ _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
 @dataclass
 class PluginConfig:
+    """Configuration for a single plugin entry."""
+
     name: str
     enabled: bool = True
     config: dict = field(default_factory=dict)
@@ -47,6 +49,8 @@ class AgentDefinition:
 
 @dataclass
 class Config:
+    """Top-level configuration for a Qanot AI bot instance."""
+
     bot_token: str = ""
     # Legacy single-provider fields (still supported)
     provider: str = "anthropic"
@@ -131,7 +135,20 @@ class Config:
 
 
 def load_config(path: str | None = None) -> Config:
-    """Load configuration from JSON file."""
+    """Load configuration from a JSON file and return a Config dataclass.
+
+    Args:
+        path: Path to config JSON. Falls back to ``$QANOT_CONFIG``
+            env var, then ``/data/config.json``.
+
+    Returns:
+        Fully parsed Config with resolved secrets, validated fields,
+        and nested ProviderConfig / AgentDefinition / PluginConfig lists.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: If required fields are missing or values are invalid.
+    """
     if path is None:
         import os
         path = os.environ.get("QANOT_CONFIG", "/data/config.json")

@@ -29,6 +29,7 @@ class PluginManager:
 
     @property
     def loaded_plugins(self) -> dict[str, Plugin]:
+        """Return a copy of the loaded plugins dict (name -> Plugin)."""
         return dict(self._plugins)
 
     async def load_all(

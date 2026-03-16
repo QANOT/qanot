@@ -227,7 +227,7 @@ class ContextTracker:
         return sanitized
 
     def append_to_buffer(self, human_msg: str, agent_summary: str) -> None:
-        """Append an exchange to the working buffer."""
+        """Append a human/agent exchange to the working buffer for recovery."""
         if not self.buffer_active:
             return
 
@@ -389,7 +389,7 @@ class CostTracker:
         cache_write: int = 0,
         cost: float = 0.0,
     ) -> None:
-        """Record usage for a user."""
+        """Record token usage and cost for a user from a single API call."""
         u = self._ensure_user(user_id)
         u["input_tokens"] += input_tokens
         u["output_tokens"] += output_tokens

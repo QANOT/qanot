@@ -30,12 +30,14 @@ class SessionWriter:
 
     @property
     def session_id(self) -> str:
+        """Return current session ID (date-based, lazily initialized)."""
         if self._session_id is None:
             self._session_id = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return self._session_id
 
     @property
     def session_path(self) -> Path:
+        """Return the file path for the current session's JSONL file."""
         return self.sessions_dir / f"{self.session_id}.jsonl"
 
     def _next_id(self) -> str:

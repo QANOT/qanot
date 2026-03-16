@@ -135,4 +135,5 @@ class ToolRegistry:
 
     @property
     def tool_names(self) -> list[str]:
+        """Return names of all registered tools."""
         return list(self._tools.keys())
