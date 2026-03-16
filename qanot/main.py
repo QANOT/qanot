@@ -16,6 +16,7 @@ from qanot.backup import backup_workspace
 from qanot.tools.builtin import register_builtin_tools
 from qanot.tools.cron import register_cron_tools
 from qanot.tools.doctor import register_doctor_tool
+from qanot.tools.documents import register_document_tools
 from qanot.tools.workspace import init_workspace
 from qanot.plugins.loader import load_plugins, shutdown_plugins
 
@@ -185,6 +186,9 @@ async def main() -> None:
         exec_allowlist=config.exec_allowlist,
         approval_callback=_approval_callback if config.exec_security == "cautious" else None,
     )
+
+    # Register document generation tools (Word, Excel)
+    register_document_tools(tool_registry, config.workspace_dir)
 
     # Register doctor diagnostics tool
     register_doctor_tool(tool_registry, config, context)
