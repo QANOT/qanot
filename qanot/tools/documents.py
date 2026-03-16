@@ -862,7 +862,218 @@ def register_document_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         handler=read_pptx,
     )
 
+    # ── edit_pptx ──
+    async def edit_pptx(params: dict) -> str:
+        """Edit existing PowerPoint — add slides, replace text, delete slides."""
+        try:
+            from pptx import Presentation
+            from pptx.util import Inches, Pt  # noqa: F401
+        except ImportError:
+            return json.dumps({"error": "python-pptx kutubxonasi o'rnatilmagan"})
+
+        filepath = params.get("file", "")
+        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
+        if not path.exists():
+            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+
+        prs = Presentation(str(path))
+        action = params.get("action", "add_slide")
+
+        if action == "add_slide":
+            slide_layout = prs.slide_layouts[1]  # Title and Content
+            slide = prs.slides.add_slide(slide_layout)
+            slide.shapes.title.text = params.get("title", "")
+            content = params.get("content", "")
+            if content and slide.placeholders[1]:
+                tf = slide.placeholders[1].text_frame
+                tf.text = ""
+                for i, line in enumerate(content.split("\n")):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if i == 0:
+                        tf.text = line.lstrip("- *")
+                    else:
+                        p = tf.add_paragraph()
+                        p.text = line.lstrip("- *")
+
+        elif action == "replace":
+            old_text = params.get("old_text", "")
+            new_text = params.get("new_text", "")
+            if not old_text:
+                return json.dumps({"error": "old_text kerak"})
+            count = 0
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            for run in para.runs:
+                                if old_text in run.text:
+                                    run.text = run.text.replace(old_text, new_text)
+                                    count += 1
+            if count == 0:
+                return json.dumps({"error": f"'{old_text}' topilmadi"})
+
+        elif action == "delete_slide":
+            slide_index = params.get("slide_index", -1)
+            if isinstance(slide_index, int) and 0 <= slide_index < len(prs.slides):
+                rId = prs.slides._sldIdLst[slide_index].rId
+                prs.part.drop_rel(rId)
+                del prs.slides._sldIdLst[slide_index]
+            else:
+                return json.dumps({"error": f"Noto'g'ri slide_index: {slide_index}"})
+
+        prs.save(str(path))
+        return json.dumps({
+            "status": "ok",
+            "message": f"{path.name} yangilandi",
+            "action": action,
+            "total_slides": len(prs.slides),
+        })
+
+    # ── edit_pdf ──
+    async def edit_pdf(params: dict) -> str:
+        """Edit PDF — add page with text, insert text, delete page, or merge."""
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return json.dumps({"error": "PyMuPDF kutubxonasi o'rnatilmagan"})
+
+        filepath = params.get("file", "")
+        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
+        if not path.exists():
+            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+
+        action = params.get("action", "add_page")
+        doc = fitz.open(str(path))
+
+        if action == "add_page":
+            content = params.get("content", "")
+            title = params.get("title", "")
+            # Add a new A4 page
+            page = doc.new_page(width=595, height=842)
+            y = 50
+            if title:
+                page.insert_text((50, y), title, fontsize=18, fontname="helv")
+                y += 30
+            for line in content.split("\n"):
+                if y > 780:
+                    page = doc.new_page(width=595, height=842)
+                    y = 50
+                page.insert_text((50, y), line.strip(), fontsize=11, fontname="helv")
+                y += 16
+
+        elif action == "insert_text":
+            page_num = params.get("page", 1) - 1  # 1-based to 0-based
+            x = params.get("x", 50)
+            y_pos = params.get("y", 50)
+            text = params.get("text", "")
+            fontsize = params.get("fontsize", 12)
+            if 0 <= page_num < len(doc):
+                page = doc[page_num]
+                page.insert_text((x, y_pos), text, fontsize=fontsize, fontname="helv")
+            else:
+                doc.close()
+                return json.dumps({"error": f"Sahifa {page_num + 1} topilmadi"})
+
+        elif action == "delete_page":
+            page_num = params.get("page", 1) - 1
+            if 0 <= page_num < len(doc):
+                doc.delete_page(page_num)
+            else:
+                doc.close()
+                return json.dumps({"error": f"Sahifa {page_num + 1} topilmadi"})
+
+        elif action == "merge":
+            merge_file = params.get("merge_file", "")
+            merge_path = Path(merge_file) if Path(merge_file).is_absolute() else Path(workspace_dir) / merge_file
+            if not merge_path.exists():
+                doc.close()
+                return json.dumps({"error": f"Fayl topilmadi: {merge_file}"})
+            doc2 = fitz.open(str(merge_path))
+            doc.insert_pdf(doc2)
+            doc2.close()
+
+        doc.save(str(path), incremental=False, deflate=True)
+        doc.close()
+
+        # Re-open to get accurate page count
+        doc_check = fitz.open(str(path))
+        total_pages = len(doc_check)
+        doc_check.close()
+
+        return json.dumps({
+            "status": "ok",
+            "message": f"{path.name} yangilandi",
+            "action": action,
+            "total_pages": total_pages,
+        })
+
+    # Register edit_pptx
+    registry.register(
+        name="edit_pptx",
+        description=(
+            "PowerPoint (.pptx) prezentatsiyani tahrirlash. Slayd qo'shish (add_slide), "
+            "matn almashtirish (replace), slayd o'chirish (delete_slide)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["file"],
+            "properties": {
+                "file": {"type": "string", "description": "Fayl nomi yoki to'liq path"},
+                "action": {
+                    "type": "string",
+                    "enum": ["add_slide", "replace", "delete_slide"],
+                    "description": "Harakat turi: add_slide, replace, delete_slide",
+                },
+                "title": {"type": "string", "description": "Slayd sarlavhasi (add_slide uchun)"},
+                "content": {"type": "string", "description": "Slayd matni (add_slide uchun)"},
+                "old_text": {"type": "string", "description": "Almashtirilishi kerak bo'lgan matn (replace uchun)"},
+                "new_text": {"type": "string", "description": "Yangi matn (replace uchun)"},
+                "slide_index": {
+                    "type": "integer",
+                    "description": "O'chiriladigan slayd indeksi, 0 dan boshlanadi (delete_slide uchun)",
+                },
+            },
+        },
+        handler=edit_pptx,
+    )
+
+    # Register edit_pdf
+    registry.register(
+        name="edit_pdf",
+        description=(
+            "PDF faylni tahrirlash. Sahifa qo'shish (add_page), matn yozish (insert_text), "
+            "sahifa o'chirish (delete_page), PDF birlashtirish (merge)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["file"],
+            "properties": {
+                "file": {"type": "string", "description": "Fayl nomi yoki to'liq path"},
+                "action": {
+                    "type": "string",
+                    "enum": ["add_page", "insert_text", "delete_page", "merge"],
+                    "description": "Harakat turi: add_page, insert_text, delete_page, merge",
+                },
+                "title": {"type": "string", "description": "Sahifa sarlavhasi (add_page uchun)"},
+                "content": {"type": "string", "description": "Sahifa matni (add_page uchun)"},
+                "page": {
+                    "type": "integer",
+                    "description": "Sahifa raqami, 1 dan boshlanadi (insert_text/delete_page uchun)",
+                },
+                "x": {"type": "number", "description": "X koordinata (insert_text uchun, standart: 50)"},
+                "y": {"type": "number", "description": "Y koordinata (insert_text uchun, standart: 50)"},
+                "text": {"type": "string", "description": "Yoziladigan matn (insert_text uchun)"},
+                "fontsize": {"type": "number", "description": "Shrift o'lchami (insert_text uchun, standart: 12)"},
+                "merge_file": {"type": "string", "description": "Birlashtirilishi kerak bo'lgan PDF fayl (merge uchun)"},
+            },
+        },
+        handler=edit_pdf,
+    )
+
     logger.info(
         "Document tools registered: create_docx, create_xlsx, read_docx, edit_docx, "
-        "read_xlsx, edit_xlsx, create_pdf, read_pdf, create_pptx, read_pptx"
+        "read_xlsx, edit_xlsx, create_pdf, read_pdf, create_pptx, read_pptx, "
+        "edit_pptx, edit_pdf"
     )
