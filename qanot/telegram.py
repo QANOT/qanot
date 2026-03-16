@@ -715,8 +715,8 @@ class TelegramAdapter:
                         f"Savings: {stats.get('savings_pct', 0)}% "
                         f"({stats.get('routed_cheap', 0)} cheap / {stats.get('total', 0)} total)"
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to get provider stats: %s", e)
 
         status_text = (
             f"**Session Status**\n\n"
@@ -814,8 +814,8 @@ class TelegramAdapter:
                 await callback.message.edit_text(
                     f"{callback.message.text}\n\n{status}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to update approval message: %s", e)
             await callback.answer(status)
             return
 
@@ -842,8 +842,8 @@ class TelegramAdapter:
             await callback.answer(f"✅ Model: {name}")
             try:
                 await callback.message.edit_text(f"✅ Model o'zgartirildi: **{name}** (`{model_id}`)", parse_mode="Markdown")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to update model switch message: %s", e)
             return
 
         # Unknown callback
@@ -1140,8 +1140,8 @@ class TelegramAdapter:
                                     message_id=sent_msg_id,
                                     text=accumulated[:MAX_MSG_LEN],
                                 )
-                            except Exception:
-                                pass  # Edit failures are expected (unchanged text)
+                            except Exception as e:
+                                logger.debug("Partial edit skipped (unchanged text): %s", e)
                         last_flush = now
 
                 elif event.type == "done":
@@ -1158,8 +1158,8 @@ class TelegramAdapter:
                     chat_id=chat_id, message_id=sent_msg_id,
                     text=html[:MAX_MSG_LEN], parse_mode=ParseMode.HTML,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Final partial edit failed: %s", e)
             # Send remaining chunks if text exceeds limit
             if len(html) > MAX_MSG_LEN:
                 for chunk in _split_text(html[MAX_MSG_LEN:]):
@@ -1245,8 +1245,8 @@ class TelegramAdapter:
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
             ))
-        except Exception:
-            pass  # Reactions may not be available in all chats
+        except Exception as e:
+            logger.debug("Reaction unavailable in chat %s: %s", chat_id, e)
 
     # ── Proactive & lifecycle ────────────────────────────────
 
@@ -1296,7 +1296,11 @@ class TelegramAdapter:
             self.config.stream_flush_interval,
         )
         await self._register_commands()
-        asyncio.create_task(self._proactive_loop())
+        _proactive_task = asyncio.create_task(self._proactive_loop())
+        _proactive_task.add_done_callback(
+            lambda t: logger.warning("Proactive loop failed: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
 
         if self.config.telegram_mode == "webhook" and self.config.webhook_url:
             await self._start_webhook()

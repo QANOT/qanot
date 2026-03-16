@@ -274,8 +274,8 @@ async def _send_typing_to_group(config: "Config", agent_id: str) -> None:
     try:
         bot = await _get_group_bot(config, agent_id)
         await bot.send_chat_action(chat_id=monitor_group, action="typing")
-    except Exception:
-        pass  # Non-fatal
+    except Exception as e:
+        logger.debug("Typing indicator in monitor group failed: %s", e)
 
 
 async def _mirror_to_group(

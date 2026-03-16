@@ -103,9 +103,13 @@ async def _hot_launch_agent_bot(
     )
     _active_agent_bots[agent_def.id] = agent_bot
 
-    asyncio.create_task(
+    _task = asyncio.create_task(
         agent_bot.start(),
         name=f"agent_bot_{agent_def.id}",
+    )
+    _task.add_done_callback(
+        lambda t: logger.warning("Agent bot '%s' task failed: %s", agent_def.id, t.exception())
+        if not t.cancelled() and t.exception() else None
     )
     logger.info("Hot-launched agent bot: %s (%s)", agent_def.id, agent_def.name or agent_def.id)
 
@@ -340,7 +344,11 @@ def register_agent_manager_tools(
             import os
             os.kill(os.getpid(), signal.SIGTERM)
 
-        asyncio.create_task(_do_restart())
+        _restart_task = asyncio.create_task(_do_restart())
+        _restart_task.add_done_callback(
+            lambda t: logger.warning("Restart task failed: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
         return json.dumps({
             "status": "restarting",
             "reason": reason,

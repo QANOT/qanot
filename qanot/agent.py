@@ -925,8 +925,8 @@ class Agent:
                 self.config.workspace_dir,
                 user_id=str(self._current_user_id),
             )
-        except Exception:
-            pass  # Non-fatal
+        except Exception as e:
+            logger.debug("Failed to write error lesson to daily notes: %s", e)
 
     async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
         """Execute tool calls and return (tool_result blocks, combined result hash)."""

@@ -114,8 +114,8 @@ class AgentBot:
             try:
                 me = await self.bot.get_me()
                 self._bot_username = (me.username or "").lower()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to resolve bot username: %s", e)
         return self._bot_username
 
     def _is_group(self, message: Message) -> bool:
@@ -417,9 +417,13 @@ async def start_agent_bots(
         bots.append(agent_bot)
 
         # Start polling in background
-        asyncio.create_task(
+        _task = asyncio.create_task(
             agent_bot.start(),
             name=f"agent_bot_{agent_def.id}",
+        )
+        _task.add_done_callback(
+            lambda t, _id=agent_def.id: logger.warning("Agent bot '%s' task failed: %s", _id, t.exception())
+            if not t.cancelled() and t.exception() else None
         )
         logger.info(
             "Agent bot launched: %s (%s)",

@@ -250,7 +250,11 @@ async def main() -> None:
         )
 
         def _on_memory_write(content: str, source: str) -> None:
-            asyncio.create_task(rag_indexer.index_text(content, source=source))
+            task = asyncio.create_task(rag_indexer.index_text(content, source=source))
+            task.add_done_callback(
+                lambda t: logger.warning("RAG index task failed: %s", t.exception())
+                if not t.cancelled() and t.exception() else None
+            )
 
         add_write_hook(_on_memory_write)
 
@@ -307,8 +311,8 @@ async def main() -> None:
         try:
             if cid := agent.current_chat_id:
                 await telegram.send_message(cid, text)
-        except Exception:
-            pass  # Non-fatal
+        except Exception as e:
+            logger.debug("Failed to send notification to user: %s", e)
 
     for uid in config.allowed_users:
         set_notify_callback(str(uid), _notify_user)
