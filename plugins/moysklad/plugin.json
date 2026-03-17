@@ -1,0 +1,8 @@
+{
+    "name": "moysklad",
+    "version": "1.0.0",
+    "description": "MoySklad — tovarlar, ombor, sotuvlar, xaridlar, hisobotlar",
+    "author": "Qanot AI",
+    "dependencies": ["aiohttp"],
+    "required_config": ["login", "password"]
+}
