@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # Qanot AI — production deploy script
 # Usage: ./scripts/deploy.sh [qanot|cloud|all] [--rebuild]
-#
-# qanot  — deploy framework (bot image + restart containers)
-# cloud  — deploy qanotcloud (platform + connect app + miniapp)
-# all    — deploy both (default)
 set -euo pipefail
 
 SERVER="root@46.62.250.72"
@@ -21,7 +17,7 @@ deploy_qanot() {
 
     echo "=== Qanot Framework Deploy ==="
 
-    echo "[1/4] Syncing source..."
+    echo "[1/5] Syncing source..."
     rsync -az --delete \
         --exclude='__pycache__' --exclude='.pytest_cache' --exclude='*.pyc' \
         --exclude='.git' --exclude='tests/' --exclude='scripts/' \
@@ -33,11 +29,11 @@ deploy_qanot() {
         "$LOCAL/templates/" "$SERVER:$REMOTE/templates/"
     echo "   Done."
 
-    echo "[2/4] Building image..."
+    echo "[2/5] Building image..."
     ssh "$SERVER" "cd $REMOTE && docker build $REBUILD -t qanot-bot:latest . 2>&1 | tail -3"
     echo "   Done."
 
-    echo "[3/4] Verifying..."
+    echo "[3/5] Verifying..."
     ssh "$SERVER" "docker run --rm qanot-bot:latest python -c '
 from qanot.agent import Agent
 from qanot.registry import ToolRegistry
@@ -45,17 +41,52 @@ print(\"core OK\")
 '" 2>&1
     echo "   Done."
 
-    echo "[4/4] Restarting bots..."
-    local BOTS
-    BOTS=$(ssh "$SERVER" "docker ps --filter 'name=qanot-bot-' --format '{{.Names}}'" 2>/dev/null || true)
-    if [ -n "$BOTS" ]; then
-        for bot in $BOTS; do
-            ssh "$SERVER" "docker restart $bot" 2>/dev/null
-            echo "   $bot"
-        done
-    else
-        echo "   No running bots."
-    fi
+    echo "[4/5] Recreating bot containers..."
+    ssh "$SERVER" 'bash -s' << 'REMOTE_SCRIPT'
+for name in $(docker ps -a --filter "name=qanot-bot-" --format "{{.Names}}" 2>/dev/null); do
+    # Save env vars (filter out Python/system ones)
+    envs=""
+    while IFS= read -r line; do
+        key="${line%%=*}"
+        case "$key" in
+            PATH|LANG|GPG_KEY|PYTHON_VERSION|PYTHON_SHA256|PYTHON_PIP_VERSION|PYTHON_SETUPTOOLS_VERSION) continue ;;
+            *) envs="$envs -e $line" ;;
+        esac
+    done < <(docker inspect "$name" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+
+    # Save volume mounts
+    vols=$(docker inspect "$name" --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}:{{.Mode}} {{end}}' 2>/dev/null)
+
+    # Save network
+    net=$(docker inspect "$name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null)
+    net=${net:-qanot-cloud-net}
+
+    # Stop and remove
+    docker stop "$name" >/dev/null 2>&1 || true
+    docker rm "$name" >/dev/null 2>&1 || true
+
+    # Recreate with new image
+    docker run -d --name "$name" \
+        --user 1000:1000 \
+        $envs \
+        $vols \
+        --memory=256m --cpus=0.25 --pids-limit=100 \
+        --cap-drop=ALL --security-opt=no-new-privileges \
+        --network="$net" \
+        --restart=unless-stopped \
+        qanot-bot:latest >/dev/null 2>&1
+
+    echo "   $name recreated"
+done
+REMOTE_SCRIPT
+    echo "   Done."
+
+    echo "[5/5] Health check..."
+    sleep 8
+    ssh "$SERVER" 'for name in $(docker ps --filter "name=qanot-bot-" --format "{{.Names}}" 2>/dev/null); do
+        status=$(docker inspect "$name" --format "{{.State.Status}}" 2>/dev/null)
+        echo "   $name: $status"
+    done'
     echo ""
 }
 
@@ -78,20 +109,14 @@ deploy_cloud() {
 
     echo "[3/4] Updating connect app + miniapp..."
     ssh "$SERVER" "cp $REMOTE/connect/app.py /var/www/qanot.topkey.uz/connect/app.py 2>/dev/null || true"
-    ssh "$SERVER" "cp $REMOTE/miniapp/connect/index.html /var/www/plane.topkey.uz/miniapp/connect/index.html 2>/dev/null || true"
-    # Restart connect app
-    ssh "$SERVER" "fuser -k 8090/tcp 2>/dev/null; sleep 1; cd /var/www/qanot.topkey.uz/connect && source /root/.env.connect 2>/dev/null && nohup uvicorn app:app --host 127.0.0.1 --port 8090 > /var/log/qanot-connect.log 2>&1 &"
+    ssh "$SERVER" "cp -r $REMOTE/miniapp/connect/ /var/www/plane.topkey.uz/miniapp/connect/ 2>/dev/null || true"
+    ssh "$SERVER" "systemctl restart qanot-connect 2>/dev/null || (fuser -k 8090/tcp 2>/dev/null; sleep 1; cd /var/www/qanot.topkey.uz/connect && source /root/.env.connect 2>/dev/null && nohup uvicorn app:app --host 127.0.0.1 --port 8090 > /var/log/qanot-connect.log 2>&1 &)"
     echo "   Done."
 
     echo "[4/4] Verifying..."
     sleep 3
-    local STATUS
-    STATUS=$(ssh "$SERVER" "docker logs docker-platform-1 --since=5s 2>&1 | grep -c 'startup complete'" 2>/dev/null || echo "0")
-    if [ "$STATUS" -gt 0 ]; then
-        echo "   Platform OK"
-    else
-        echo "   Platform may need attention — check logs"
-    fi
+    ssh "$SERVER" "curl -s -o /dev/null -w 'platform: %{http_code}' http://localhost:8010/docs 2>/dev/null; echo ''"
+    ssh "$SERVER" "curl -s -o /dev/null -w 'connect:  %{http_code}' http://localhost:8090/ibox?user_id=test 2>/dev/null; echo ''"
     echo ""
 }
 
