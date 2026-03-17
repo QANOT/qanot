@@ -232,11 +232,14 @@ def _check_required_config(manifest: PluginManifest, config: dict) -> list[str]:
 
 
 async def _load_from_path(plugin_dir: Path, config: dict) -> Plugin | None:
-    """Load a plugin from a directory containing plugin.py."""
+    """Load a plugin from a directory containing plugin.py or __init__.py."""
     plugin_file = plugin_dir / "plugin.py"
     if not plugin_file.exists():
-        logger.error("No plugin.py found in %s", plugin_dir)
-        return None
+        # Fallback to __init__.py (e.g. cloud_reporter uses reporter.py via __init__)
+        plugin_file = plugin_dir / "__init__.py"
+        if not plugin_file.exists():
+            logger.error("No plugin.py or __init__.py found in %s", plugin_dir)
+            return None
 
     # Add plugin dir to path temporarily
     str_dir = str(plugin_dir)
