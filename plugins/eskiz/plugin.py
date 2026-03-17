@@ -323,7 +323,7 @@ class QanotPlugin(Plugin):
                              {"type": "object", "properties": {}}, get_nicknames))
 
         # ═══════════════════════════════════════
-        # SHABLONLAR (Templates) — 1 tool
+        # SHABLONLAR (Templates) — 2 tools
         # ═══════════════════════════════════════
 
         async def get_templates(p: dict) -> str:
@@ -334,6 +334,17 @@ class QanotPlugin(Plugin):
         tools.append(ToolDef("eskiz_get_templates",
                              "SMS shablonlar ro'yxati va ularning holati.",
                              {"type": "object", "properties": {}}, get_templates))
+
+        async def submit_template(p: dict) -> str:
+            try:
+                return self._ok(await c.post("user/template", form={"template": p["template"]}))
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef("eskiz_submit_template",
+                             "Yangi SMS shablon yuborish (moderatsiyaga). Matn kiritiladi.",
+                             {"type": "object", "required": ["template"], "properties": {
+                                 "template": {"type": "string", "description": "Shablon matni (masalan: 'Sizning kodingiz: {code}')"},
+                             }}, submit_template))
 
         # ═══════════════════════════════════════
         # HISOBOTLAR (Reports) — 3 tools
