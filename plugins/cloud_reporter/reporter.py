@@ -160,6 +160,18 @@ class CloudReporterPlugin(Plugin):
             self._counter.cost += data["cost"]
 
     # ------------------------------------------------------------------
+    # Hooks — called by agent loop automatically
+    # ------------------------------------------------------------------
+
+    async def on_pre_turn(self, user_id: str, message: str) -> None:
+        """Record incoming message."""
+        self._counter.messages_in += 1
+
+    async def on_post_turn(self, user_id: str, user_message: str, response: str) -> None:
+        """Record outgoing message."""
+        self._counter.messages_out += 1
+
+    # ------------------------------------------------------------------
     # Public API for direct integration (not via tool calling)
     # ------------------------------------------------------------------
 
