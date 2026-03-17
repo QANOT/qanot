@@ -1,0 +1,8 @@
+{
+    "name": "eskiz",
+    "version": "1.0.0",
+    "description": "Eskiz SMS gateway — xabar yuborish, holat tekshirish, balans, hisobotlar",
+    "author": "Qanot AI",
+    "dependencies": ["aiohttp"],
+    "required_config": ["email", "password"]
+}
