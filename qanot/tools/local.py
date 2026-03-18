@@ -19,7 +19,7 @@ CBU_URL = "https://cbu.uz/ru/arkhiv-kursov-valyut/json/"
 IKPU_URL = "https://tasnif.soliq.uz/api/cl-api/class/search"
 
 
-def register_uzbek_tools(registry: ToolRegistry) -> None:
+def register_local_tools(registry: ToolRegistry) -> None:
     """Register Uzbekistan-specific business tools."""
 
     # ═══════════════════════════════════════
@@ -320,7 +320,7 @@ def register_uzbek_tools(registry: ToolRegistry) -> None:
         handler=calculate_tax,
     )
 
-    logger.info("Uzbek business tools registered: currency_rate, ikpu_search, payment_link, tax_calculator")
+    logger.info("Local business tools registered: currency_rate, ikpu_search, payment_link, tax_calculator")
 
 
 # Note: IKPU API (tasnif.soliq.uz) requires BearerToken auth.

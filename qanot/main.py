@@ -195,8 +195,8 @@ async def main() -> None:
     register_doctor_tool(tool_registry, config, context)
 
     # Register Uzbekistan business tools (currency, IKPU, payments, tax calculator)
-    from qanot.tools.uzbek import register_uzbek_tools
-    register_uzbek_tools(tool_registry)
+    from qanot.tools.local import register_local_tools
+    register_local_tools(tool_registry)
 
     # Register web search tools (only if Brave API key is configured)
     if config.brave_api_key:
