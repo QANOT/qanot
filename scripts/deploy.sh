@@ -42,63 +42,8 @@ print(\"core OK\")
     echo "   Done."
 
     echo "[4/5] Recreating bot containers..."
-    ssh "$SERVER" 'python3 << '"'"'PYSCRIPT'"'"'
-import subprocess, json
-
-# Find all qanot-bot containers
-result = subprocess.run(
-    ["docker", "ps", "-a", "--filter", "name=qanot-bot-", "--format", "{{.Names}}"],
-    capture_output=True, text=True
-)
-names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
-
-if not names:
-    print("   No bot containers found.")
-else:
-    for name in names:
-        # Get container config
-        info = json.loads(subprocess.run(
-            ["docker", "inspect", name], capture_output=True, text=True
-        ).stdout)[0]
-
-        # Extract env vars (skip system ones)
-        skip = {"PATH", "LANG", "GPG_KEY", "PYTHON_VERSION", "PYTHON_SHA256",
-                "PYTHON_PIP_VERSION", "PYTHON_SETUPTOOLS_VERSION", "PYTHON_GET_PIP_URL",
-                "PYTHON_GET_PIP_SHA256"}
-        env_args = []
-        for e in info["Config"].get("Env", []):
-            key = e.split("=", 1)[0]
-            if key not in skip:
-                env_args.extend(["-e", e])
-
-        # Extract volumes
-        vol_args = []
-        for m in info.get("Mounts", []):
-            mode = m.get("Mode", "rw") or "rw"
-            vol_args.extend(["-v", f"{m['Source']}:{m['Destination']}:{mode}"])
-
-        # Extract network
-        networks = list(info.get("NetworkSettings", {}).get("Networks", {}).keys())
-        net = networks[0] if networks else "qanot-cloud-net"
-
-        # Stop and remove
-        subprocess.run(["docker", "stop", name], capture_output=True)
-        subprocess.run(["docker", "rm", name], capture_output=True)
-
-        # Recreate
-        cmd = ["docker", "run", "-d", "--name", name, "--user", "1000:1000"] + \
-              env_args + vol_args + \
-              ["--memory=256m", "--cpus=0.25", "--pids-limit=100",
-               "--cap-drop=ALL", "--security-opt=no-new-privileges",
-               f"--network={net}", "--restart=unless-stopped",
-               "qanot-bot:latest"]
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            print(f"   {name} recreated")
-        else:
-            print(f"   {name} FAILED: {r.stderr[:100]}")
-PYSCRIPT
-'
+    scp -q "$(cd "$(dirname "$0")" && pwd)/recreate_containers.py" "$SERVER:/tmp/recreate_containers.py"
+    ssh "$SERVER" "python3 /tmp/recreate_containers.py"
     echo "   Done."
 
     echo "[5/5] Health check..."
