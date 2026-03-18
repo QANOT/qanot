@@ -320,9 +320,311 @@ def register_local_tools(registry: ToolRegistry) -> None:
         handler=calculate_tax,
     )
 
-    logger.info("Local business tools registered: currency_rate, ikpu_search, payment_link, tax_calculator")
+    # ═══════════════════════════════════════
+    # HUJJAT GENERATORI (Document templates)
+    # ═══════════════════════════════════════
 
+    async def generate_document(params: dict) -> str:
+        """Biznes hujjat yaratish — shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma."""
+        doc_type = params.get("type", "shartnoma")
+        from datetime import datetime
 
-# Note: IKPU API (tasnif.soliq.uz) requires BearerToken auth.
-# Current implementation tries public endpoint which may not work.
-# TODO: Add token-based auth when IKPU credentials are available.
+        # Common fields
+        company = params.get("company", "")
+        inn = params.get("inn", "")
+        director = params.get("director", "")
+        address = params.get("address", "")
+        bank = params.get("bank", "")
+        account = params.get("account", "")
+        mfo = params.get("mfo", "")
+        counterparty = params.get("counterparty", "")
+        counterparty_inn = params.get("counterparty_inn", "")
+        counterparty_director = params.get("counterparty_director", "")
+        counterparty_address = params.get("counterparty_address", "")
+        counterparty_bank = params.get("counterparty_bank", "")
+        counterparty_account = params.get("counterparty_account", "")
+        counterparty_mfo = params.get("counterparty_mfo", "")
+        amount = params.get("amount", 0)
+        description = params.get("description", "")
+        date = params.get("date", datetime.now().strftime("%d.%m.%Y"))
+        number = params.get("number", "1")
+        city = params.get("city", "Toshkent")
+
+        if not company or not counterparty:
+            return json.dumps({"error": "company va counterparty kiritilishi shart"})
+
+        amount_str = f"{amount:,.0f}" if amount else "___________"
+        blank = "_______________"
+
+        def rekvizit(name, stir, addr, bnk, acc, mf, dir_name):
+            return (
+                f"{name}\n"
+                f"Manzil: {addr or blank}\n"
+                f"STIR: {stir or blank}\n"
+                f"H/r: {acc or blank}\n"
+                f"Bank: {bnk or blank}\n"
+                f"MFO: {mf or blank}\n"
+                f"Rahbar: {dir_name or blank}\n"
+                f"\n_______________ / {dir_name or blank} /\n"
+                f"      M.O."
+            )
+
+        if doc_type == "shartnoma":
+            valid_until = params.get("valid_until", blank)
+            content = (
+                f"SHARTNOMA No {number}\n\n"
+                f"{city} shahri{' ' * 40}{date}\n\n"
+                f"{company} (keyingi o'rinlarda \"Buyurtmachi\" deb yuritiladi), "
+                f"STIR {inn or blank}, rahbar {director or blank} shaxsida, "
+                f"bir tomondan, va\n\n"
+                f"{counterparty} (keyingi o'rinlarda \"Bajaruvchi\" deb yuritiladi), "
+                f"STIR {counterparty_inn or blank}, rahbar {counterparty_director or blank} shaxsida, "
+                f"ikkinchi tomondan,\n\n"
+                f"quyidagilar to'g'risida mazkur shartnomani tuzdilar:\n\n"
+                f"1. SHARTNOMA PREDMETI\n\n"
+                f"1.1. Bajaruvchi quyidagi ish/xizmatlarni bajarishni o'z zimmasiga oladi:\n"
+                f"{description or blank}\n\n"
+                f"1.2. Shartnomaning umumiy qiymati {amount_str} (so'm) ni tashkil etadi.\n\n"
+                f"2. TOMONLARNING HUQUQ VA MAJBURIYATLARI\n\n"
+                f"2.1. Bajaruvchi majburiyatlari:\n"
+                f"  a) ishni sifatli va belgilangan muddatda bajarish;\n"
+                f"  b) Buyurtmachiga ish haqida o'z vaqtida xabar berish;\n"
+                f"  c) bajarilgan ish natijalarini topshirish.\n\n"
+                f"2.2. Buyurtmachi majburiyatlari:\n"
+                f"  a) ish uchun zarur sharoitlarni yaratish;\n"
+                f"  b) to'lovni belgilangan muddatda amalga oshirish;\n"
+                f"  c) bajarilgan ishni qabul qilish.\n\n"
+                f"3. NARX VA TO'LOV TARTIBI\n\n"
+                f"3.1. To'lov bank o'tkazmasi orqali amalga oshiriladi.\n"
+                f"3.2. To'lov muddati: dalolatnoma imzolanganidan keyin 5 (besh) bank kuni ichida.\n\n"
+                f"4. JAVOBGARLIK\n\n"
+                f"4.1. Tomonlar o'z majburiyatlarini bajarmagan yoki lozim darajada bajarmagan "
+                f"taqdirda O'zR Fuqarolik Kodeksiga muvofiq javobgar bo'ladilar.\n"
+                f"4.2. Kechiktirilgan har bir kun uchun penya: shartnoma summasining 0,5% "
+                f"miqdorida, lekin 50% dan oshmasligi kerak.\n\n"
+                f"5. NIZOLARNI HAL QILISH TARTIBI\n\n"
+                f"5.1. Tomonlar o'rtasidagi nizolar muzokaralar yo'li bilan hal qilinadi.\n"
+                f"5.2. Kelishuvga erishilmagan taqdirda nizo iqtisodiy sudda ko'riladi.\n"
+                f"5.3. Sudgacha tartib (talabnoma) majburiydir.\n\n"
+                f"6. SHARTNOMA MUDDATI\n\n"
+                f"6.1. Shartnoma imzolangan kundan boshlab kuchga kiradi.\n"
+                f"6.2. Shartnoma muddati: {valid_until} gacha.\n\n"
+                f"7. YAKUNIY QOIDALAR\n\n"
+                f"7.1. Shartnomaga o'zgartirish faqat tomonlarning yozma kelishuviga asosan kiritiladi.\n"
+                f"7.2. Shartnoma 2 (ikki) nusxada tuzilgan, har bir tomon uchun bittadan.\n"
+                f"7.3. Shartnomada ko'rsatilmagan masalalar O'zR amaldagi qonunchiligiga muvofiq tartibga solinadi.\n\n"
+                f"8. TOMONLARNING REKVIZITLARI VA IMZOLARI\n\n"
+                f"Buyurtmachi:\n{rekvizit(company, inn, address, bank, account, mfo, director)}\n\n"
+                f"Bajaruvchi:\n{rekvizit(counterparty, counterparty_inn, counterparty_address, counterparty_bank, counterparty_account, counterparty_mfo, counterparty_director)}"
+            )
+
+        elif doc_type == "faktura":
+            items = params.get("items", [])
+            items_text = ""
+            total = 0
+            for i, item in enumerate(items, 1):
+                name = item.get("name", "")
+                qty = item.get("quantity", 1)
+                unit = item.get("unit", "dona")
+                price = item.get("price", 0)
+                summa = qty * price
+                vat_item = round(summa * 12 / 100)
+                total += summa
+                items_text += f"  {i}. {name} | {unit} | {qty} | {price:,.0f} | {summa:,.0f} | 12% | {vat_item:,.0f} | {summa + vat_item:,.0f}\n"
+
+            if not items_text:
+                total = amount
+
+            vat_total = round(total * 12 / 100)
+            contract_ref = params.get("contract_number", blank)
+            contract_date = params.get("contract_date", blank)
+
+            content = (
+                f"HISOBVARAQ-FAKTURA No {number}\n"
+                f"Sana: {date}\n\n"
+                f"Shartnoma: No {contract_ref} sanasi {contract_date}\n\n"
+                f"SOTUVCHI (yetkazib beruvchi):\n"
+                f"  Nomi: {company}\n  Manzili: {address or blank}\n"
+                f"  STIR: {inn or blank}\n  H/r: {account or blank}\n"
+                f"  Bank: {bank or blank}\n  MFO: {mfo or blank}\n\n"
+                f"XARIDOR (oluvchi):\n"
+                f"  Nomi: {counterparty}\n  Manzili: {counterparty_address or blank}\n"
+                f"  STIR: {counterparty_inn or blank}\n  H/r: {counterparty_account or blank}\n"
+                f"  Bank: {counterparty_bank or blank}\n  MFO: {counterparty_mfo or blank}\n\n"
+                f"No | Tovar nomi | Birlik | Miqdor | Narx | Qiymat (QQSsiz) | QQS % | QQS summa | Qiymat (QQS bilan)\n"
+                f"{'=' * 90}\n"
+                f"{items_text}"
+                f"{'=' * 90}\n"
+                f"  Jami (QQSsiz): {total:,.0f} so'm\n"
+                f"  QQS (12%): {vat_total:,.0f} so'm\n"
+                f"  JAMI (QQS bilan): {total + vat_total:,.0f} so'm\n\n"
+                f"Rahbar: _______________ / {director or blank} /\n"
+                f"Bosh hisobchi: _______________ / {blank} /\n"
+                f"M.O."
+            )
+
+        elif doc_type == "dalolatnoma":
+            contract_ref = params.get("contract_number", blank)
+            contract_date = params.get("contract_date", blank)
+            period_from = params.get("period_from", blank)
+            period_to = params.get("period_to", blank)
+
+            content = (
+                f"BAJARILGAN ISHLAR (KO'RSATILGAN XIZMATLAR) DALOLATNOMASI No {number}\n\n"
+                f"Sana: {date}\n"
+                f"Shartnoma asosi: No {contract_ref} sanasi {contract_date}\n"
+                f"Ish bajarilgan davr: {period_from} dan {period_to} gacha\n\n"
+                f"Buyurtmachi: {company}, STIR {inn or blank}\n"
+                f"Bajaruvchi: {counterparty}, STIR {counterparty_inn or blank}\n\n"
+                f"BAJARILGAN ISHLAR:\n\n"
+                f"{description or blank}\n\n"
+                f"Ish/xizmat qiymati: {amount_str} so'm\n"
+                f"QQS (12%): {round(amount * 12 / 100):,.0f} so'm\n" if amount else ""
+                f"Jami: {round(amount * 1.12):,.0f} so'm\n\n" if amount else "\n"
+                f"Ish sifati bo'yicha Buyurtmachining da'volari: YO'Q\n\n"
+                f"Buyurtmachi:\n"
+                f"{company}\n"
+                f"Rahbar: _______________ / {director or blank} /\n"
+                f"M.O.\n\n"
+                f"Bajaruvchi:\n"
+                f"{counterparty}\n"
+                f"Rahbar: _______________ / {counterparty_director or blank} /\n"
+                f"M.O."
+            )
+
+        elif doc_type == "ishonchnoma":
+            person = params.get("person", "")
+            passport = params.get("passport", "")
+            position = params.get("position", "")
+            purpose = params.get("purpose", description)
+            valid_until = params.get("valid_until", blank)
+            supplier = params.get("supplier", counterparty)
+
+            content = (
+                f"ISHONCHNOMA No {number}\n"
+                f"(Tovar-moddiy boyliklarni olishga)\n\n"
+                f"Berilgan sana: {date}\n"
+                f"Haqiqiylik muddati: {valid_until} gacha\n\n"
+                f"Korxona: {company}\n"
+                f"Manzil: {address or blank}\n"
+                f"STIR: {inn or blank}\n\n"
+                f"Ishonchnoma berildi:\n"
+                f"  F.I.Sh.: {person or blank}\n"
+                f"  Lavozimi: {position or blank}\n"
+                f"  Pasport: {passport or blank}\n\n"
+                f"Mol yetkazib beruvchi: {supplier}\n"
+                f"Hujjat asosi: {purpose or f'Shartnoma No {blank}'}\n\n"
+                f"Olinadigan tovar-moddiy boyliklar:\n\n"
+                f"  No | Nomi | O'lchov birligi | Soni (yozuv bilan)\n"
+                f"  {'=' * 60}\n"
+                f"  1. {description or blank}\n\n"
+                f"Ishonchnomani olgan shaxsning imzosi: _______________\n\n"
+                f"Tasdiqlash:\n"
+                f"Rahbar: _______________ / {director or blank} /\n"
+                f"M.O."
+            )
+
+        elif doc_type == "talabnoma":
+            debt_amount = params.get("debt_amount", amount)
+            penalty_rate = params.get("penalty_rate", 0.5)
+            days_overdue = params.get("days_overdue", 0)
+            penalty = round(debt_amount * penalty_rate / 100 * days_overdue) if days_overdue else 0
+            total_claim = debt_amount + penalty
+            deadline = params.get("deadline", "10 (o'n) kun")
+            contract_ref = params.get("contract_number", blank)
+            contract_date = params.get("contract_date", blank)
+
+            content = (
+                f"TALABNOMA No {number}\n"
+                f"(Muddati o'tgan debitor qarzdorlikni to'lash to'g'risida)\n\n"
+                f"Sana: {date}\n\n"
+                f"Kimga: {counterparty}\n"
+                f"Manzil: {counterparty_address or blank}\n"
+                f"Rahbar: {counterparty_director or blank}\n\n"
+                f"Kimdan: {company}\n"
+                f"Manzil: {address or blank}\n"
+                f"STIR: {inn or blank}\n\n"
+                f"Hurmatli {counterparty_director or 'rahbar'}!\n\n"
+                f"Sizning tashkilotingiz bilan tuzilgan No {contract_ref} sanasi {contract_date} "
+                f"shartnomaga asosan, Siz quyidagi majburiyatni o'z vaqtida bajarmadingiz:\n\n"
+                f"{description or blank}\n\n"
+                f"Asosiy qarz summasi: {debt_amount:,.0f} so'm\n"
+            )
+            if penalty:
+                content += (
+                    f"Kechiktirilgan kunlar: {days_overdue}\n"
+                    f"Penya ({penalty_rate}% kuniga): {penalty:,.0f} so'm\n"
+                )
+            content += (
+                f"JAMI TALAB: {total_claim:,.0f} so'm\n\n"
+                f"Huquqiy asos: O'zR Fuqarolik Kodeksining 333, 334-moddalari.\n\n"
+                f"TALAB QILAMIZ:\n\n"
+                f"Yuqoridagi summani {deadline} ichida quyidagi rekvizitlarga o'tkazishingizni:\n"
+                f"  H/r: {account or blank}\n"
+                f"  Bank: {bank or blank}\n"
+                f"  MFO: {mfo or blank}\n\n"
+                f"Aks holda, O'zR Iqtisodiy Protsessual Kodeksiga muvofiq "
+                f"iqtisodiy sudga da'vo arizasi bilan murojaat qilamiz.\n\n"
+                f"Ilovalar:\n"
+                f"  1. Shartnoma nusxasi\n"
+                f"  2. Hisobvaraq-faktura nusxasi\n"
+                f"  3. Qarz hisob-kitobi\n\n"
+                f"Rahbar: _______________ / {director or blank} /\n"
+                f"M.O."
+            )
+        else:
+            return json.dumps({"error": f"Noma'lum hujjat turi: {doc_type}. shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma dan birini tanlang."})
+
+        # Return content for agent to use with create_docx or send directly
+        return json.dumps({
+            "type": doc_type,
+            "content": content,
+            "filename": f"{doc_type}_{number}_{date.replace('.', '-')}.txt",
+            "hint": "Bu matnni create_docx tool bilan DOCX faylga saqlash mumkin, yoki to'g'ridan-to'g'ri foydalanuvchiga ko'rsatish mumkin.",
+        }, ensure_ascii=False)
+
+    registry.register(
+        name="generate_document",
+        description="Rasmiy biznes hujjat yaratish: shartnoma, hisob-faktura, dalolatnoma, ishonchnoma, talabnoma. O'zR qonunchiligiga mos.",
+        parameters={
+            "type": "object",
+            "required": ["type", "company", "counterparty"],
+            "properties": {
+                "type": {"type": "string", "description": "Hujjat turi: shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma"},
+                "company": {"type": "string", "description": "Kompaniya nomi"},
+                "inn": {"type": "string", "description": "STIR (INN)"},
+                "director": {"type": "string", "description": "Rahbar F.I.Sh."},
+                "address": {"type": "string", "description": "Manzil"},
+                "bank": {"type": "string", "description": "Bank nomi"},
+                "account": {"type": "string", "description": "Hisob raqam"},
+                "mfo": {"type": "string", "description": "MFO"},
+                "counterparty": {"type": "string", "description": "Kontragent nomi"},
+                "counterparty_inn": {"type": "string", "description": "Kontragent STIR"},
+                "counterparty_director": {"type": "string", "description": "Kontragent rahbar F.I.Sh."},
+                "counterparty_address": {"type": "string", "description": "Kontragent manzil"},
+                "counterparty_bank": {"type": "string", "description": "Kontragent bank"},
+                "counterparty_account": {"type": "string", "description": "Kontragent hisob raqam"},
+                "counterparty_mfo": {"type": "string", "description": "Kontragent MFO"},
+                "amount": {"type": "number", "description": "Summa (so'mda)"},
+                "description": {"type": "string", "description": "Ish/xizmat/tovar tavsifi"},
+                "number": {"type": "string", "description": "Hujjat raqami"},
+                "date": {"type": "string", "description": "Sana (DD.MM.YYYY)"},
+                "city": {"type": "string", "description": "Shahar (default: Toshkent)"},
+                "valid_until": {"type": "string", "description": "Muddat (shartnoma/ishonchnoma uchun)"},
+                "contract_number": {"type": "string", "description": "Shartnoma raqami (faktura/dalolatnoma uchun)"},
+                "contract_date": {"type": "string", "description": "Shartnoma sanasi"},
+                "items": {"type": "array", "description": "Tovarlar (faktura uchun): [{name, quantity, unit, price}]",
+                          "items": {"type": "object", "properties": {"name": {"type": "string"}, "quantity": {"type": "number"}, "unit": {"type": "string"}, "price": {"type": "number"}}}},
+                "person": {"type": "string", "description": "Ishonchnoma oluvchi F.I.Sh."},
+                "passport": {"type": "string", "description": "Pasport"},
+                "position": {"type": "string", "description": "Lavozim"},
+                "debt_amount": {"type": "number", "description": "Qarz summasi (talabnoma uchun)"},
+                "penalty_rate": {"type": "number", "description": "Penya stavkasi % kuniga (default 0.5)"},
+                "days_overdue": {"type": "number", "description": "Kechiktirilgan kunlar soni"},
+                "deadline": {"type": "string", "description": "To'lov muddati (default: 10 kun)"},
+            },
+        },
+        handler=generate_document,
+    )
+
+    logger.info("Local business tools registered: currency_rate, ikpu_search, payment_link, tax_calculator, generate_document")
