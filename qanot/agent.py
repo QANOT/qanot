@@ -250,14 +250,18 @@ class Agent:
             except Exception as e:
                 logger.warning("RAG context injection failed: %s", e)
 
-        # Link understanding: auto-fetch URLs in user messages
+        # Link understanding: auto-fetch URLs in user messages (non-blocking, 3s max)
         if len(user_message.strip()) > 10:
             try:
                 from qanot.links import fetch_link_previews
 
-                link_context = await fetch_link_previews(user_message)
+                link_context = await asyncio.wait_for(
+                    fetch_link_previews(user_message), timeout=3.0,
+                )
                 if link_context:
                     user_message = f"{user_message}\n\n---\n{link_context}"
+            except asyncio.TimeoutError:
+                logger.debug("Link preview skipped (>3s timeout)")
             except Exception as e:
                 logger.debug("Link preview injection failed: %s", e)
 
