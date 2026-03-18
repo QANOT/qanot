@@ -36,6 +36,10 @@ MAX_TOTAL_CHARS = 150_000
 
 _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
 
+# Marker to split system prompt into cacheable (above) and dynamic (below) parts.
+# Anthropic provider uses this to set cache_control on the stable prefix.
+_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
+
 
 def build_system_prompt(
     workspace_dir: str = "/data/workspace",
@@ -153,13 +157,22 @@ def build_system_prompt(
         "All internal bookkeeping is invisible unless the user specifically asks about it."
     )
 
-    # Session info (included in both full and minimal)
+    # Plugin prompt sections (relatively stable — changes only when plugins added/removed)
+    for section in _plugin_prompt_sections:
+        _add(f"# {section['name']}\n\n{section['content']}")
+
+    # ── CACHE BOUNDARY MARKER ──
+    # Everything ABOVE this marker is relatively stable (changes rarely).
+    # Everything BELOW changes frequently (every message).
+    # Anthropic provider splits on this marker to optimize prompt caching.
+    parts.append(_CACHE_BOUNDARY)
+
+    # Session info — changes every request (context%, tokens, time)
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M:%S UTC")
+    time_str = now.strftime("%H:%M UTC")
 
     parts.append(
-        f"\n---\n\n"
         f"# Session Info\n"
         f"- **Date:** {date_str}\n"
         f"- **Time:** {time_str}\n"
@@ -168,10 +181,6 @@ def build_system_prompt(
         f"- **Total Tokens:** {total_tokens:,}\n"
         + ("- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n" if context_percent >= 50 else "")
     )
-
-    # Plugin prompt sections
-    for section in _plugin_prompt_sections:
-        _add(f"# {section['name']}\n\n{section['content']}")
 
     # Variable injection
     full = "\n\n---\n\n".join(parts)

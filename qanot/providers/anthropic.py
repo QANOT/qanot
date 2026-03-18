@@ -109,20 +109,54 @@ class AnthropicProvider(LLMProvider):
         ) / 1_000_000
 
     def _build_system_blocks(self, system: str) -> list[dict]:
-        """Build the system prompt block list, prepending OAuth identity block if needed."""
+        """Build the system prompt block list with cache-optimized splitting.
+
+        Splits system prompt on CACHE_BOUNDARY marker:
+        - Static prefix (SOUL, IDENTITY, AGENTS, TOOLS, plugins) → cache_control
+        - Dynamic suffix (Session Info, context %) → no cache_control
+
+        This maximizes Anthropic prompt cache hit rate by keeping the
+        stable prefix identical across calls.
+        """
+        from qanot.prompt import _CACHE_BOUNDARY
+
         blocks: list[dict] = []
+
         # OAuth tokens MUST include Claude Code identity for Opus/Sonnet access
         if self._is_oauth:
             blocks.append({
                 "type": "text",
                 "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+            })
+
+        # Split on cache boundary marker
+        if _CACHE_BOUNDARY in system:
+            static, dynamic = system.split(_CACHE_BOUNDARY, 1)
+            static = static.strip()
+            dynamic = dynamic.strip()
+
+            # Static part — cacheable (changes rarely)
+            if static:
+                blocks.append({
+                    "type": "text",
+                    "text": static,
+                    "cache_control": {"type": "ephemeral"},
+                })
+
+            # Dynamic part — NOT cached (changes every request)
+            if dynamic:
+                blocks.append({
+                    "type": "text",
+                    "text": dynamic,
+                })
+        else:
+            # Fallback: no boundary marker, cache entire prompt
+            blocks.append({
+                "type": "text",
+                "text": system,
                 "cache_control": {"type": "ephemeral"},
             })
-        blocks.append({
-            "type": "text",
-            "text": system,
-            "cache_control": {"type": "ephemeral"},
-        })
+
         return blocks
 
     async def chat(
