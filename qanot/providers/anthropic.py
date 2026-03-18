@@ -127,6 +127,7 @@ class AnthropicProvider(LLMProvider):
             blocks.append({
                 "type": "text",
                 "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+                "cache_control": {"type": "ephemeral"},
             })
 
         # Split on cache boundary marker

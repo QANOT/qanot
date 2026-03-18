@@ -119,33 +119,17 @@ def build_system_prompt(
         # 5. AGENTS.md
         _add(_read_file(ws / "AGENTS.md"))
 
-        # 6. SESSION-STATE.md (shared per-agent, OpenClaw-style)
-        if state := _read_file(ws / "SESSION-STATE.md"):
-            _add(f"# Current Session State\n\n{state}")
-
-        # 6b. MEMORY.md — persistent curated knowledge (injected for context)
-        if memory := _read_file(ws / "MEMORY.md"):
-            _add(f"# Your Long-Term Memory\n\n{memory}")
-
-        # 7. USER.md (per-user if exists, fallback to shared)
+        # 6. USER.md (per-user if exists, fallback to shared) — rarely changes
         user_md = _read_file(ws / "users" / str(user_id) / "USER.md") if user_id else ""
         if not user_md:
             user_md = _read_file(ws / "USER.md")
         _add(user_md)
 
-        # 8. BOOTSTRAP.md — first-run ritual (only if it exists)
+        # 7. BOOTSTRAP.md — first-run ritual (only if it exists) — static
         if bootstrap := _read_file(ws / "BOOTSTRAP.md"):
             _add(bootstrap)
 
-        # 9. Skill index (compact list of all available skills)
-        if skill_index:
-            _add(skill_index)
-
-        # 10. Active skill content (full content for skills matched this turn)
-        if active_skills_content:
-            _add(active_skills_content)
-
-    # Hardcoded behavioral rules (not in templates — cannot be overwritten by agent)
+    # Hardcoded behavioral rules — static
     parts.append(
         "## Tool Call Style\n"
         "Default: do not narrate routine tool calls (just call the tool silently).\n"
@@ -157,17 +141,33 @@ def build_system_prompt(
         "All internal bookkeeping is invisible unless the user specifically asks about it."
     )
 
-    # Plugin prompt sections (relatively stable — changes only when plugins added/removed)
+    # Plugin prompt sections — static (changes only when plugins added/removed)
     for section in _plugin_prompt_sections:
         _add(f"# {section['name']}\n\n{section['content']}")
 
     # ── CACHE BOUNDARY MARKER ──
-    # Everything ABOVE this marker is relatively stable (changes rarely).
-    # Everything BELOW changes frequently (every message).
-    # Anthropic provider splits on this marker to optimize prompt caching.
+    # Everything ABOVE = stable (SOUL, IDENTITY, TOOLS, AGENTS, USER, plugins)
+    # Everything BELOW = changes frequently (memory, session state, skills, session info)
     parts.append(_CACHE_BOUNDARY)
 
-    # Session info — changes every request (context%, tokens, time)
+    if mode == "full":
+        # SESSION-STATE.md — changes on every WAL write (DYNAMIC)
+        if state := _read_file(ws / "SESSION-STATE.md"):
+            _add(f"# Current Session State\n\n{state}")
+
+        # MEMORY.md — changes when durable facts saved (DYNAMIC)
+        if memory := _read_file(ws / "MEMORY.md"):
+            _add(f"# Your Long-Term Memory\n\n{memory}")
+
+        # Skill index — may change per turn
+        if skill_index:
+            _add(skill_index)
+
+        # Active skill content — changes per turn
+        if active_skills_content:
+            _add(active_skills_content)
+
+    # Session info — changes every request
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M UTC")
