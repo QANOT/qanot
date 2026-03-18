@@ -16,6 +16,12 @@ _SYSTEM_DIRS = frozenset({
     "C:\\Windows", "C:\\Program Files",  # Windows
 })
 
+# Files that should NEVER be written by the agent
+# config.json contains api_key, bot_token — agent writing here can break the bot
+_BLOCKED_FILENAMES = frozenset({
+    "config.json",
+})
+
 
 class SafeWriteError(Exception):
     """Raised when a file write is rejected for security reasons."""
@@ -62,6 +68,11 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
         return "Null byte in path"
 
     resolved = os.path.realpath(path)
+
+    # Block protected filenames (config.json etc.)
+    basename = os.path.basename(resolved)
+    if basename in _BLOCKED_FILENAMES:
+        return f"Protected file — cannot be modified by agent: {basename}"
 
     # Block system directories
     for sys_dir in _SYSTEM_DIRS:
