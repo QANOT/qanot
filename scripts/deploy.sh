@@ -42,43 +42,63 @@ print(\"core OK\")
     echo "   Done."
 
     echo "[4/5] Recreating bot containers..."
-    ssh "$SERVER" 'bash -s' << 'REMOTE_SCRIPT'
-for name in $(docker ps -a --filter "name=qanot-bot-" --format "{{.Names}}" 2>/dev/null); do
-    # Save env vars (filter out Python/system ones)
-    envs=""
-    while IFS= read -r line; do
-        key="${line%%=*}"
-        case "$key" in
-            PATH|LANG|GPG_KEY|PYTHON_VERSION|PYTHON_SHA256|PYTHON_PIP_VERSION|PYTHON_SETUPTOOLS_VERSION) continue ;;
-            *) envs="$envs -e $line" ;;
-        esac
-    done < <(docker inspect "$name" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    ssh "$SERVER" 'python3 << '"'"'PYSCRIPT'"'"'
+import subprocess, json
 
-    # Save volume mounts
-    vols=$(docker inspect "$name" --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}:{{.Mode}} {{end}}' 2>/dev/null)
+# Find all qanot-bot containers
+result = subprocess.run(
+    ["docker", "ps", "-a", "--filter", "name=qanot-bot-", "--format", "{{.Names}}"],
+    capture_output=True, text=True
+)
+names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
 
-    # Save network
-    net=$(docker inspect "$name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null)
-    net=${net:-qanot-cloud-net}
+if not names:
+    print("   No bot containers found.")
+else:
+    for name in names:
+        # Get container config
+        info = json.loads(subprocess.run(
+            ["docker", "inspect", name], capture_output=True, text=True
+        ).stdout)[0]
 
-    # Stop and remove
-    docker stop "$name" >/dev/null 2>&1 || true
-    docker rm "$name" >/dev/null 2>&1 || true
+        # Extract env vars (skip system ones)
+        skip = {"PATH", "LANG", "GPG_KEY", "PYTHON_VERSION", "PYTHON_SHA256",
+                "PYTHON_PIP_VERSION", "PYTHON_SETUPTOOLS_VERSION", "PYTHON_GET_PIP_URL",
+                "PYTHON_GET_PIP_SHA256"}
+        env_args = []
+        for e in info["Config"].get("Env", []):
+            key = e.split("=", 1)[0]
+            if key not in skip:
+                env_args.extend(["-e", e])
 
-    # Recreate with new image
-    docker run -d --name "$name" \
-        --user 1000:1000 \
-        $envs \
-        $vols \
-        --memory=256m --cpus=0.25 --pids-limit=100 \
-        --cap-drop=ALL --security-opt=no-new-privileges \
-        --network="$net" \
-        --restart=unless-stopped \
-        qanot-bot:latest >/dev/null 2>&1
+        # Extract volumes
+        vol_args = []
+        for m in info.get("Mounts", []):
+            mode = m.get("Mode", "rw") or "rw"
+            vol_args.extend(["-v", f"{m['Source']}:{m['Destination']}:{mode}"])
 
-    echo "   $name recreated"
-done
-REMOTE_SCRIPT
+        # Extract network
+        networks = list(info.get("NetworkSettings", {}).get("Networks", {}).keys())
+        net = networks[0] if networks else "qanot-cloud-net"
+
+        # Stop and remove
+        subprocess.run(["docker", "stop", name], capture_output=True)
+        subprocess.run(["docker", "rm", name], capture_output=True)
+
+        # Recreate
+        cmd = ["docker", "run", "-d", "--name", name, "--user", "1000:1000"] + \
+              env_args + vol_args + \
+              ["--memory=256m", "--cpus=0.25", "--pids-limit=100",
+               "--cap-drop=ALL", "--security-opt=no-new-privileges",
+               f"--network={net}", "--restart=unless-stopped",
+               "qanot-bot:latest"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            print(f"   {name} recreated")
+        else:
+            print(f"   {name} FAILED: {r.stderr[:100]}")
+PYSCRIPT
+'
     echo "   Done."
 
     echo "[5/5] Health check..."
