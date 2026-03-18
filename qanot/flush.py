@@ -52,6 +52,11 @@ MEMORY_FLUSH_PROMPT = (
 MEMORY_FLUSH_TOOL_NAMES = {"read_file", "write_file", "list_files", "memory_search"}
 
 
+FLUSH_MODEL = "claude-haiku-4-5-20251001"
+FLUSH_MAX_ITERS = 2
+FLUSH_RECENT_MESSAGES = 20  # Only send last N messages (not entire conversation)
+
+
 async def memory_flush(
     messages: list[dict],
     provider: LLMProvider,
@@ -64,6 +69,9 @@ async def memory_flush(
     Like OpenClaw's pre-compaction flush: gives the agent a chance to
     write important facts to memory files before context is lost.
     Only read/write tools are available during flush.
+
+    Cost optimization: uses Haiku model with only recent messages
+    instead of the full conversation with the primary model.
     """
     if len(messages) < 4:
         return  # Too little context to flush
@@ -83,12 +91,23 @@ async def memory_flush(
         logger.warning("No flush tools available, skipping memory flush")
         return
 
+    # Use cheap model for flush (Haiku instead of Sonnet/Opus)
+    original_model = provider.model
     try:
-        # Run up to 5 iterations (read existing -> write new)
-        flush_messages: list[dict] = list(messages)  # Copy current conversation
+        provider.model = FLUSH_MODEL
+    except (AttributeError, TypeError):
+        pass  # Provider doesn't support model override — use original
+
+    try:
+        # Only send recent messages to save tokens (older context is less relevant)
+        recent = messages[-FLUSH_RECENT_MESSAGES:] if len(messages) > FLUSH_RECENT_MESSAGES else list(messages)
+        # Ensure first message is from user (API requirement)
+        if recent and recent[0].get("role") != "user":
+            recent = [m for m in recent if m.get("role") == "user"][:1] + recent
+        flush_messages = recent
         flush_messages.append({"role": "user", "content": flush_prompt})
 
-        for _ in range(5):
+        for _ in range(FLUSH_MAX_ITERS):
             response = await provider.chat(
                 messages=flush_messages,
                 tools=flush_tools,
@@ -122,10 +141,17 @@ async def memory_flush(
                     logger.info("Memory flush completed with text response")
                 break
 
-        logger.info("Pre-compaction memory flush completed")
+        logger.info("Pre-compaction memory flush completed (model=%s, iters=%d)",
+                     provider.model, FLUSH_MAX_ITERS)
 
     except Exception as e:
         logger.warning("Memory flush failed (non-fatal): %s", e)
+    finally:
+        # Restore original model
+        try:
+            provider.model = original_model
+        except (AttributeError, TypeError):
+            pass
 
 
 async def summarize_for_compaction(
