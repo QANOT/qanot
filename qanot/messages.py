@@ -72,12 +72,13 @@ def strip_thinking_blocks(messages: list[dict]) -> list[dict]:
         content = msg.get("content")
         if not isinstance(content, list):
             continue
+        if not any(isinstance(block, dict) and block.get("type") == "thinking" for block in content):
+            continue
         filtered = [
             block for block in content
             if not (isinstance(block, dict) and block.get("type") == "thinking")
         ]
-        if len(filtered) != len(content):
-            msg["content"] = filtered if filtered else [{"type": "text", "text": ""}]
+        msg["content"] = filtered if filtered else [{"type": "text", "text": ""}]
     return messages
 
 
