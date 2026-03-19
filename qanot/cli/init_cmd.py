@@ -265,6 +265,7 @@ def cmd_init(args: list[str]) -> None:
     }
 
     config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False))
+    config_path.chmod(0o600)
 
     # Create workspace directory with default SOUL.md
     workspace = target / "workspace"
