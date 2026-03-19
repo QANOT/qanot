@@ -93,7 +93,7 @@ def _config_show(args: list[str]) -> None:
         is_primary = p.get("provider") == raw.get("provider")
         tag = _green(" (primary)") if is_primary else ""
         key_preview = p.get("api_key", "")[:15] + "..." if p.get("api_key") else _red("no key")
-        print(f"    {_cyan(p['name'])}: {p.get('model', '?')} [{key_preview}]{tag}")
+        print(f"    {_cyan(p.get('name', '?'))}: {p.get('model', '?')} [{key_preview}]{tag}")
     print()
 
     # Features
