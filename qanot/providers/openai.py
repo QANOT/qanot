@@ -356,7 +356,6 @@ class OpenAIProvider(LLMProvider):
         # Track partial tool calls: index -> {id, name, arguments}
         partial_tools: dict[int, dict] = {}
         usage_data: dict | None = None
-        _MAX_TOOL_JSON = 1_000_000  # 1 MB cap on accumulated tool arguments
 
         try:
             stream = await self.client.chat.completions.create(**kwargs)
