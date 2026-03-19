@@ -155,8 +155,7 @@ def _check_telegram(raw: dict, _ok, _fail) -> None:
         try:
             import urllib.request
             url = f"https://api.telegram.org/bot{bot_token}/getMe"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(url, timeout=10) as resp:
                 data = json.loads(resp.read())
                 if data.get("ok"):
                     bot_info = data["result"]
