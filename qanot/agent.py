@@ -446,9 +446,12 @@ class Agent:
             result = strip_verbose_result(result)
 
             if is_deterministic_error(result):
-                result_data = json.loads(result)
-                result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
-                result = json.dumps(result_data)
+                try:
+                    result_data = json.loads(result)
+                    result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
+                    result = json.dumps(result_data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
             tool_results.append({
                 "type": "tool_result",
