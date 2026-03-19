@@ -104,8 +104,7 @@ def _detect_ollama(base_url: str = "http://localhost:11434") -> bool:
     """Check if Ollama is running locally."""
     import urllib.request
     try:
-        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=3) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -115,8 +114,7 @@ def _list_ollama_models(base_url: str = "http://localhost:11434") -> list[tuple[
     """List available Ollama models. Returns [(model_name, description), ...]."""
     import urllib.request
     try:
-        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=5) as resp:
             data = json.loads(resp.read())
             models = []
             for m in data.get("models", []):
