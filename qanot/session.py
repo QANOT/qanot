@@ -210,11 +210,12 @@ class SessionWriter:
                             logger.warning("Skipping oversized message in %s", filepath)
                             continue
                         elif isinstance(content, list):
-                            total_len = sum(
-                                len(b.get("text", ""))
-                                for b in content
-                                if isinstance(b, dict)
-                            )
+                            total_len = 0
+                            for b in content:
+                                if isinstance(b, dict):
+                                    total_len += len(b.get("text", ""))
+                                    if total_len > 100_000:
+                                        break
                             if total_len > 100_000:
                                 logger.warning("Skipping oversized message in %s", filepath)
                                 continue
