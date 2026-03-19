@@ -121,11 +121,15 @@ class Plugin(ABC):
 
     def _collect_tools(self) -> list[ToolDef]:
         """Auto-collect tools from decorated methods."""
-        return [
-            ToolDef(**attr._tool_def, handler=attr)
-            for attr_name in dir(self)
-            if callable(attr := getattr(self, attr_name, None)) and hasattr(attr, "_tool_def")
-        ]
+        tools: list[ToolDef] = []
+        for attr_name in dir(self):
+            try:
+                attr = getattr(self, attr_name)
+            except Exception:
+                continue
+            if callable(attr) and hasattr(attr, "_tool_def"):
+                tools.append(ToolDef(**attr._tool_def, handler=attr))
+        return tools
 
     # ── Extensibility hooks (all optional, empty defaults) ──
 
