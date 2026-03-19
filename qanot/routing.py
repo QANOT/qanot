@@ -176,7 +176,7 @@ class RoutingProvider(LLMProvider):
                 break
 
         msg_score = classify_complexity(user_text)
-        ctx_score = self._assess_context(messages)
+        ctx_score = self._assess_context(messages) if msg_score < 0.1 else 0.0
 
         self.stats.total += 1
 
