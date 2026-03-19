@@ -78,6 +78,7 @@ def build_system_prompt(
 
     if mode not in ("full", "minimal"):
         logger.warning("Unknown prompt mode %r, falling back to 'minimal'", mode)
+        mode = "minimal"
 
     ws = Path(workspace_dir)
     parts: list[str] = []
