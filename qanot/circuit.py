@@ -67,9 +67,13 @@ def is_deterministic_error(result: str) -> bool:
     try:
         data = json.loads(result)
         error = data.get("error", "").lower()
-        return any(marker in error for marker in DETERMINISTIC_ERRORS)
+        if any(marker in error for marker in DETERMINISTIC_ERRORS):
+            return True
     except (json.JSONDecodeError, AttributeError):
-        return False
+        pass
+    # Fallback: plain-text error responses are not JSON-wrapped
+    result_lower = result.lower()
+    return any(marker in result_lower for marker in DETERMINISTIC_ERRORS)
 
 
 def is_loop_detected(recent_fingerprints: list[str], new_key: str) -> bool:
