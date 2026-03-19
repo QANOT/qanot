@@ -92,7 +92,7 @@ def cmd_start(args: list[str]) -> None:
     # Check if already running via daemon
     is_running, status_msg = daemon_status(config_path)
     if is_running:
-        print(f"Bot is already running")
+        print("Bot is already running")
         print(f"  {_dim(status_msg)}")
         return
 
