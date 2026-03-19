@@ -30,6 +30,12 @@ class RateLimiter:
         window_seconds: int = DEFAULT_WINDOW,
         lockout_seconds: int = DEFAULT_LOCKOUT,
     ):
+        if max_requests < 1:
+            raise ValueError(f"max_requests must be >= 1, got {max_requests}")
+        if window_seconds < 1:
+            raise ValueError(f"window_seconds must be >= 1, got {window_seconds}")
+        if lockout_seconds < 0:
+            raise ValueError(f"lockout_seconds must be >= 0, got {lockout_seconds}")
         self.max_requests = max_requests
         self.window = window_seconds
         self.lockout = lockout_seconds
