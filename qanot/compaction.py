@@ -109,7 +109,9 @@ def strip_tool_result_details(messages: list[dict]) -> list[dict]:
             for block in msg["content"]:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     text = block.get("content", "")
-                    if len(text) > 300:
+                    if isinstance(text, list):
+                        text = "[multi-modal tool result omitted]"
+                    elif len(text) > 300:
                         text = text[:300] + "... [truncated]"
                     new_content.append({**block, "content": text})
                 else:
