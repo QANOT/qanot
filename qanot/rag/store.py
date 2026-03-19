@@ -388,6 +388,12 @@ class SqliteVecStore(VectorStore):
             logger.warning("Vector search unavailable — sqlite-vec not loaded")
             return []
 
+        if len(query_embedding) != self.dimensions:
+            raise ValueError(
+                f"Query embedding has {len(query_embedding)} dimensions, "
+                f"expected {self.dimensions}"
+            )
+
         conn = self._conn
         assert conn is not None, "Database not initialized"
 
