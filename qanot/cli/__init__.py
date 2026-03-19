@@ -106,8 +106,7 @@ def cmd_update(args: list[str]) -> None:
     # Check latest version on PyPI
     try:
         import urllib.request
-        req = urllib.request.Request("https://pypi.org/pypi/qanot/json", method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen("https://pypi.org/pypi/qanot/json", timeout=10) as resp:
             data = json.loads(resp.read())
             latest = data.get("info", {}).get("version", "")
     except Exception:
