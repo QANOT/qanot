@@ -313,6 +313,6 @@ async def fetch_link_previews(
         sections.append("\n".join(lines))
 
     return (
-        "[LINK CONTEXT — auto-fetched from URLs in your message]\n\n"
+        "[LINK CONTEXT]\n\n"
         + "\n\n".join(sections)
     )
