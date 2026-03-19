@@ -79,6 +79,10 @@ class GeminiProvider(OpenAIProvider):
         model: str = "gemini-2.5-flash",
         base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/",
     ):
+        from urllib.parse import urlparse
+        scheme = urlparse(base_url).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise ValueError(f"GeminiProvider: base_url scheme must be http(s), got {scheme!r}")
         import openai
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
