@@ -259,6 +259,9 @@ class Agent:
                     fetch_link_previews(user_message), timeout=3.0,
                 )
                 if link_context:
+                    cap = self.config.max_memory_injection_chars
+                    if len(link_context) > cap:
+                        link_context = link_context[:cap] + "\n[... truncated]"
                     user_message = f"{user_message}\n\n---\n{link_context}"
             except asyncio.TimeoutError:
                 logger.debug("Link preview skipped (>3s timeout)")
