@@ -170,6 +170,11 @@ class ContextTracker:
                         elif block.get("type") == "tool_result":
                             # Truncate tool results to save tokens
                             result = block.get("content", "")
+                            if isinstance(result, list):
+                                result = " ".join(
+                                    b.get("text", "") for b in result
+                                    if isinstance(b, dict) and b.get("type") == "text"
+                                )
                             if len(result) > 200:
                                 result = result[:200] + "..."
                             text_parts.append(f"[tool result: {result}]")
