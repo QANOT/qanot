@@ -84,6 +84,10 @@ class MemoryIndexer:
     async def _index_file(self, path: Path, user_id: str) -> int:
         """Index a single file if its content has changed."""
         try:
+            resolved = path.resolve()
+            if not str(resolved).startswith(str(self.workspace_dir.resolve()) + "/"):
+                logger.warning("Skipping %s: resolves outside workspace", path)
+                return 0
             if path.stat().st_size > self._MAX_FILE_BYTES:
                 logger.warning("Skipping %s: exceeds %d-byte limit", path, self._MAX_FILE_BYTES)
                 return 0
