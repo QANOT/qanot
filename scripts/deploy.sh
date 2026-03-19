@@ -27,6 +27,10 @@ deploy_qanot() {
         "$LOCAL/plugins/" "$SERVER:$REMOTE/plugins/"
     rsync -az --delete --exclude='__pycache__' \
         "$LOCAL/templates/" "$SERVER:$REMOTE/templates/"
+    # Build files (requirements, Dockerfile, pyproject)
+    scp -q "$LOCAL/requirements.txt" "$SERVER:$REMOTE/requirements.txt"
+    scp -q "$LOCAL/Dockerfile" "$SERVER:$REMOTE/Dockerfile"
+    scp -q "$LOCAL/pyproject.toml" "$SERVER:$REMOTE/pyproject.toml"
     echo "   Done."
 
     echo "[2/5] Building image..."
