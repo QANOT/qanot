@@ -89,12 +89,11 @@ def wal_scan(user_message: str) -> list[WALEntry]:
 
     Returns list of WALEntry objects to write to SESSION-STATE.md.
     """
-    entries: list[WALEntry] = []
     text = user_message.strip()
-
     if not text:
-        return entries
+        return []
 
+    entries: list[WALEntry] = []
     for pattern, category in WAL_PATTERNS:
         match = pattern.search(text)
         if match:
