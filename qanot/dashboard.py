@@ -150,7 +150,7 @@ class Dashboard:
     async def start(self, port: int = DASHBOARD_PORT) -> None:
         runner = web.AppRunner(self.app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
+        site = web.TCPSite(runner, "127.0.0.1", port)
         await site.start()
         logger.info("Dashboard running at http://localhost:%d", port)
 
