@@ -43,7 +43,7 @@ class GroqProvider(OpenAIProvider):
             raise ValueError(
                 f"GroqProvider model name too long ({len(model)} chars), max 256"
             )
-        if not isinstance(base_url, str) or not base_url.startswith("https://"):
+        if not isinstance(base_url, str) or not (base_url := base_url.strip()).startswith("https://"):
             raise ValueError(
                 f"GroqProvider base_url must use HTTPS to protect API credentials, got: {base_url!r}"
             )
