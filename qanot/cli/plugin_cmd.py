@@ -157,7 +157,11 @@ def _plugin_list(args: list[str]) -> None:
         print(_red("No config.json found."))
         return
 
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(_red(f"config.json is not valid JSON: {exc}"))
+        return
     plugins_dir = Path(raw.get("plugins_dir", config_path.parent / "plugins"))
     configured = raw.get("plugins", [])
 
