@@ -95,6 +95,6 @@ class ConversationManager:
     ) -> list[dict]:
         """Restore messages from session history. Returns the stored list."""
         max_msgs = self._history_limit
-        restored = messages[-max_msgs:] if len(messages) > max_msgs else messages
+        restored = messages[-max_msgs:]
         self.set_messages(user_id, restored)
         return self._conversations[user_id].messages
