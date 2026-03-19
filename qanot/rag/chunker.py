@@ -165,6 +165,7 @@ class BM25Index:
         k1_plus_1 = self.k1 + 1
         for doc_id, freq, dl in zip(self._doc_ids, self._doc_freqs, self._doc_lens):
             score = 0.0
+            k1_norm = self.k1 * (1 - self.b + self.b * dl / self._avg_dl)
 
             for token in query_tokens:
                 if token not in freq:
@@ -172,7 +173,7 @@ class BM25Index:
                 tf = freq[token]
                 idf = self._idf.get(token, 0.0)
                 numerator = tf * k1_plus_1
-                denominator = tf + self.k1 * (1 - self.b + self.b * dl / self._avg_dl)
+                denominator = tf + k1_norm
                 score += idf * numerator / denominator
 
             if score > 0:
