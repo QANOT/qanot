@@ -256,10 +256,10 @@ async def main() -> None:
 
         def _on_memory_write(content: str, source: str) -> None:
             task = asyncio.create_task(rag_indexer.index_text(content, source=source))
-            task.add_done_callback(
-                lambda t: logger.warning("RAG index task failed: %s", t.exception())
-                if not t.cancelled() and t.exception() else None
-            )
+            def _on_done(t):
+                if not t.cancelled() and (exc := t.exception()):
+                    logger.warning("RAG index task failed: %s", exc)
+            task.add_done_callback(_on_done)
 
         add_write_hook(_on_memory_write)
 
