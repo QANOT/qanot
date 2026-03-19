@@ -47,6 +47,9 @@ FOCUS_AREAS = {
     "security": "security hardening, input validation, injection prevention",
     "reliability": "error handling, edge cases, robustness, defensive coding",
     "tests": "test coverage, missing edge case tests, test quality",
+    "memory": "WAL protocol patterns, MEMORY.md durable fact extraction, compaction quality, SESSION-STATE.md pruning, memory search relevance",
+    "cost": "token usage reduction, prompt size optimization, tool schema compression, cache-friendly ordering, unnecessary token waste",
+    "tools": "tool descriptions clarity, parameter naming for LLM understanding, error messages helpfulness, tool schema size reduction",
 }
 
 # Core files — the most important parts of the system
