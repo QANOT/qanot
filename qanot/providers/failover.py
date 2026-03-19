@@ -79,6 +79,13 @@ class ProviderProfile:
 
 def _create_single_provider(profile: ProviderProfile) -> LLMProvider:
     """Create a concrete LLM provider from a profile."""
+    if profile.base_url:
+        from urllib.parse import urlparse
+        scheme = urlparse(profile.base_url).scheme
+        if scheme not in ("http", "https"):
+            raise ValueError(
+                f"Provider {profile.name!r}: base_url must use http or https, got {scheme!r}"
+            )
     if profile.provider_type == "anthropic":
         from qanot.providers.anthropic import AnthropicProvider
         return AnthropicProvider(
