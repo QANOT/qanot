@@ -113,6 +113,7 @@ def _find_config_path(workspace_dir: Path) -> Path | None:
         if p.is_file():
             return p
         logger.warning("QANOT_CONFIG points to non-existent file: %s", env_path)
+        return None  # Don't fall through to an unrelated config when user explicitly set QANOT_CONFIG
 
     # Check parent directory (common Docker layout: /data/config.json, /data/workspace/)
     parent_config = workspace_dir.parent / "config.json"
