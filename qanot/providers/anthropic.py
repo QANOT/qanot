@@ -296,7 +296,7 @@ class AnthropicProvider(LLMProvider):
                             yield StreamEvent(type="tool_use", tool_call=tc)
                             current_tool_id = ""
                             current_tool_name = ""
-                            current_tool_json = ""
+                            current_tool_json_parts = []
 
                 # Get final message for usage stats
                 final = await stream.get_final_message()
