@@ -103,7 +103,9 @@ async def memory_flush(
         recent = messages[-FLUSH_RECENT_MESSAGES:] if len(messages) > FLUSH_RECENT_MESSAGES else list(messages)
         # Ensure first message is from user (API requirement)
         if recent and recent[0].get("role") != "user":
-            recent = [m for m in recent if m.get("role") == "user"][:1] + recent
+            # Trim leading non-user messages so the API receives user-first turn ordering
+            start = next((i for i, m in enumerate(recent) if m.get("role") == "user"), len(recent))
+            recent = recent[start:]
         flush_messages = recent
         flush_messages.append({"role": "user", "content": flush_prompt})
 
