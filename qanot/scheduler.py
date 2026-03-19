@@ -164,7 +164,10 @@ class CronScheduler:
                         timezone=tz,
                     )
                 else:
-                    logger.warning("Invalid cron expression for job %s: %s", name, schedule)
+                    logger.warning(
+                        "Invalid cron expression for job %s: %r (expected 5 fields, got %d)",
+                        name, schedule, len(parts),
+                    )
                     return
             else:
                 logger.warning("Job %s has no schedule or at — skipping", name)
