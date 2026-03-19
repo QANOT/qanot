@@ -18,6 +18,17 @@
 - `web_search` — Search the web via DuckDuckGo
 - `memory_search` — Search across memory files
 
+### O'zbekiston Biznes Toollar
+- `currency_rate` — CBU rasmiy valyuta kurslari (USD, EUR, RUB...)
+- `ikpu_search` — IKPU (MXIK) tovar klassifikator kodini qidirish
+- `payment_link` — Click/Payme to'lov havolasi yaratish
+- `tax_calculator` — QQS, aylanma soliq, ustama, nasiya kalkulyatori
+- `generate_document` — Rasmiy biznes hujjat yaratish (20 tur):
+  - **Shartnomalar:** shartnoma, oldi_sotdi (FK 386), yetkazib_berish (FK 437), ijara (FK 535), mehnat (MK 103), pudrat (FK 631), xizmat (FK 703), nda (O'RQ-370)
+  - **Hujjatlar:** faktura, dalolatnoma, qabul_topshirish, solishtirma, ishonchnoma, talabnoma, tijorat_taklifi (FK 365)
+  - **HR:** buyruq_t1 (ishga qabul, VMQ 1297), buyruq_t6 (ta'til), buyruq_t8 (bo'shatish), ariza (3 xil), tushuntirish_xati
+- `weather` — Ob-havo ma'lumoti
+
 ### Session
 - `session_status` — Check context usage, token count
 

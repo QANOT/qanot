@@ -325,8 +325,20 @@ def register_local_tools(registry: ToolRegistry) -> None:
     # ═══════════════════════════════════════
 
     async def generate_document(params: dict) -> str:
-        """Biznes hujjat yaratish — shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma."""
+        """Biznes hujjat yaratish — 11 xil hujjat turi, O'zR qonunchiligiga mos."""
+        from qanot.tools.document_templates import TIER1_GENERATORS
+
         doc_type = params.get("type", "shartnoma")
+
+        # TIER 1 hujjat turlarini alohida moduldan chaqirish
+        if doc_type in TIER1_GENERATORS:
+            content = TIER1_GENERATORS[doc_type](params)
+            return json.dumps({
+                "type": doc_type,
+                "content": content,
+                "filename": f"{doc_type}_{params.get('number', '1')}_{params.get('date', 'sana').replace('.', '-')}.txt",
+                "hint": "Bu matnni create_docx tool bilan DOCX faylga saqlash mumkin, yoki to'g'ridan-to'g'ri foydalanuvchiga ko'rsatish mumkin.",
+            }, ensure_ascii=False)
         from datetime import datetime
 
         # Common fields
@@ -573,7 +585,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
                 f"M.O."
             )
         else:
-            return json.dumps({"error": f"Noma'lum hujjat turi: {doc_type}. shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma dan birini tanlang."})
+            return json.dumps({"error": f"Noma'lum hujjat turi: {doc_type}. Mavjud turlar: shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma, oldi_sotdi, yetkazib_berish, ijara, mehnat, solishtirma, tijorat_taklifi, xizmat, qabul_topshirish, buyruq_t1, buyruq_t6, buyruq_t8, pudrat, nda, tushuntirish_xati, ariza"})
 
         # Return content for agent to use with create_docx or send directly
         return json.dumps({
@@ -585,12 +597,12 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="generate_document",
-        description="Rasmiy biznes hujjat yaratish: shartnoma, hisob-faktura, dalolatnoma, ishonchnoma, talabnoma. O'zR qonunchiligiga mos.",
+        description="Rasmiy biznes hujjat yaratish (20 tur). Shartnomalar: shartnoma, oldi_sotdi, yetkazib_berish, ijara, mehnat, pudrat, xizmat, nda. Hujjatlar: faktura, dalolatnoma, qabul_topshirish, solishtirma, ishonchnoma, talabnoma, tijorat_taklifi. HR: buyruq_t1, buyruq_t6, buyruq_t8, ariza, tushuntirish_xati. O'zR qonunchiligiga mos.",
         parameters={
             "type": "object",
             "required": ["type", "company", "counterparty"],
             "properties": {
-                "type": {"type": "string", "description": "Hujjat turi: shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma"},
+                "type": {"type": "string", "description": "Hujjat turi: shartnoma, faktura, dalolatnoma, ishonchnoma, talabnoma, oldi_sotdi, yetkazib_berish, ijara, mehnat, solishtirma, tijorat_taklifi, xizmat, qabul_topshirish, buyruq_t1, buyruq_t6, buyruq_t8, pudrat, nda, tushuntirish_xati, ariza"},
                 "company": {"type": "string", "description": "Kompaniya nomi"},
                 "inn": {"type": "string", "description": "STIR (INN)"},
                 "director": {"type": "string", "description": "Rahbar F.I.Sh."},
@@ -622,6 +634,73 @@ def register_local_tools(registry: ToolRegistry) -> None:
                 "penalty_rate": {"type": "number", "description": "Penya stavkasi % kuniga (default 0.5)"},
                 "days_overdue": {"type": "number", "description": "Kechiktirilgan kunlar soni"},
                 "deadline": {"type": "string", "description": "To'lov muddati (default: 10 kun)"},
+                "delivery_date": {"type": "string", "description": "Yetkazib berish sanasi"},
+                "delivery_place": {"type": "string", "description": "Yetkazib berish joyi"},
+                "delivery_schedule": {"type": "string", "description": "Yetkazib berish jadvali (har oyda, har hafta)"},
+                "warranty_months": {"type": "number", "description": "Kafolat muddati (oy)"},
+                "payment_type": {"type": "string", "description": "To'lov turi: bank, cash, mixed"},
+                "prepay_pct": {"type": "number", "description": "Oldindan to'lov foizi (%)"},
+                "acceptance_days": {"type": "number", "description": "Qabul qilish muddati (ish kuni)"},
+                "payment_days": {"type": "number", "description": "To'lov muddati (bank kuni)"},
+                "object_type": {"type": "string", "description": "Ijara ob'ekti turi (bino, xona, er)"},
+                "object_description": {"type": "string", "description": "Ijara ob'ekti tavsifi"},
+                "object_area": {"type": "string", "description": "Maydon (kv.m)"},
+                "object_address": {"type": "string", "description": "Ob'ekt manzili"},
+                "cadastral_number": {"type": "string", "description": "Kadastr raqami (ijara)"},
+                "rent_amount": {"type": "number", "description": "Ijara haqi (oylik)"},
+                "rent_period": {"type": "string", "description": "Ijara haqi davri: oylik, choraklik"},
+                "utilities_included": {"type": "boolean", "description": "Kommunal xizmatlar kiradimi"},
+                "purpose": {"type": "string", "description": "Foydalanish maqsadi (ijara)"},
+                "employee_name": {"type": "string", "description": "Xodim F.I.Sh. (mehnat)"},
+                "salary": {"type": "number", "description": "Mehnat haqi (so'mda)"},
+                "salary_type": {"type": "string", "description": "Haq turi: oylik, kunlik, ishbay"},
+                "work_schedule": {"type": "string", "description": "Ish jadvali"},
+                "probation_months": {"type": "number", "description": "Sinov muddati (oy, max 3)"},
+                "contract_type": {"type": "string", "description": "Shartnoma turi: muddatsiz, muddatli"},
+                "vacation_days": {"type": "number", "description": "Yillik ta'til (ish kuni)"},
+                "start_date": {"type": "string", "description": "Ishga kirish sanasi"},
+                "period_from": {"type": "string", "description": "Davr boshi"},
+                "period_to": {"type": "string", "description": "Davr oxiri"},
+                "opening_balance": {"type": "number", "description": "Boshlang'ich qoldiq (solishtirma)"},
+                "opening_balance_side": {"type": "string", "description": "Qoldiq tomoni: debit, kredit"},
+                "operations": {"type": "array", "description": "Operatsiyalar: [{date, description, debit, credit}]",
+                               "items": {"type": "object", "properties": {"date": {"type": "string"}, "description": {"type": "string"}, "debit": {"type": "number"}, "credit": {"type": "number"}}}},
+                "valid_days": {"type": "number", "description": "Taklif muddati (kun, default 30)"},
+                "delivery_terms": {"type": "string", "description": "Yetkazib berish shartlari (tijorat taklifi)"},
+                "payment_terms": {"type": "string", "description": "To'lov shartlari (tijorat taklifi)"},
+                "special_conditions": {"type": "string", "description": "Qo'shimcha shartlar"},
+                "contact_person": {"type": "string", "description": "Bog'lanish uchun shaxs"},
+                "contact_phone": {"type": "string", "description": "Telefon raqam"},
+                "contact_email": {"type": "string", "description": "Email"},
+                "service_list": {"type": "string", "description": "Xizmatlar ro'yxati (xizmat shartnomasi)"},
+                "service_period": {"type": "string", "description": "Xizmat ko'rsatish davri"},
+                "payment_schedule": {"type": "string", "description": "To'lov jadvali: oylik, choraklik"},
+                "report_required": {"type": "boolean", "description": "Oylik hisobot kerakmi (xizmat)"},
+                "quality_ok": {"type": "boolean", "description": "Sifat yaxshimi (qabul-topshirish)"},
+                "remarks": {"type": "string", "description": "Izoh/kamchiliklar"},
+                "leave_type": {"type": "string", "description": "Ta'til turi: yillik, qoshimcha, haqi_saqlanmaydigan, oquv"},
+                "leave_from": {"type": "string", "description": "Ta'til boshlanishi"},
+                "leave_to": {"type": "string", "description": "Ta'til tugashi"},
+                "leave_days": {"type": "number", "description": "Ta'til kunlari soni"},
+                "work_period": {"type": "string", "description": "Ish davri (ta'til uchun)"},
+                "work_type": {"type": "string", "description": "Ish turi: asosiy, orindoshlik"},
+                "dismissal_date": {"type": "string", "description": "Ishdan bo'shatish sanasi"},
+                "dismissal_reason": {"type": "string", "description": "Bo'shatish sababi: oz_xohishi, kelishuv, muddat, qisqartirish"},
+                "dismissal_article": {"type": "string", "description": "MK moddasi (bo'shatish)"},
+                "basis_document": {"type": "string", "description": "Asos hujjat (buyruq uchun)"},
+                "work_description": {"type": "string", "description": "Ish tavsifi (pudrat)"},
+                "work_start": {"type": "string", "description": "Ish boshlash sanasi"},
+                "work_end": {"type": "string", "description": "Ish tugash sanasi"},
+                "materials_by": {"type": "string", "description": "Materiallar: pudratchi, buyurtmachi, aralash"},
+                "nda_type": {"type": "string", "description": "NDA turi: bir_tomonlama, ikki_tomonlama"},
+                "valid_months": {"type": "number", "description": "Maxfiylik muddati (oy, NDA)"},
+                "penalty_amount": {"type": "number", "description": "Jarima summasi (NDA)"},
+                "confidential_info": {"type": "string", "description": "Maxfiy axborot tavsifi"},
+                "incident_date": {"type": "string", "description": "Voqea sanasi (tushuntirish xati)"},
+                "incident_description": {"type": "string", "description": "Voqea tavsifi"},
+                "ariza_type": {"type": "string", "description": "Ariza turi: ishga, tatilga, boshatish"},
+                "desired_date": {"type": "string", "description": "Kerakli sana (ariza)"},
+                "reason": {"type": "string", "description": "Sabab (ariza)"},
             },
         },
         handler=generate_document,
