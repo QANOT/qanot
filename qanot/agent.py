@@ -850,6 +850,10 @@ class Agent:
                         f"Kechirasiz, {tool_calls[0].name} "
                         "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
                     )
+                    # Must append tool_results before the error message — Claude API
+                    # requires a tool_result for every tool_use block or the next
+                    # turn's API call will fail with a message validation error.
+                    messages.append({"role": "user", "content": tool_results})
                     messages.append({"role": "assistant", "content": no_progress_msg})
                     yield StreamEvent(
                         type="done",
