@@ -498,14 +498,8 @@ class TelegramAdapter:
         # Try both user_id and all keys — handle conv_key vs current_user_id mismatch
         file_paths = self.agent.pop_pending_files(user_id)
 
-        # Fallback: check if files were queued under empty string or other keys
-        if not file_paths:
-            all_pending = dict(self.agent._pending_files)
-            for key, paths in all_pending.items():
-                if paths:
-                    file_paths = self.agent._pending_files.pop(key, [])
-                    logger.debug("Pending files found under key '%s' instead of '%s'", key, user_id)
-                    break
+        # No cross-user fallback — stealing from another user's pending queue
+        # would deliver files to the wrong chat in concurrent multi-user scenarios.
 
         if not file_paths:
             return
