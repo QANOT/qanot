@@ -132,8 +132,8 @@ class ContextTracker:
             len(messages), len(compacted), removed_count, bool(summary_text),
         )
 
-        # Reset prompt token estimate after compaction
-        self.last_prompt_tokens = int(self.last_prompt_tokens * COMPACTION_TARGET / COMPACTION_THRESHOLD)
+        # Reset prompt token estimate after compaction to the target fraction of max
+        self.last_prompt_tokens = int(self.max_tokens * COMPACTION_TARGET)
 
         return compacted
 
