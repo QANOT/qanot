@@ -1,4 +1,4 @@
-"""Tests for TelegramAdapter sticker handling."""
+"""Tests for Telegram sticker handling."""
 
 from __future__ import annotations
 
@@ -50,12 +50,12 @@ def _make_message(*, user_id=12345, chat_id=67890, text=None, sticker=None, from
 
 
 class TestDownloadSticker:
-    """Tests for TelegramAdapter._download_sticker."""
+    """Tests for download_sticker."""
 
     @pytest.mark.asyncio
     async def test_static_sticker_downloads_directly(self):
         """Static WEBP stickers should be downloaded via bot.download."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         sticker = _make_sticker(is_animated=False, is_video=False, emoji="\U0001f600")
         message = _make_message(sticker=sticker)
@@ -63,19 +63,16 @@ class TestDownloadSticker:
         # Create a minimal WEBP-like payload (small enough to skip resize)
         fake_image = b'RIFF\x00\x00\x00\x00WEBP' + b'\x00' * 50
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
+        bot = AsyncMock()
 
         async def fake_download(file_obj, destination=None):
             if isinstance(destination, BytesIO):
                 destination.write(fake_image)
 
-        adapter.bot.download = fake_download
+        bot.download = fake_download
 
-        with patch.object(TelegramAdapter, '_downscale_image', return_value=(fake_image, "image/webp")):
-            result = await adapter._download_sticker(message)
+        with patch('qanot.telegram.media._downscale_image', return_value=(fake_image, "image/webp")):
+            result = await download_sticker(bot, message)
 
         assert isinstance(result, dict)
         assert result["type"] == "image"
@@ -85,7 +82,7 @@ class TestDownloadSticker:
     @pytest.mark.asyncio
     async def test_animated_sticker_uses_thumbnail(self):
         """Animated TGS stickers should use the thumbnail image."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         thumbnail = MagicMock()
         sticker = _make_sticker(is_animated=True, is_video=False, emoji="\U0001f389", thumbnail=thumbnail)
@@ -93,30 +90,25 @@ class TestDownloadSticker:
 
         fake_thumb = b'\xff\xd8\xff' + b'\x00' * 100  # JPEG-like
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
+        bot = AsyncMock()
 
         async def fake_download(file_obj, destination=None):
             if isinstance(destination, BytesIO):
                 destination.write(fake_thumb)
 
-        adapter.bot.download = fake_download
+        bot.download = fake_download
 
-        with patch.object(TelegramAdapter, '_downscale_image', return_value=(fake_thumb, "image/jpeg")):
-            result = await adapter._download_sticker(message)
+        with patch('qanot.telegram.media._downscale_image', return_value=(fake_thumb, "image/jpeg")):
+            result = await download_sticker(bot, message)
 
         assert isinstance(result, dict)
         assert result["type"] == "image"
         assert result["source"]["media_type"] == "image/jpeg"
-        # Verify thumbnail was passed to download, not the sticker itself
-        # (bot.download was called with thumbnail object)
 
     @pytest.mark.asyncio
     async def test_video_sticker_uses_thumbnail(self):
         """Video WEBM stickers should use the thumbnail image."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         thumbnail = MagicMock()
         sticker = _make_sticker(is_animated=False, is_video=True, emoji="\U0001f525", thumbnail=thumbnail)
@@ -124,19 +116,16 @@ class TestDownloadSticker:
 
         fake_thumb = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
+        bot = AsyncMock()
 
         async def fake_download(file_obj, destination=None):
             if isinstance(destination, BytesIO):
                 destination.write(fake_thumb)
 
-        adapter.bot.download = fake_download
+        bot.download = fake_download
 
-        with patch.object(TelegramAdapter, '_downscale_image', return_value=(fake_thumb, "image/png")):
-            result = await adapter._download_sticker(message)
+        with patch('qanot.telegram.media._downscale_image', return_value=(fake_thumb, "image/png")):
+            result = await download_sticker(bot, message)
 
         assert isinstance(result, dict)
         assert result["type"] == "image"
@@ -144,17 +133,14 @@ class TestDownloadSticker:
     @pytest.mark.asyncio
     async def test_animated_sticker_no_thumbnail_returns_text(self):
         """Animated stickers without thumbnail should return text description."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         sticker = _make_sticker(is_animated=True, is_video=False, emoji="\U0001f60e", thumbnail=None)
         message = _make_message(sticker=sticker)
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
+        bot = AsyncMock()
 
-        result = await adapter._download_sticker(message)
+        result = await download_sticker(bot, message)
 
         assert isinstance(result, str)
         assert "Sticker" in result
@@ -163,32 +149,26 @@ class TestDownloadSticker:
     @pytest.mark.asyncio
     async def test_no_sticker_returns_none(self):
         """Message without sticker should return None."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         message = _make_message(sticker=None)
         message.sticker = None
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
+        bot = AsyncMock()
 
-        result = await adapter._download_sticker(message)
+        result = await download_sticker(bot, message)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_download_error_returns_none(self):
         """Download failure should return None gracefully."""
-        from qanot.telegram import TelegramAdapter
+        from qanot.telegram.media import download_sticker
 
         sticker = _make_sticker(is_animated=False, is_video=False, emoji="\U0001f4a5")
         message = _make_message(sticker=sticker)
 
-        config = Config(bot_token="123:FAKE")
-        adapter = TelegramAdapter.__new__(TelegramAdapter)
-        adapter.config = config
-        adapter.bot = AsyncMock()
-        adapter.bot.download = AsyncMock(side_effect=Exception("network error"))
+        bot = AsyncMock()
+        bot.download = AsyncMock(side_effect=Exception("network error"))
 
-        result = await adapter._download_sticker(message)
+        result = await download_sticker(bot, message)
         assert result is None
