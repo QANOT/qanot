@@ -794,7 +794,8 @@ class Agent:
                                 yield StreamEvent(type="text_delta", text="\n" + new_text)
                             text_parts = [response.content]  # Reset to full fallback content
                         tool_calls = response.tool_calls
-                    except Exception:
+                    except Exception as e:
+                        logger.error("Stream fallback failed for user %s: %s", user_id, e, exc_info=True)
                         yield StreamEvent(
                             type="done",
                             response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),

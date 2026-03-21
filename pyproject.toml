@@ -8,12 +8,38 @@ version = "2.0.1"
 description = "The AI agent that flies on its own. Two commands to fly."
 license = "MIT"
 requires-python = ">=3.11"
+readme = "README.md"
+authors = [
+    {name = "Sirli AI", email = "hello@sirli.ai"},
+]
+keywords = ["telegram", "bot", "ai", "agent", "chatbot", "llm", "rag", "uzbekistan"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/QANOT/qanot"
+Documentation = "https://plane.topkey.uz/docs/"
+Repository = "https://github.com/QANOT/qanot.git"
+"Bug Tracker" = "https://github.com/QANOT/qanot/issues"
+Changelog = "https://github.com/QANOT/qanot/releases"
+
 dependencies = [
     "aiogram>=3.4",
     "anthropic>=0.40",
     "openai>=1.50",
     "aiohttp>=3.9",
-    "aiomysql>=0.2",
     "apscheduler>=3.10",
     "cryptography>=42.0",
     "Pillow>=10.0",
@@ -23,6 +49,7 @@ dependencies = [
 docs = ["python-docx>=1.1", "openpyxl>=3.1", "fpdf2>=2.7", "python-pptx>=0.6"]
 rag = ["sqlite-vec>=0.1.6", "PyMuPDF>=1.24"]
 local = ["fastembed>=0.4"]
+mysql = ["aiomysql>=0.2"]
 
 [project.scripts]
 qanot = "qanot.cli:main"
@@ -31,5 +58,5 @@ qanot = "qanot.cli:main"
 include = ["qanot*", "plugins*"]
 
 [tool.setuptools.package-data]
-qanot = ["templates/**/*"]
+qanot = ["templates/**/*", "py.typed"]
 plugins = ["**/*.py", "**/*.md"]

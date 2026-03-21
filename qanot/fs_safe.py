@@ -48,6 +48,29 @@ def is_path_within_root(root: str, path: str) -> bool:
         return False
 
 
+def validate_read_path(path: str) -> str | None:
+    """Validate a file path for reading.
+
+    Blocks reads from system directories and sensitive locations.
+
+    Returns:
+        Error message if blocked, None if allowed.
+    """
+    if not path or not path.strip():
+        return "Empty path"
+    if "\x00" in path:
+        return "Null byte in path"
+    resolved = os.path.realpath(path)
+    for sys_dir in _SYSTEM_DIRS:
+        if _is_under(resolved, sys_dir):
+            return f"System directory blocked: {sys_dir}"
+    # Block well-known sensitive files
+    basename = os.path.basename(resolved)
+    if basename in (".env", "config.json", ".netrc", ".npmrc"):
+        return f"Sensitive file blocked: {basename}"
+    return None
+
+
 def validate_write_path(path: str, root: str | None = None) -> str | None:
     """Validate a file path for writing.
 

@@ -1213,7 +1213,8 @@ class TelegramAdapter:
             kwargs["reply_to_message_id"] = reply_to
         try:
             await self.bot.send_message(**kwargs, parse_mode=ParseMode.HTML)
-        except Exception:
+        except Exception as e:
+            logger.debug("HTML parse failed, falling back to plain text: %s", e)
             try:
                 await self.bot.send_message(**kwargs)
             except Exception as e:

@@ -158,10 +158,14 @@ def register_builtin_tools(
 
     # ── read_file ──
     async def read_file(params: dict) -> str:
+        from qanot.fs_safe import validate_read_path
         path = params.get("path", "")
         if not path:
             return json.dumps({"error": "path is required"})
         full = _resolve_path(path, workspace_dir)
+        error = validate_read_path(full)
+        if error:
+            return json.dumps({"error": f"Read blocked: {error}", "path": full})
         try:
             content = Path(full).read_text(encoding="utf-8")
             if len(content) > MAX_OUTPUT:
@@ -220,8 +224,12 @@ def register_builtin_tools(
 
     # ── list_files ──
     async def list_files(params: dict) -> str:
+        from qanot.fs_safe import validate_read_path
         path = params.get("path", ".")
         full = _resolve_path(path, workspace_dir)
+        error = validate_read_path(full)
+        if error:
+            return json.dumps({"error": f"Read blocked: {error}", "path": full})
         try:
             entries = []
             for item in sorted(Path(full).iterdir()):
@@ -434,10 +442,14 @@ def register_builtin_tools(
     # ── send_file ──
     async def send_file(params: dict) -> str:
         """Send a file from workspace to the user via Telegram."""
+        from qanot.fs_safe import validate_read_path
         path = params.get("path", "")
         if not path:
             return json.dumps({"error": "path is required"})
         full = _resolve_path(path, workspace_dir)
+        error = validate_read_path(full)
+        if error:
+            return json.dumps({"error": f"Read blocked: {error}", "path": full})
         if not os.path.isfile(full):
             return json.dumps({"error": f"File not found: {path}"})
         # Size check — Telegram limit 50MB
