@@ -647,6 +647,10 @@ class Agent:
                         f"No-progress loop: {response.tool_calls[0].name}",
                         "Same call producing same result — need different approach",
                     )
+                    # Must append tool_results before the error message — Claude API
+                    # requires a tool_result for every tool_use block or the next
+                    # turn's API call will fail with a message validation error.
+                    messages.append({"role": "user", "content": tool_results})
                     final_text = (
                         f"Kechirasiz, {response.tool_calls[0].name} "
                         "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
