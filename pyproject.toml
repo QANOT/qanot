@@ -48,7 +48,7 @@ dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/QANOT/qanot"
-Documentation = "https://plane.topkey.uz/docs/"
+Documentation = "https://qanot.github.io/docs/"
 Repository = "https://github.com/QANOT/qanot.git"
 "Bug Tracker" = "https://github.com/QANOT/qanot/issues"
 Changelog = "https://github.com/QANOT/qanot/releases"
