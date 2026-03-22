@@ -120,8 +120,9 @@ class HandlersMixin:
         buttons = []
         for model_id, label, desc in models:
             marker = " \u25c0" if model_id == current else ""
+            check = "\u2705 " if model_id == current else ""
             buttons.append([InlineKeyboardButton(
-                text=f"{'\u2705 ' if model_id == current else ''}{label} \u2014 {desc}{marker}",
+                text=f"{check}{label} \u2014 {desc}{marker}",
                 callback_data=f"model:{model_id}",
             )])
 

@@ -23,11 +23,10 @@
 
 ```bash
 pip install qanot
-qanot init        # Interactive setup — picks provider, model, creates config
-qanot start       # Bot is live
+qanot init        # Interactive setup — picks provider, model, starts bot
 ```
 
-That's it. Your agent is running.
+That's it. The wizard configures everything and auto-starts your bot.
 
 ---
 
