@@ -4,7 +4,7 @@ All notable changes to Qanot AI are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [2.0.1] - 2026-03-22
+## [2.0.2] - 2026-03-22
 
 ### Fixed
 - Compaction loop when context usage exceeded threshold ratio
