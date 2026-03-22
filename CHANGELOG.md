@@ -4,6 +4,16 @@ All notable changes to Qanot AI are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.3] - 2026-03-22
+
+### Added
+- MCP (Model Context Protocol) client — connect to 1000+ external tool servers
+- Browser control via Playwright — browse_url, click, fill_form, screenshot, extract_data
+- Skill management tools — create_skill, list_skills, run_skill_script, delete_skill
+- Agent self-improving: creates reusable SKILL.md + scripts for repetitive tasks
+- Skills hot-reload without restart
+- Optional deps: `pip install qanot[mcp]`, `pip install qanot[browser]`
+
 ## [2.0.2] - 2026-03-22
 
 ### Fixed
