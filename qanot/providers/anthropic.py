@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 PRICING = {
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "claude-opus-4-6": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
     "claude-opus-4-20250514": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
     "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
 }
@@ -79,6 +80,9 @@ class AnthropicProvider(LLMProvider):
         kwargs["thinking"] = {
             "type": "enabled",
             "budget_tokens": self._thinking_budget,
+            # Skip streaming thinking tokens — we don't display them.
+            # Reduces time-to-first-text-token. Cost stays the same.
+            "display": "omitted",
         }
         # Anthropic requires temperature=1 when thinking is enabled
         kwargs["temperature"] = 1
