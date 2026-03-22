@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Default registry index URL (GitHub raw)
 DEFAULT_REGISTRY_URL = (
-    "https://raw.githubusercontent.com/sirliai/qanot-plugins/main/index.json"
+    "https://raw.githubusercontent.com/QANOT/qanot-plugins/main/index.json"
 )
 
 # User-level plugins directory
