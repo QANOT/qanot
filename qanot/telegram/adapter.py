@@ -78,6 +78,66 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_model(message: Message) -> None:
             await self._handle_model(message)
 
+        @self.dp.message(F.text.startswith("/think"))
+        async def handle_think(message: Message) -> None:
+            await self._handle_think(message)
+
+        @self.dp.message(F.text.startswith("/voiceprovider"))
+        async def handle_voiceprovider(message: Message) -> None:
+            await self._handle_voiceprovider(message)
+
+        @self.dp.message(F.text.startswith("/voice"))
+        async def handle_voice(message: Message) -> None:
+            await self._handle_voice(message)
+
+        @self.dp.message(F.text.startswith("/lang"))
+        async def handle_lang(message: Message) -> None:
+            await self._handle_lang(message)
+
+        @self.dp.message(F.text.startswith("/mode"))
+        async def handle_mode(message: Message) -> None:
+            await self._handle_mode(message)
+
+        @self.dp.message(F.text.startswith("/routing"))
+        async def handle_routing(message: Message) -> None:
+            await self._handle_routing(message)
+
+        @self.dp.message(F.text.startswith("/group"))
+        async def handle_group(message: Message) -> None:
+            await self._handle_group(message)
+
+        @self.dp.message(F.text.startswith("/exec"))
+        async def handle_exec(message: Message) -> None:
+            await self._handle_exec(message)
+
+        @self.dp.message(F.text.startswith("/context"))
+        async def handle_context(message: Message) -> None:
+            await self._handle_context(message)
+
+        @self.dp.message(F.text.startswith("/usage"))
+        async def handle_usage(message: Message) -> None:
+            await self._handle_usage(message)
+
+        @self.dp.message(F.text.startswith("/compact"))
+        async def handle_compact(message: Message) -> None:
+            await self._handle_compact(message)
+
+        @self.dp.message(F.text.startswith("/export"))
+        async def handle_export(message: Message) -> None:
+            await self._handle_export(message)
+
+        @self.dp.message(F.text.startswith("/id"))
+        async def handle_id(message: Message) -> None:
+            await self._handle_id(message)
+
+        @self.dp.message(F.text.startswith("/stop"))
+        async def handle_stop(message: Message) -> None:
+            await self._handle_stop(message)
+
+        @self.dp.message(F.text.startswith("/config"))
+        async def handle_config(message: Message) -> None:
+            await self._handle_config(message)
+
         @self.dp.message(F.text)
         async def handle_text(message: Message) -> None:
             await self._handle_message(message)

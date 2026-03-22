@@ -212,10 +212,25 @@ class StreamingMixin:
     async def _register_commands(self) -> None:
         """Register dynamic bot commands with Telegram (appears in / menu)."""
         commands = [
-            BotCommand(command="status", description="Sessiya holati va statistika"),
-            BotCommand(command="model", description="Model tanlash (Opus/Sonnet/Haiku)"),
+            BotCommand(command="model", description="Model tanlash"),
+            BotCommand(command="think", description="Fikrlash darajasi"),
+            BotCommand(command="voice", description="Ovoz rejimi"),
+            BotCommand(command="voiceprovider", description="Ovoz provayderi"),
+            BotCommand(command="lang", description="STT tili"),
+            BotCommand(command="mode", description="Javob rejimi"),
+            BotCommand(command="routing", description="Model routing on/off"),
+            BotCommand(command="group", description="Guruh rejimi"),
+            BotCommand(command="exec", description="Xavfsizlik darajasi"),
+            BotCommand(command="status", description="Sessiya holati"),
+            BotCommand(command="usage", description="Token sarfi va narxi"),
+            BotCommand(command="context", description="Kontekst tafsilotlari"),
+            BotCommand(command="config", description="Barcha sozlamalar"),
             BotCommand(command="reset", description="Suhbatni tozalash"),
-            BotCommand(command="help", description="Barcha buyruqlar va imkoniyatlar"),
+            BotCommand(command="compact", description="Kontekstni siqish"),
+            BotCommand(command="export", description="Sessiyani eksport"),
+            BotCommand(command="stop", description="Amalni to'xtatish"),
+            BotCommand(command="id", description="Foydalanuvchi ID"),
+            BotCommand(command="help", description="Barcha buyruqlar"),
         ]
         try:
             await self.bot.set_my_commands(commands)
