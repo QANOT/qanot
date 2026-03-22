@@ -26,6 +26,86 @@ from qanot.cli.utils import (
 )
 
 
+# Plugin config keys — what each plugin needs from the user
+_PLUGIN_KEYS: dict[str, list[tuple[str, str, bool]]] = {
+    # (key, hint, is_secret)
+    "bito": [
+        ("api_key", "Bito API kaliti", True),
+    ],
+    "absmarket": [
+        ("api_key", "AbsMarket API kaliti", True),
+        ("db_host", "MySQL host (masalan: localhost)", False),
+        ("db_user", "MySQL foydalanuvchi", False),
+        ("db_password", "MySQL parol", True),
+        ("db_name", "MySQL baza nomi", False),
+    ],
+    "ibox": [
+        ("tenant", "ibox tenant (kompaniya ID)", False),
+        ("login", "ibox login", False),
+        ("password", "ibox parol", True),
+    ],
+    "moysklad": [
+        ("login", "MoySklad login", False),
+        ("password", "MoySklad parol", True),
+    ],
+    "onec": [
+        ("base_url", "1C bazaviy URL (masalan: http://server/base)", False),
+        ("username", "1C foydalanuvchi", False),
+        ("password", "1C parol", True),
+    ],
+    "amocrm": [
+        ("subdomain", "amoCRM subdomain (masalan: mycompany)", False),
+        ("client_id", "OAuth client ID", False),
+        ("client_secret", "OAuth client secret", True),
+        ("access_token", "Access token", True),
+        ("refresh_token", "Refresh token", True),
+        ("redirect_uri", "Redirect URI", False),
+    ],
+    "bitrix24": [
+        ("domain", "Bitrix24 domain (masalan: myco.bitrix24.uz)", False),
+        ("user_id", "Webhook user ID", False),
+        ("webhook_code", "Webhook code", True),
+    ],
+    "eskiz": [
+        ("email", "Eskiz email", False),
+        ("password", "Eskiz parol", True),
+    ],
+    "absvision": [
+        ("base_url", "AbsVision URL (masalan: https://api.absvision.uz)", False),
+        ("username", "AbsVision foydalanuvchi", False),
+        ("password", "AbsVision parol", True),
+    ],
+    "mysql_query": [
+        ("db_host", "MySQL host (masalan: localhost)", False),
+        ("db_user", "MySQL foydalanuvchi", False),
+        ("db_password", "MySQL parol", True),
+        ("db_name", "MySQL baza nomi", False),
+    ],
+}
+
+
+def _collect_plugin_keys(name: str) -> dict:
+    """Prompt for a plugin's config keys and return the plugin config dict."""
+    keys = _PLUGIN_KEYS.get(name, [])
+    cfg: dict = {}
+
+    if keys:
+        print(f"  {_cyan(name)} sozlamalari:")
+        for key, hint, is_secret in keys:
+            if is_secret:
+                val = _prompt_secret(f"  {hint}")
+            else:
+                val = _prompt(f"  {hint}")
+            if val:
+                cfg[key] = val
+
+    skipped = [k for k, _, _ in keys if k not in cfg]
+    if skipped:
+        print(f"  {_yellow('!')} Keyinroq config.json da to'ldiring: {', '.join(skipped)}")
+
+    return {"name": name, "enabled": True, "config": cfg}
+
+
 def cmd_init(args: list[str]) -> None:
     """Interactive setup wizard for new Qanot project."""
     target = Path(args[0]) if args else Path.cwd()
@@ -228,8 +308,54 @@ def cmd_init(args: list[str]) -> None:
         else:
             print(_yellow("  ! Skipped \u2014 you can add brave_api_key to config.json later"))
 
-    # ── Step 6: Build config ──
-    print(f"\n{_bold('  Step 6: Saving configuration')}")
+    # ── Step 6: Integrations (plugins) ──
+    print(f"\n{_bold('  Step 6: Integratsiyalar')}")
+    print(f"  {_dim('Biznesingiz uchun kerakli integratsiyalarni tanlang.')}")
+
+    plugins_config: list[dict] = []
+
+    # POS / ERP — pick ONE
+    pos_options = [
+        ("none", "Kerak emas"),
+        ("bito", "Bito POS — sotuvlar, tovarlar, mijozlar"),
+        ("absmarket", "AbsMarket — 30 API tool + MySQL"),
+        ("ibox", "ibox.io — ombor boshqaruv"),
+        ("moysklad", "MoySklad — tovarlar, ombor, sotuvlar"),
+        ("onec", "1C Enterprise — buxgalteriya"),
+    ]
+    selected_pos = _prompt_select("POS / ERP tizimi:", pos_options)[0]
+    if selected_pos != "none":
+        plugins_config.append(_collect_plugin_keys(selected_pos))
+
+    # CRM — pick ONE
+    crm_options = [
+        ("none", "Kerak emas"),
+        ("amocrm", "amoCRM — lidlar, kontaktlar, pipeline"),
+        ("bitrix24", "Bitrix24 — deallar, vazifalar"),
+    ]
+    selected_crm = _prompt_select("CRM tizimi:", crm_options)[0]
+    if selected_crm != "none":
+        plugins_config.append(_collect_plugin_keys(selected_crm))
+
+    # SMS
+    if _prompt_yn("Eskiz SMS kerakmi?"):
+        plugins_config.append(_collect_plugin_keys("eskiz"))
+
+    # HR
+    if _prompt_yn("AbsVision HR kerakmi?"):
+        plugins_config.append(_collect_plugin_keys("absvision"))
+
+    # MySQL
+    if _prompt_yn("MySQL to'g'ridan-to'g'ri so'rov kerakmi?"):
+        plugins_config.append(_collect_plugin_keys("mysql_query"))
+
+    if plugins_config:
+        print(f"  {_green(chr(10003))} Plaginlar: {', '.join(p['name'] for p in plugins_config)}")
+    else:
+        print(f"  {_dim('Plagin tanlanmadi. Keyinroq: qanot plugin install <name>')}")
+
+    # ── Step 7: Build config ──
+    print(f"\n{_bold('  Step 7: Saving configuration')}")
 
     config = {
         "bot_token": bot_token,
@@ -261,7 +387,7 @@ def cmd_init(args: list[str]) -> None:
         "cron_dir": str(target / "cron"),
         "brave_api_key": brave_api_key,
         "plugins_dir": str(target / "plugins"),
-        "plugins": [],
+        "plugins": plugins_config,
     }
 
     config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False))
@@ -296,6 +422,8 @@ def cmd_init(args: list[str]) -> None:
         print(f"  Voice: {VOICE_PROVIDERS[voice_provider]['label']}")
     if brave_api_key:
         print(f"  Web Search: Brave API")
+    if plugins_config:
+        print(f"  Plugins: {', '.join(p['name'] for p in plugins_config)}")
     print()
 
     # Auto-start after init (background)
