@@ -68,5 +68,13 @@
       "timeout": 60
     }
   ],
-  "plugins": []
+  "plugins": [],
+  "browser_enabled": false,
+  "mcp_servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data/workspace"]
+    }
+  ]
 }

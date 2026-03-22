@@ -198,6 +198,25 @@ async def main() -> None:
     from qanot.tools.local import register_local_tools
     register_local_tools(tool_registry)
 
+    # Connect MCP servers (Model Context Protocol)
+    mcp_manager = None
+    if config.mcp_servers:
+        from qanot.mcp_client import MCPManager
+        mcp_manager = MCPManager()
+        mcp_count = await mcp_manager.connect_servers(config.mcp_servers)
+        if mcp_count:
+            tool_count = mcp_manager.register_tools(tool_registry)
+            logger.info("MCP: %d servers connected, %d tools registered", mcp_count, tool_count)
+
+    # Register browser control tools (Playwright)
+    if config.browser_enabled:
+        try:
+            from qanot.tools.browser import register_browser_tools
+            register_browser_tools(tool_registry, config.workspace_dir)
+            logger.info("Browser control enabled (Playwright)")
+        except Exception as e:
+            logger.warning("Browser tools failed to register: %s", e)
+
     # Register web search tools (only if Brave API key is configured)
     if config.brave_api_key:
         from qanot.tools.web import register_web_tools
@@ -346,6 +365,13 @@ async def main() -> None:
                 logger.warning("Error stopping agent bot '%s': %s", ab.agent_def.id, e)
         await shutdown_plugins()
         scheduler.stop()
+        # Close MCP server connections
+        if mcp_manager:
+            await mcp_manager.disconnect_all()
+        # Close browser if it was used
+        if config.browser_enabled:
+            from qanot.tools.browser import _close_browser
+            await _close_browser()
         # Close shared voice HTTP session
         from qanot.voice import close_voice_session
         await close_voice_session()

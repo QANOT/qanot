@@ -128,6 +128,10 @@ class Config:
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group
     monitor_group_id: int = 0
+    # MCP (Model Context Protocol) servers
+    mcp_servers: list[dict] = field(default_factory=list)
+    # Browser control (Playwright)
+    browser_enabled: bool = False
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
