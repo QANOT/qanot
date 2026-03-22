@@ -212,16 +212,29 @@ def get_plugin_manager() -> PluginManager:
 
 
 def _find_plugin_dir(name: str, plugins_dir: str) -> Path | None:
-    """Find plugin directory by name, searching builtin and external paths."""
-    # Try built-in plugins first
-    builtin_path = BUILTIN_PLUGINS_DIR / name
-    if builtin_path.is_dir():
-        return builtin_path
+    """Find plugin directory by name, searching 3 tiers.
 
-    # Try configured plugins directory
+    Resolution order (highest priority wins):
+      1. Workspace plugins_dir (project-level)
+      2. User-level ~/.qanot/plugins/
+      3. Bundled plugins (shipped with qanot package)
+    """
+    from qanot.plugins.registry import USER_PLUGINS_DIR
+
+    # Workspace (highest priority)
     external_path = Path(plugins_dir) / name
     if external_path.is_dir():
         return external_path
+
+    # User-level
+    user_path = USER_PLUGINS_DIR / name
+    if user_path.is_dir():
+        return user_path
+
+    # Bundled (lowest priority)
+    builtin_path = BUILTIN_PLUGINS_DIR / name
+    if builtin_path.is_dir():
+        return builtin_path
 
     return None
 
