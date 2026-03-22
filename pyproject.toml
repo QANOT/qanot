@@ -42,6 +42,7 @@ docs = ["python-docx>=1.1", "openpyxl>=3.1", "fpdf2>=2.7", "python-pptx>=0.6"]
 rag = ["sqlite-vec>=0.1.6", "PyMuPDF>=1.24"]
 local = ["fastembed>=0.4"]
 mysql = ["aiomysql>=0.2"]
+dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/QANOT/qanot"
@@ -59,3 +60,6 @@ include = ["qanot*", "plugins*"]
 [tool.setuptools.package-data]
 qanot = ["templates/**/*", "py.typed"]
 plugins = ["**/*.py", "**/*.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
