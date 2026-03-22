@@ -11,7 +11,7 @@ import uuid
 # System directories that should NEVER be written to
 _SYSTEM_DIRS = frozenset({
     "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64",
-    "/boot", "/proc", "/sys", "/dev", "/var/run",
+    "/boot", "/proc", "/sys", "/dev", "/var/run", "/run",
     "/System", "/Library",  # macOS
     "C:\\Windows", "C:\\Program Files",  # Windows
 })
