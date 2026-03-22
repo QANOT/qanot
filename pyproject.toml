@@ -16,7 +16,6 @@ keywords = ["telegram", "bot", "ai", "agent", "chatbot", "llm", "rag", "uzbekist
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -27,13 +26,6 @@ classifiers = [
     "Framework :: AsyncIO",
     "Typing :: Typed",
 ]
-
-[project.urls]
-Homepage = "https://github.com/QANOT/qanot"
-Documentation = "https://plane.topkey.uz/docs/"
-Repository = "https://github.com/QANOT/qanot.git"
-"Bug Tracker" = "https://github.com/QANOT/qanot/issues"
-Changelog = "https://github.com/QANOT/qanot/releases"
 
 dependencies = [
     "aiogram>=3.4",
@@ -50,6 +42,13 @@ docs = ["python-docx>=1.1", "openpyxl>=3.1", "fpdf2>=2.7", "python-pptx>=0.6"]
 rag = ["sqlite-vec>=0.1.6", "PyMuPDF>=1.24"]
 local = ["fastembed>=0.4"]
 mysql = ["aiomysql>=0.2"]
+
+[project.urls]
+Homepage = "https://github.com/QANOT/qanot"
+Documentation = "https://plane.topkey.uz/docs/"
+Repository = "https://github.com/QANOT/qanot.git"
+"Bug Tracker" = "https://github.com/QANOT/qanot/issues"
+Changelog = "https://github.com/QANOT/qanot/releases"
 
 [project.scripts]
 qanot = "qanot.cli:main"
