@@ -239,6 +239,13 @@ async def main() -> None:
     # Register cron tools (pass scheduler ref for reload notifications)
     register_cron_tools(tool_registry, config.cron_dir, scheduler_ref=scheduler)
 
+    # Register skill management tools (create, list, run, delete)
+    from qanot.tools.skill_tools import register_skill_tools
+    register_skill_tools(
+        tool_registry, config.workspace_dir,
+        reload_callback=lambda: _agent_ref[0].load_skills(config.workspace_dir) if _agent_ref else None,
+    )
+
     # Load plugins
     await load_plugins(config, tool_registry)
 
