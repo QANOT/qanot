@@ -114,6 +114,7 @@ class Config:
     # Dashboard
     dashboard_enabled: bool = True  # Enable web dashboard
     dashboard_port: int = 8765  # Dashboard port
+    dashboard_host: str = "127.0.0.1"  # Bind address (use 0.0.0.0 for Docker)
     # Backup
     backup_enabled: bool = True  # Enable startup backups
     # Model routing (cost optimization)
