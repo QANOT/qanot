@@ -37,6 +37,7 @@ from qanot.providers.errors import (
     ERROR_CONTEXT_OVERFLOW,
 )
 from qanot.plugins.base import validate_tool_params
+from qanot.hooks import HookRegistry
 from qanot.registry import ToolRegistry  # re-export for compat
 from qanot.session import SessionWriter
 
@@ -99,7 +100,6 @@ class Agent:
         # Per-user pending files queue (populated by send_file tool)
         self._pending_files: dict[str, list[str]] = {}
         # Lifecycle hooks
-        from qanot.hooks import HookRegistry
         self.hooks: HookRegistry = hooks or HookRegistry()
         Agent._instance = self
 

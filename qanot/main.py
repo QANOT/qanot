@@ -20,6 +20,7 @@ from qanot.tools.doctor import register_doctor_tool
 from qanot.tools.documents import register_document_tools
 from qanot.tools.workspace import init_workspace
 from qanot.plugins.loader import load_plugins, shutdown_plugins
+from qanot.hooks import HookRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,7 +136,6 @@ async def main() -> None:
     tool_registry = ToolRegistry()
 
     # Create lifecycle hook registry
-    from qanot.hooks import HookRegistry
     agent_hooks = HookRegistry()
 
     # Initialize RAG engine
