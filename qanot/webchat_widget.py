@@ -40,11 +40,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <button id="send">Yuborish</button>
 </div>
 <script>
-const PORT = '{{PORT}}';
 const TOKEN = '{{TOKEN}}';
 const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const host = location.hostname || 'localhost';
-const wsUrl = protocol + '//' + host + ':' + PORT + '/ws/chat' + (TOKEN ? '?token=' + TOKEN : '');
+const wsUrl = protocol + '//' + location.host + '/ws/chat' + (TOKEN ? '?token=' + TOKEN : '');
 
 let ws = null;
 let sessionId = localStorage.getItem('qanot_session') || '';
