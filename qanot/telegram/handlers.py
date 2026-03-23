@@ -151,6 +151,8 @@ class HandlersMixin:
             "/context \u2014 Kontekst tafsilotlari\n"
             "/id \u2014 Foydalanuvchi ID\n"
             "/config \u2014 Barcha sozlamalar\n"
+            "/mcp \u2014 MCP serverlar holati\n"
+            "/plugins \u2014 Pluginlar boshqaruvi\n"
             "/help \u2014 Shu yordam\n\n"
             "**Imkoniyatlar:**\n"
             "\U0001f4dd Matn \u2014 savol, buyruq, suhbat\n"
@@ -719,6 +721,130 @@ class HandlersMixin:
         )
         await self._send_final(message.chat.id, text)
 
+    # ── /mcp ──────────────────────────────────────────────
+
+    async def _handle_mcp(self, message: "Message") -> None:
+        """Handle /mcp — show MCP servers, enable/disable via inline buttons."""
+        if not self._check_command_access(message):
+            return
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        mcp_mgr = getattr(self, "_mcp_manager", None)
+        servers = self.config.mcp_servers or []
+
+        if not servers and not mcp_mgr:
+            await self._send_final(
+                message.chat.id,
+                "\U0001f50c **MCP Serverlar**\n\n"
+                "Hech qanday MCP server sozlanmagan.\n\n"
+                "config.json ga qo'shing:\n"
+                '```\n"mcp_servers": [\n'
+                '  {"name": "context7", "command": "uvx", "args": ["context7-mcp"]}\n'
+                "]\n```",
+            )
+            return
+
+        # Build status display
+        lines = ["\U0001f50c **MCP Serverlar**\n"]
+
+        connected = mcp_mgr.connected_servers if mcp_mgr else []
+
+        for cfg in servers:
+            name = cfg.get("name", "unnamed")
+            cmd = cfg.get("command", "?")
+            is_connected = name in connected
+            icon = "\U0001f7e2" if is_connected else "\U0001f534"
+
+            tool_count = 0
+            if mcp_mgr and is_connected:
+                srv = mcp_mgr._servers.get(name)
+                if srv:
+                    tool_count = len(srv.tools)
+
+            tools_str = f" ({tool_count} tools)" if tool_count else ""
+            lines.append(f"{icon} **{name}** \u2014 `{cmd}`{tools_str}")
+
+            # List tool names for connected servers
+            if mcp_mgr and is_connected:
+                srv = mcp_mgr._servers.get(name)
+                if srv and srv.tools:
+                    tool_names = ", ".join(t["name"] for t in srv.tools[:10])
+                    if len(srv.tools) > 10:
+                        tool_names += f" +{len(srv.tools) - 10} more"
+                    lines.append(f"  \u2514 {tool_names}")
+
+        total = mcp_mgr.total_tools if mcp_mgr else 0
+        lines.append(f"\n**Jami:** {len(connected)}/{len(servers)} server, {total} tools")
+
+        await self._send_final(message.chat.id, "\n".join(lines))
+
+    # ── /plugins ──────────────────────────────────────────
+
+    async def _handle_plugins(self, message: "Message") -> None:
+        """Handle /plugins — list plugins, enable/disable via inline buttons."""
+        if not self._check_command_access(message):
+            return
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from qanot.plugins.loader import get_plugin_manager
+
+        pm = get_plugin_manager()
+        loaded = pm.loaded_plugins
+        all_plugins = self.config.plugins
+
+        if not all_plugins:
+            await self._send_final(
+                message.chat.id,
+                "\U0001f9e9 **Pluginlar**\n\n"
+                "Hech qanday plugin sozlanmagan.\n\n"
+                "`qanot plugin install <name>` bilan o'rnating.",
+            )
+            return
+
+        buttons = []
+        lines = ["\U0001f9e9 **Pluginlar**\n"]
+
+        for pcfg in all_plugins:
+            name = pcfg.name
+            is_loaded = name in loaded
+            is_enabled = pcfg.enabled
+
+            if is_loaded:
+                plugin = loaded[name]
+                tool_count = len(plugin.get_tools())
+                icon = "\U0001f7e2"
+                status = f"{tool_count} tools"
+            elif is_enabled:
+                icon = "\U0001f7e1"
+                status = "enabled, not loaded"
+            else:
+                icon = "\u26aa"
+                status = "disabled"
+
+            lines.append(f"{icon} **{name}** \u2014 {status}")
+
+            # Toggle button
+            if is_enabled:
+                buttons.append([InlineKeyboardButton(
+                    text=f"\u274c Disable {name}",
+                    callback_data=f"plg_off:{name}",
+                )])
+            else:
+                buttons.append([InlineKeyboardButton(
+                    text=f"\u2705 Enable {name}",
+                    callback_data=f"plg_on:{name}",
+                )])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+
+        note = "\n\n_O'zgartirish uchun restart kerak_" if buttons else ""
+        await message.reply(
+            "\n".join(lines) + note,
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
     # ── Callback query router ─────────────────────────────
 
     async def _handle_callback_query(self, callback: "CallbackQuery") -> None:
@@ -743,6 +869,8 @@ class HandlersMixin:
             "group": self._cb_group,
             "exec": self._cb_exec,
             "code": self._cb_code,
+            "plg_on": self._cb_plugin_enable,
+            "plg_off": self._cb_plugin_disable,
         }
 
         prefix = data.split(":", 1)[0] if ":" in data else ""
@@ -951,6 +1079,49 @@ class HandlersMixin:
             )
         except Exception as e:
             logger.debug("Failed to update code message: %s", e)
+
+    # ── Callback: plugin enable/disable ─────────────────────
+
+    async def _cb_plugin_enable(self, callback: "CallbackQuery", name: str) -> None:
+        for pcfg in self.config.plugins:
+            if pcfg.name == name:
+                pcfg.enabled = True
+                break
+        self._save_plugins_config()
+        await callback.answer(f"\u2705 {name} enabled (restart kerak)")
+        try:
+            await callback.message.edit_text(
+                f"\u2705 Plugin **{name}** enabled.\nRestart qiling: `/restart` yoki `qanot restart`",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug("Failed to update plugin message: %s", e)
+
+    async def _cb_plugin_disable(self, callback: "CallbackQuery", name: str) -> None:
+        for pcfg in self.config.plugins:
+            if pcfg.name == name:
+                pcfg.enabled = False
+                break
+        self._save_plugins_config()
+        await callback.answer(f"\u274c {name} disabled (restart kerak)")
+        try:
+            await callback.message.edit_text(
+                f"\u274c Plugin **{name}** disabled.\nRestart qiling: `/restart` yoki `qanot restart`",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug("Failed to update plugin message: %s", e)
+
+    def _save_plugins_config(self) -> None:
+        """Persist plugins enable/disable state to config.json."""
+        plugins_data = []
+        for pcfg in self.config.plugins:
+            plugins_data.append({
+                "name": pcfg.name,
+                "enabled": pcfg.enabled,
+                **({"config": pcfg.config} if pcfg.config else {}),
+            })
+        self._save_config_field("plugins", plugins_data)
 
     # ── Approval request ──────────────────────────────────
 

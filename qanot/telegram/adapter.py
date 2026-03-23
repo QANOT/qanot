@@ -142,6 +142,14 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_config(message: Message) -> None:
             await self._handle_config(message)
 
+        @self.dp.message(F.text.startswith("/mcp"))
+        async def handle_mcp(message: Message) -> None:
+            await self._handle_mcp(message)
+
+        @self.dp.message(F.text.startswith("/plugins"))
+        async def handle_plugins(message: Message) -> None:
+            await self._handle_plugins(message)
+
         @self.dp.message(F.text)
         async def handle_text(message: Message) -> None:
             await self._handle_message(message)

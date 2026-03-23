@@ -222,6 +222,8 @@ class StreamingMixin:
             BotCommand(command="group", description="Guruh rejimi"),
             BotCommand(command="exec", description="Xavfsizlik darajasi"),
             BotCommand(command="code", description="Code execution (sandbox)"),
+            BotCommand(command="mcp", description="MCP serverlar"),
+            BotCommand(command="plugins", description="Pluginlar boshqaruvi"),
             BotCommand(command="status", description="Sessiya holati"),
             BotCommand(command="usage", description="Token sarfi va narxi"),
             BotCommand(command="context", description="Kontekst tafsilotlari"),

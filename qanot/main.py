@@ -331,6 +331,10 @@ async def main() -> None:
     )
     _telegram_ref.append(telegram)
 
+    # Expose MCP manager to Telegram adapter for /mcp command
+    if mcp_manager:
+        telegram._mcp_manager = mcp_manager
+
     # Register sub-agent tools (needs agent + telegram for delivery)
     from qanot.tools.subagent import register_sub_agent_tools
     register_sub_agent_tools(
