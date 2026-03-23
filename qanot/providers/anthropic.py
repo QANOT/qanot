@@ -23,10 +23,71 @@ PRICING = {
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
 
+# Server-side code execution tool definition
+CODE_EXECUTION_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}
+
+# Block types produced by server-side code execution (skip in our tool_use handling)
+_SERVER_TOOL_TYPES = frozenset({
+    "server_tool_use",
+    "bash_code_execution_tool_result",
+    "text_editor_code_execution_tool_result",
+})
+
 
 def _is_oauth_token(api_key: str) -> bool:
     """Check if the API key is an Anthropic OAuth token."""
     return "sk-ant-oat" in api_key
+
+
+def _extract_code_execution_text(block) -> str | None:
+    """Extract human-readable text from a server-side code execution result block."""
+    btype = getattr(block, "type", "")
+    if btype == "server_tool_use":
+        name = getattr(block, "name", "")
+        inp = getattr(block, "input", {})
+        if name == "bash_code_execution" and isinstance(inp, dict):
+            cmd = inp.get("command", "")
+            return f"```bash\n$ {cmd}\n```" if cmd else None
+        if name == "text_editor_code_execution" and isinstance(inp, dict):
+            op = inp.get("command", "")
+            path = inp.get("path", "")
+            return f"[file {op}: {path}]" if path else None
+        return None
+
+    content = getattr(block, "content", None)
+    if content is None:
+        return None
+
+    if btype == "bash_code_execution_tool_result":
+        ct = getattr(content, "type", "")
+        if ct == "bash_code_execution_result":
+            stdout = getattr(content, "stdout", "") or ""
+            stderr = getattr(content, "stderr", "") or ""
+            rc = getattr(content, "return_code", 0)
+            parts = []
+            if stdout:
+                parts.append(stdout.rstrip())
+            if stderr:
+                parts.append(f"stderr: {stderr.rstrip()}")
+            if rc != 0:
+                parts.append(f"(exit code {rc})")
+            return "\n".join(parts) if parts else None
+        if "error" in ct:
+            code = getattr(content, "error_code", "unknown")
+            return f"[code execution error: {code}]"
+
+    if btype == "text_editor_code_execution_tool_result":
+        ct = getattr(content, "type", "")
+        if ct == "text_editor_code_execution_result":
+            file_content = getattr(content, "content", None)
+            if file_content:
+                return file_content
+            lines = getattr(content, "lines", None)
+            if lines:
+                return "\n".join(lines)
+            return "[file operation completed]"
+
+    return None
 
 
 class AnthropicProvider(LLMProvider):
@@ -38,6 +99,7 @@ class AnthropicProvider(LLMProvider):
         model: str = "claude-sonnet-4-6",
         thinking_level: str = "off",
         thinking_budget: int = 10000,
+        code_execution: bool = False,
     ):
         self._is_oauth = _is_oauth_token(api_key)
         client_kwargs: dict[str, Any] = {}
@@ -58,6 +120,9 @@ class AnthropicProvider(LLMProvider):
         self.model = model
         self._thinking_level = thinking_level
         self._thinking_budget = thinking_budget
+        self._code_execution = code_execution
+        # Container ID for cross-turn state persistence
+        self._container_id: str | None = None
 
     @staticmethod
     def _extract_usage_dict(u) -> dict:
@@ -88,6 +153,27 @@ class AnthropicProvider(LLMProvider):
         kwargs["temperature"] = 1
         # Increase max_tokens to accommodate thinking budget
         kwargs["max_tokens"] = self._thinking_budget + 8192
+
+    def _inject_code_execution(self, kwargs: dict[str, Any]) -> None:
+        """Inject server-side code execution tool if enabled."""
+        if not self._code_execution:
+            return
+        tools = kwargs.get("tools") or []
+        # Avoid duplicate injection
+        if not any(t.get("type") == "code_execution_20250825" for t in tools):
+            tools.append(CODE_EXECUTION_TOOL)
+        kwargs["tools"] = tools
+        # Reuse container for state persistence across turns
+        if self._container_id:
+            kwargs["container"] = self._container_id
+
+    def _capture_container(self, response) -> None:
+        """Capture container ID from response for cross-turn reuse."""
+        container = getattr(response, "container", None)
+        if container:
+            cid = getattr(container, "id", None)
+            if cid:
+                self._container_id = cid
 
     def _build_usage(self, usage_dict: dict) -> Usage:
         """Construct a Usage object from a raw usage dict."""
@@ -183,6 +269,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["tools"] = tools
 
         self._apply_thinking_kwargs(kwargs)
+        self._inject_code_execution(kwargs)
 
         try:
             response = await self.client.messages.create(**kwargs)
@@ -190,13 +277,14 @@ class AnthropicProvider(LLMProvider):
             logger.error("Anthropic API error: %s", e)
             raise
 
-        # Extract content — skip thinking blocks (they are internal reasoning)
+        self._capture_container(response)
+
+        # Extract content — skip thinking blocks, surface code execution results
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
 
         for block in response.content:
             if block.type == "thinking":
-                # Skip thinking blocks — model used them internally
                 continue
             elif block.type == "text":
                 text_parts.append(block.text)
@@ -206,6 +294,11 @@ class AnthropicProvider(LLMProvider):
                     name=block.name,
                     input=block.input,
                 ))
+            elif block.type in _SERVER_TOOL_TYPES:
+                # Server-side code execution — surface results as text
+                exec_text = _extract_code_execution_text(block)
+                if exec_text:
+                    text_parts.append(exec_text)
 
         return ProviderResponse(
             content="".join(text_parts),
@@ -233,6 +326,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["tools"] = tools
 
         self._apply_thinking_kwargs(kwargs)
+        self._inject_code_execution(kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -242,6 +336,8 @@ class AnthropicProvider(LLMProvider):
         current_tool_json_parts: list[str] = []
         # Track whether current block is a thinking block (skip its deltas)
         _in_thinking_block = False
+        # Track server-side tool blocks (code execution)
+        _in_server_block = False
 
         try:
             async with self.client.messages.stream(**kwargs) as stream:
@@ -250,17 +346,27 @@ class AnthropicProvider(LLMProvider):
                         block = event.content_block
                         if block.type == "thinking":
                             _in_thinking_block = True
+                            _in_server_block = False
+                        elif block.type in _SERVER_TOOL_TYPES:
+                            _in_server_block = True
+                            _in_thinking_block = False
+                            # Surface server tool invocations as text
+                            exec_text = _extract_code_execution_text(block)
+                            if exec_text:
+                                text_parts.append(exec_text)
+                                yield StreamEvent(type="text_delta", text=exec_text)
                         elif block.type == "tool_use":
                             _in_thinking_block = False
+                            _in_server_block = False
                             current_tool_id = block.id
                             current_tool_name = block.name
                             current_tool_json_parts = []
                         else:
                             _in_thinking_block = False
+                            _in_server_block = False
 
                     elif event.type == "content_block_delta":
-                        if _in_thinking_block:
-                            # Skip thinking deltas — don't yield to user
+                        if _in_thinking_block or _in_server_block:
                             continue
                         delta = event.delta
                         if delta.type == "text_delta":
@@ -272,6 +378,9 @@ class AnthropicProvider(LLMProvider):
                     elif event.type == "content_block_stop":
                         if _in_thinking_block:
                             _in_thinking_block = False
+                            continue
+                        if _in_server_block:
+                            _in_server_block = False
                             continue
                         if current_tool_id:
                             current_tool_json = "".join(current_tool_json_parts)
@@ -309,6 +418,7 @@ class AnthropicProvider(LLMProvider):
             logger.error("Anthropic streaming error: %s", e)
             raise
 
+        self._capture_container(final)
         usage_dict = self._extract_usage_dict(final.usage)
 
         response = ProviderResponse(

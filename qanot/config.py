@@ -108,6 +108,8 @@ class Config:
     # Extended thinking (Claude reasoning mode)
     thinking_level: str = "off"  # "off" | "low" | "medium" | "high"
     thinking_budget: int = 10000  # max thinking tokens
+    # Anthropic server-side code execution (free with web search)
+    code_execution: bool = False  # Enable Claude's sandboxed code execution
     # Execution security
     exec_security: str = "cautious"  # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)  # strict mode: only these commands allowed

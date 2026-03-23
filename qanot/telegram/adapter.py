@@ -110,6 +110,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_exec(message: Message) -> None:
             await self._handle_exec(message)
 
+        @self.dp.message(F.text.startswith("/code"))
+        async def handle_code(message: Message) -> None:
+            await self._handle_code(message)
+
         @self.dp.message(F.text.startswith("/context"))
         async def handle_context(message: Message) -> None:
             await self._handle_context(message)

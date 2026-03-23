@@ -221,6 +221,7 @@ class StreamingMixin:
             BotCommand(command="routing", description="Model routing on/off"),
             BotCommand(command="group", description="Guruh rejimi"),
             BotCommand(command="exec", description="Xavfsizlik darajasi"),
+            BotCommand(command="code", description="Code execution (sandbox)"),
             BotCommand(command="status", description="Sessiya holati"),
             BotCommand(command="usage", description="Token sarfi va narxi"),
             BotCommand(command="context", description="Kontekst tafsilotlari"),

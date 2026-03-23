@@ -45,7 +45,11 @@ def _find_gemini_key(config) -> str | None:
 def _anthropic_thinking_kwargs(provider_type: str, config) -> dict:
     """Return thinking keyword arguments for Anthropic providers; empty dict otherwise."""
     if provider_type == "anthropic":
-        return {"thinking_level": config.thinking_level, "thinking_budget": config.thinking_budget}
+        return {
+            "thinking_level": config.thinking_level,
+            "thinking_budget": config.thinking_budget,
+            "code_execution": config.code_execution,
+        }
     return {}
 
 

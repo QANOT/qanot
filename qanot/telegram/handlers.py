@@ -143,7 +143,8 @@ class HandlersMixin:
             "/mode \u2014 Javob rejimi\n"
             "/routing \u2014 Model routing\n"
             "/group \u2014 Guruh rejimi\n"
-            "/exec \u2014 Xavfsizlik darajasi\n\n"
+            "/exec \u2014 Xavfsizlik darajasi\n"
+            "/code \u2014 Code execution (sandbox)\n\n"
             "**Ma'lumot:**\n"
             "/status \u2014 Sessiya holati\n"
             "/usage \u2014 Token sarfi va narxi\n"
@@ -465,6 +466,41 @@ class HandlersMixin:
             parse_mode="Markdown",
         )
 
+    # ── /code ──────────────────────────────────────────────
+
+    async def _handle_code(self, message: "Message") -> None:
+        """Handle /code — toggle Anthropic server-side code execution."""
+        if not self._check_command_access(message):
+            return
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        current = self.config.code_execution
+        on_check = "\u2705 " if current else ""
+        off_check = "\u2705 " if not current else ""
+        buttons = [
+            [InlineKeyboardButton(
+                text=f"{on_check}ON \u2014 Claude sandbox (Python, Bash, vizualizatsiya)",
+                callback_data="code:on",
+            )],
+            [InlineKeyboardButton(
+                text=f"{off_check}OFF \u2014 O'chirilgan",
+                callback_data="code:off",
+            )],
+        ]
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        status = "ON" if current else "OFF"
+        free_note = ""
+        if self.config.brave_api_key:
+            free_note = "\n\U0001f4b0 Web search bilan birga **bepul**!"
+        await message.reply(
+            f"\U0001f4bb **Code execution:** `{status}`{free_note}\n\n"
+            f"Claude sandbox: Python, Bash, fayl yaratish, grafik chizish:",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
     # ── /context ──────────────────────────────────────────
 
     async def _handle_context(self, message: "Message") -> None:
@@ -673,6 +709,7 @@ class HandlersMixin:
             f"**STT language:** `{c.voice_language or 'auto'}`\n"
             f"**Group mode:** `{c.group_mode}`\n"
             f"**Exec security:** `{c.exec_security}`\n"
+            f"**Code execution:** `{'ON' if c.code_execution else 'OFF'}`\n"
             f"**RAG:** `{c.rag_mode}` ({'ON' if c.rag_enabled else 'OFF'})\n"
             f"**Compaction:** `{c.compaction_mode}`\n"
             f"**Max context:** `{c.max_context_tokens:,}`\n"
@@ -705,6 +742,7 @@ class HandlersMixin:
             "routing": self._cb_routing,
             "group": self._cb_group,
             "exec": self._cb_exec,
+            "code": self._cb_code,
         }
 
         prefix = data.split(":", 1)[0] if ":" in data else ""
@@ -892,6 +930,27 @@ class HandlersMixin:
             )
         except Exception as e:
             logger.debug("Failed to update exec message: %s", e)
+
+    # ── Callback: code execution ────────────────────────────
+
+    async def _cb_code(self, callback: "CallbackQuery", value: str) -> None:
+        enabled = value == "on"
+        self.config.code_execution = enabled
+        self._save_config_field("code_execution", enabled)
+        # Update provider if it's Anthropic
+        provider = self.agent.provider
+        for p in [provider, getattr(provider, "_provider", None)]:
+            if p and hasattr(p, "_code_execution"):
+                p._code_execution = enabled
+        status = "ON" if enabled else "OFF"
+        await callback.answer(f"\u2705 Code execution: {status}")
+        try:
+            await callback.message.edit_text(
+                f"\u2705 Code execution: **{status}**",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug("Failed to update code message: %s", e)
 
     # ── Approval request ──────────────────────────────────
 
