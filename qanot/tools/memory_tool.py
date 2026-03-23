@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Callable
 
 from qanot.registry import ToolRegistry
 
@@ -127,10 +128,29 @@ def _format_file_content(path: Path, view_range: list[int] | None = None) -> str
 def register_memory_tool(
     registry: ToolRegistry,
     workspace_dir: str,
+    on_write: Callable[[str, str], None] | None = None,
 ) -> None:
-    """Register the Anthropic-compatible memory tool for all providers."""
+    """Register the Anthropic-compatible memory tool for all providers.
+
+    Args:
+        on_write: Optional callback(content, source) called on write operations
+                  for RAG re-indexing.
+    """
     memories_dir = Path(workspace_dir) / "memories"
     memories_dir.mkdir(parents=True, exist_ok=True)
+
+    def _notify_write(path_str: str) -> None:
+        """Notify RAG indexer about memory file changes."""
+        if not on_write:
+            return
+        target = _resolve_safe(memories_dir, path_str)
+        if target and target.is_file():
+            try:
+                content = target.read_text(encoding="utf-8", errors="replace")
+                source = f"memories/{target.relative_to(memories_dir.resolve())}"
+                on_write(content, source)
+            except Exception as e:
+                logger.debug("Memory write hook failed: %s", e)
 
     async def memory_handler(params: dict) -> str:
         command = params.get("command", "")
@@ -138,11 +158,20 @@ def register_memory_tool(
         if command == "view":
             return _handle_view(memories_dir, params)
         elif command == "create":
-            return _handle_create(memories_dir, params)
+            result = _handle_create(memories_dir, params)
+            if "created" in result:
+                _notify_write(params.get("path", ""))
+            return result
         elif command == "str_replace":
-            return _handle_str_replace(memories_dir, params)
+            result = _handle_str_replace(memories_dir, params)
+            if "edited" in result:
+                _notify_write(params.get("path", ""))
+            return result
         elif command == "insert":
-            return _handle_insert(memories_dir, params)
+            result = _handle_insert(memories_dir, params)
+            if "edited" in result:
+                _notify_write(params.get("path", ""))
+            return result
         elif command == "delete":
             return _handle_delete(memories_dir, params)
         elif command == "rename":

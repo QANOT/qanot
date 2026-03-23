@@ -48,6 +48,12 @@ class MemoryIndexer:
             for note_path in sorted(memory_dir.glob("*.md"), reverse=True)[:self._MAX_DAILY_NOTES]:
                 total_chunks += await self._index_file(note_path, user_id)
 
+        # Index Anthropic memory tool files (/memories directory)
+        if (memories_dir := self.workspace_dir / "memories").exists():
+            for mem_file in sorted(memories_dir.rglob("*"), reverse=True):
+                if mem_file.is_file() and mem_file.suffix in (".md", ".txt", ".xml", ".json"):
+                    total_chunks += await self._index_file(mem_file, user_id)
+
         if total_chunks > 0:
             logger.info("Indexed %d chunks from workspace for user=%r", total_chunks, user_id)
 

@@ -209,7 +209,20 @@ async def main() -> None:
     # Register Anthropic-compatible memory tool (/memories directory)
     if config.memory_tool:
         from qanot.tools.memory_tool import register_memory_tool
-        register_memory_tool(tool_registry, config.workspace_dir)
+
+        def _memory_write_hook(content: str, source: str) -> None:
+            """Trigger RAG re-indexing when memory tool writes a file."""
+            if rag_indexer:
+                task = asyncio.create_task(rag_indexer.index_text(content, source=source))
+                task.add_done_callback(
+                    lambda t: logger.warning("Memory RAG index failed: %s", t.exception())
+                    if not t.cancelled() and t.exception() else None
+                )
+
+        register_memory_tool(
+            tool_registry, config.workspace_dir,
+            on_write=_memory_write_hook if rag_indexer else None,
+        )
 
     # Register document generation tools (Word, Excel)
     register_document_tools(tool_registry, config.workspace_dir)
