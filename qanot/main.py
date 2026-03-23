@@ -366,31 +366,27 @@ async def main() -> None:
     from qanot.agent_bot import start_agent_bots
     agent_bots = await start_agent_bots(config, provider, tool_registry)
 
-    # Start web dashboard
+    # Start web dashboard (with optional webhook + webchat routes)
     dashboard = None
     if getattr(config, "dashboard_enabled", True):
         try:
             from qanot.dashboard import Dashboard
             dashboard = Dashboard(config, agent)
+
+            # Register webhook/webchat routes BEFORE starting (router freezes on start)
+            if config.webhook_enabled:
+                from qanot.webhook import WebhookHandler
+                webhook_handler = WebhookHandler(config, agent, scheduler)
+                webhook_handler.register_routes(dashboard.app)
+
+            if config.webchat_enabled:
+                from qanot.webchat import WebChatAdapter
+                webchat = WebChatAdapter(config, agent)
+                webchat.register_routes(dashboard.app)
+
             await dashboard.start(port=getattr(config, "dashboard_port", 8765))
         except Exception as e:
             logger.warning("Dashboard failed to start: %s", e)
-
-    # Attach webhook endpoint to dashboard
-    if config.webhook_enabled and dashboard:
-        from qanot.webhook import WebhookHandler
-        webhook_handler = WebhookHandler(config, agent, scheduler)
-        webhook_handler.register_routes(dashboard.app)
-
-    # Attach WebChat adapter to dashboard
-    if config.webchat_enabled and dashboard:
-        try:
-            from qanot.webchat import WebChatAdapter
-            webchat = WebChatAdapter(config, agent)
-            webchat.register_routes(dashboard.app)
-            logger.info("WebChat enabled at /ws/chat and /webchat")
-        except Exception as e:
-            logger.warning("WebChat failed to start: %s", e)
 
     # Fire startup hooks
     await agent_hooks.fire("on_startup")
