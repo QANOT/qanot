@@ -67,6 +67,7 @@ class Agent:
         context: ContextTracker | None = None,
         prompt_mode: str = "full",
         system_prompt_override: str = "",
+        hooks=None,
     ):
         self.config = config
         self.provider = provider
@@ -97,9 +98,9 @@ class Agent:
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
         self._pending_files: dict[str, list[str]] = {}
-        # Plugin lifecycle hooks
-        self._pre_turn_hooks: list[Callable] = []
-        self._post_turn_hooks: list[Callable] = []
+        # Lifecycle hooks
+        from qanot.hooks import HookRegistry
+        self.hooks: HookRegistry = hooks or HookRegistry()
         Agent._instance = self
 
     # Class-level reference for tools to push images without direct agent access
@@ -130,19 +131,8 @@ class Agent:
 
     def register_plugin_hooks(self, plugins: list) -> None:
         """Register plugins that have lifecycle hooks."""
-        from qanot.plugins.base import Plugin
-
         for p in plugins:
-            try:
-                if p.on_pre_turn.__func__ is not Plugin.on_pre_turn:
-                    self._pre_turn_hooks.append(p.on_pre_turn)
-            except AttributeError:
-                pass
-            try:
-                if p.on_post_turn.__func__ is not Plugin.on_post_turn:
-                    self._post_turn_hooks.append(p.on_post_turn)
-            except AttributeError:
-                pass
+            self.hooks.register_plugin(p)
 
     @property
     def current_user_id(self) -> str:
@@ -564,15 +554,10 @@ class Agent:
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
-        # Plugin pre-turn hooks
-        if self._pre_turn_hooks:
-            for hook in self._pre_turn_hooks:
-                try:
-                    modified = await hook(user_id or "", user_message)
-                    if modified is not None:
-                        user_message = modified
-                except Exception as e:
-                    logger.warning("Pre-turn hook error: %s", e)
+        # Lifecycle hooks: pre-turn
+        modified = await self.hooks.fire("on_pre_turn", user_id=user_id or "", message=user_message)
+        if modified is not None:
+            user_message = modified
 
         final_text = ""
         recent_fingerprints: list[str] = []
@@ -673,15 +658,10 @@ class Agent:
             final_text = "(Agent reached maximum iterations)"
             logger.warning("Agent hit max iterations (%d)", MAX_ITERATIONS)
 
-        # Plugin post-turn hooks
-        if self._post_turn_hooks:
-            for hook in self._post_turn_hooks:
-                try:
-                    modified = await hook(user_id or "", user_message, final_text)
-                    if modified is not None:
-                        final_text = modified
-                except Exception as e:
-                    logger.warning("Post-turn hook error: %s", e)
+        # Lifecycle hooks: post-turn
+        modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
+        if modified is not None:
+            final_text = modified
 
         return final_text
 
@@ -715,15 +695,10 @@ class Agent:
         messages = self._get_messages(user_id)
         user_message = await self._prepare_turn(user_message, messages, images=images)
 
-        # Plugin pre-turn hooks
-        if self._pre_turn_hooks:
-            for hook in self._pre_turn_hooks:
-                try:
-                    modified = await hook(user_id or "", user_message)
-                    if modified is not None:
-                        user_message = modified
-                except Exception as e:
-                    logger.warning("Pre-turn hook error: %s", e)
+        # Lifecycle hooks: pre-turn
+        modified = await self.hooks.fire("on_pre_turn", user_id=user_id or "", message=user_message)
+        if modified is not None:
+            user_message = modified
 
         recent_fingerprints: list[str] = []
         result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
@@ -872,15 +847,10 @@ class Agent:
                 usage = response.usage if response else Usage()
                 self._handle_end_turn(final_text, user_message, messages, usage)
 
-                # Plugin post-turn hooks
-                if self._post_turn_hooks:
-                    for hook in self._post_turn_hooks:
-                        try:
-                            modified = await hook(user_id or "", user_message, final_text)
-                            if modified is not None:
-                                final_text = modified
-                        except Exception as e:
-                            logger.warning("Post-turn hook error: %s", e)
+                # Lifecycle hooks: post-turn
+                modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
+                if modified is not None:
+                    final_text = modified
 
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return

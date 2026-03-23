@@ -177,6 +177,22 @@ class Plugin(ABC):
         """Called after agent response. Return modified response or None."""
         return None
 
+    async def on_tool_use(self, user_id: str, tool_name: str, tool_input: dict, result: str) -> None:
+        """Called after a tool is executed. Override for logging/auditing."""
+        pass
+
+    async def on_startup(self) -> None:
+        """Called after agent is fully initialized."""
+        pass
+
+    async def on_shutdown(self) -> None:
+        """Called before agent shuts down."""
+        pass
+
+    async def on_compaction(self, user_id: str, before_tokens: int, after_tokens: int) -> None:
+        """Called when context compaction is triggered."""
+        pass
+
 
 def validate_tool_params(params: dict, schema: dict) -> list[str]:
     """Validate tool parameters against JSON schema (lightweight).

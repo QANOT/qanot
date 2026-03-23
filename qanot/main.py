@@ -134,6 +134,10 @@ async def main() -> None:
     # Create tool registry
     tool_registry = ToolRegistry()
 
+    # Create lifecycle hook registry
+    from qanot.hooks import HookRegistry
+    agent_hooks = HookRegistry()
+
     # Initialize RAG engine
     rag_engine = None
     rag_indexer = None
@@ -249,6 +253,15 @@ async def main() -> None:
     # Load plugins
     await load_plugins(config, tool_registry)
 
+    # Register plugin lifecycle hooks with agent
+    from qanot.plugins.loader import get_plugin_manager
+    _pm = get_plugin_manager()
+    if _pm:
+        for plugin in _pm.loaded_plugins.values():
+            agent_hooks.register_plugin(plugin)
+        if agent_hooks.summary:
+            logger.info("Plugin hooks registered: %s", agent_hooks.summary)
+
     # Log registered tools
     logger.info("Tools registered: %s", ", ".join(tool_registry.tool_names))
 
@@ -259,6 +272,7 @@ async def main() -> None:
         tool_registry=tool_registry,
         session=session,
         context=context,
+        hooks=agent_hooks,
     )
 
     _agent_ref.append(agent)
@@ -353,6 +367,7 @@ async def main() -> None:
     agent_bots = await start_agent_bots(config, provider, tool_registry)
 
     # Start web dashboard
+    dashboard = None
     if getattr(config, "dashboard_enabled", True):
         try:
             from qanot.dashboard import Dashboard
@@ -361,9 +376,30 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Dashboard failed to start: %s", e)
 
+    # Attach webhook endpoint to dashboard
+    if config.webhook_enabled and dashboard:
+        from qanot.webhook import WebhookHandler
+        webhook_handler = WebhookHandler(config, agent, scheduler)
+        webhook_handler.register_routes(dashboard.app)
+
+    # Attach WebChat adapter to dashboard
+    if config.webchat_enabled and dashboard:
+        try:
+            from qanot.webchat import WebChatAdapter
+            webchat = WebChatAdapter(config, agent)
+            webchat.register_routes(dashboard.app)
+            logger.info("WebChat enabled at /ws/chat and /webchat")
+        except Exception as e:
+            logger.warning("WebChat failed to start: %s", e)
+
+    # Fire startup hooks
+    await agent_hooks.fire("on_startup")
+
     try:
         await telegram.start()
     finally:
+        # Fire shutdown hooks
+        await agent_hooks.fire("on_shutdown")
         # Stop agent bots
         for ab in agent_bots:
             try:

@@ -70,6 +70,10 @@
   ],
   "plugins": [],
   "browser_enabled": false,
+  "webhook_enabled": false,
+  "webhook_token": "",
+  "webchat_enabled": false,
+  "webchat_token": "",
   "mcp_servers": [
     {
       "name": "filesystem",

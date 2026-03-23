@@ -132,6 +132,14 @@ class Config:
     mcp_servers: list[dict] = field(default_factory=list)
     # Browser control (Playwright)
     browser_enabled: bool = False
+    # Webhook endpoint
+    webhook_enabled: bool = False
+    webhook_token: str = ""
+    # WebChat (embeddable chat widget)
+    webchat_enabled: bool = False
+    webchat_token: str = ""
+    webchat_origins: list[str] = field(default_factory=list)
+    webchat_max_sessions: int = 50
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
