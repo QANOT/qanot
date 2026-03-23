@@ -40,7 +40,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <button id="send">Yuborish</button>
 </div>
 <script>
-const TOKEN = '{{TOKEN}}';
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('token') || '';
 const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = protocol + '//' + location.host + '/ws/chat' + (TOKEN ? '?token=' + TOKEN : '');
 

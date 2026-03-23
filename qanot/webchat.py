@@ -60,8 +60,7 @@ class WebChatAdapter:
         """Serve the embeddable chat widget HTML."""
         from qanot.webchat_widget import WEBCHAT_WIDGET_HTML
 
-        token = self.config.webchat_token
-        html = WEBCHAT_WIDGET_HTML.replace("{{TOKEN}}", token)
+        html = WEBCHAT_WIDGET_HTML
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
