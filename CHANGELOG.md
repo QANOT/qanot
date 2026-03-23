@@ -4,6 +4,34 @@ All notable changes to Qanot AI are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.4] - 2026-03-23
+
+### Added
+- 22 Telegram slash commands with inline keyboard buttons (OpenClaw-style settings management)
+  - Settings: /model, /think, /voice, /voiceprovider, /lang, /mode, /routing, /group, /exec, /code
+  - Info: /status, /usage, /context, /config, /id, /mcp, /plugins
+  - Actions: /reset (with model hint), /compact, /export, /stop
+- Anthropic server-side code execution (`code_execution_20250825`) — free with web search
+- Anthropic memory tool (`memory_20250818`) with dual-layer architecture
+  - All providers get /memories tool (view, create, str_replace, insert, delete, rename)
+  - Anthropic gets trained memory behavior (auto-check, structured notes)
+  - RAG indexes /memories directory automatically
+- /mcp command — view connected MCP servers, tool counts, connection status
+- /plugins command — list/enable/disable plugins via inline buttons
+- Lifecycle hooks system (on_startup, on_shutdown, on_pre_turn, on_post_turn)
+- Webhook endpoint for external events (GitHub, CRM, CI/CD)
+- WebChat adapter with WebSocket streaming
+- 1M context window auto-detection for Opus 4.6 / Sonnet 4.6
+- `thinking.display: "omitted"` for faster time-to-first-token
+- Opus 4.6 added to pricing table
+- `dashboard_host` config field (0.0.0.0 for Docker, 127.0.0.1 default)
+
+### Fixed
+- WebChat auth: token from URL param instead of embedded HTML
+- Stream tool_use events now pass tool_call data correctly
+- WebChat WSS behind nginx uses correct host
+- Webhook/webchat routes registered before dashboard start (frozen router)
+
 ## [2.0.3] - 2026-03-22
 
 ### Added

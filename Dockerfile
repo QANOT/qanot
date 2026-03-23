@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 LABEL maintainer="Sirli AI <hello@sirli.ai>"
 LABEL description="Qanot AI — lightweight Python agent framework for Telegram bots"
-LABEL version="2.0.3"
+LABEL version="2.0.4"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl git zip && rm -rf /var/lib/apt/lists/*
