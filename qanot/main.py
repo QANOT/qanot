@@ -49,6 +49,7 @@ def _anthropic_thinking_kwargs(provider_type: str, config) -> dict:
             "thinking_level": config.thinking_level,
             "thinking_budget": config.thinking_budget,
             "code_execution": config.code_execution,
+            "memory_tool": config.memory_tool,
         }
     return {}
 
@@ -204,6 +205,11 @@ async def main() -> None:
         exec_allowlist=config.exec_allowlist,
         approval_callback=_approval_callback if config.exec_security == "cautious" else None,
     )
+
+    # Register Anthropic-compatible memory tool (/memories directory)
+    if config.memory_tool:
+        from qanot.tools.memory_tool import register_memory_tool
+        register_memory_tool(tool_registry, config.workspace_dir)
 
     # Register document generation tools (Word, Excel)
     register_document_tools(tool_registry, config.workspace_dir)

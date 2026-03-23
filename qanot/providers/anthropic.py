@@ -26,6 +26,10 @@ DEFAULT_PRICING = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write
 # Server-side code execution tool definition
 CODE_EXECUTION_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}
 
+# Anthropic memory tool type hint — makes Claude use trained memory behavior
+# (auto-check /memories on startup, save progress, structured note-taking)
+MEMORY_TOOL_TYPE = {"type": "memory_20250818", "name": "memory"}
+
 # Block types produced by server-side code execution (skip in our tool_use handling)
 _SERVER_TOOL_TYPES = frozenset({
     "server_tool_use",
@@ -100,6 +104,7 @@ class AnthropicProvider(LLMProvider):
         thinking_level: str = "off",
         thinking_budget: int = 10000,
         code_execution: bool = False,
+        memory_tool: bool = False,
     ):
         self._is_oauth = _is_oauth_token(api_key)
         client_kwargs: dict[str, Any] = {}
@@ -121,6 +126,7 @@ class AnthropicProvider(LLMProvider):
         self._thinking_level = thinking_level
         self._thinking_budget = thinking_budget
         self._code_execution = code_execution
+        self._memory_tool = memory_tool
         # Container ID for cross-turn state persistence
         self._container_id: str | None = None
 
@@ -154,18 +160,36 @@ class AnthropicProvider(LLMProvider):
         # Increase max_tokens to accommodate thinking budget
         kwargs["max_tokens"] = self._thinking_budget + 8192
 
-    def _inject_code_execution(self, kwargs: dict[str, Any]) -> None:
-        """Inject server-side code execution tool if enabled."""
-        if not self._code_execution:
-            return
+    def _inject_server_tools(self, kwargs: dict[str, Any]) -> None:
+        """Inject Anthropic server-side tools (code execution, memory type hint)."""
         tools = kwargs.get("tools") or []
-        # Avoid duplicate injection
-        if not any(t.get("type") == "code_execution_20250825" for t in tools):
-            tools.append(CODE_EXECUTION_TOOL)
-        kwargs["tools"] = tools
-        # Reuse container for state persistence across turns
-        if self._container_id:
-            kwargs["container"] = self._container_id
+        changed = False
+
+        # Code execution (server-side sandbox)
+        if self._code_execution:
+            if not any(t.get("type") == "code_execution_20250825" for t in tools):
+                tools.append(CODE_EXECUTION_TOOL)
+                changed = True
+            if self._container_id:
+                kwargs["container"] = self._container_id
+
+        # Memory tool type hint — upgrades our client-side "memory" tool
+        # with Anthropic's trained behavior (auto-check, structured notes)
+        if self._memory_tool:
+            # Replace our generic tool def with the typed version
+            for i, t in enumerate(tools):
+                if t.get("name") == "memory" and "type" not in t:
+                    tools[i] = {**MEMORY_TOOL_TYPE, **{k: v for k, v in t.items() if k != "name"}}
+                    changed = True
+                    break
+            else:
+                # Tool not in list yet — add the type hint
+                if not any(t.get("type") == "memory_20250818" for t in tools):
+                    tools.append(MEMORY_TOOL_TYPE)
+                    changed = True
+
+        if changed:
+            kwargs["tools"] = tools
 
     def _capture_container(self, response) -> None:
         """Capture container ID from response for cross-turn reuse."""
@@ -269,7 +293,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["tools"] = tools
 
         self._apply_thinking_kwargs(kwargs)
-        self._inject_code_execution(kwargs)
+        self._inject_server_tools(kwargs)
 
         try:
             response = await self.client.messages.create(**kwargs)
@@ -326,7 +350,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["tools"] = tools
 
         self._apply_thinking_kwargs(kwargs)
-        self._inject_code_execution(kwargs)
+        self._inject_server_tools(kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

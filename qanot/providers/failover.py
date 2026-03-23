@@ -40,6 +40,8 @@ class ProviderProfile:
     thinking_budget: int = 10000
     # Server-side code execution (Anthropic only)
     code_execution: bool = False
+    # Memory tool type hint (Anthropic only)
+    memory_tool: bool = False
     # Runtime state
     _cooldown_until: float = field(default=0.0, repr=False)
     _failure_count: int = field(default=0, repr=False)
@@ -96,6 +98,7 @@ def _create_single_provider(profile: ProviderProfile) -> LLMProvider:
             thinking_level=profile.thinking_level,
             thinking_budget=profile.thinking_budget,
             code_execution=profile.code_execution,
+            memory_tool=profile.memory_tool,
         )
     elif profile.provider_type == "openai":
         from qanot.providers.openai import OpenAIProvider
