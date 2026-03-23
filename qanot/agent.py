@@ -840,7 +840,7 @@ class Agent:
 
                 messages.append({"role": "user", "content": tool_results})
 
-                yield StreamEvent(type="tool_use")
+                yield StreamEvent(type="tool_use", tool_call=tool_calls[0] if tool_calls else None)
 
             elif stop_reason == "end_turn":
                 final_text = response.content if response else "".join(text_parts)
