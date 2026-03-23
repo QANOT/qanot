@@ -130,9 +130,18 @@ async def main() -> None:
             config.routing_model, routing_mid_model, config.model,
         )
 
-    # Create context tracker
+    # Create context tracker (auto-detect 1M for Opus/Sonnet 4.6)
+    _1M_MODELS = ("claude-opus-4-6", "claude-sonnet-4-6")
+    if config.max_context_tokens > 0:
+        ctx_tokens = config.max_context_tokens
+    elif any(m in config.model for m in _1M_MODELS):
+        ctx_tokens = 1_000_000
+    else:
+        ctx_tokens = 200_000
+    logger.info("Context window: %s tokens", f"{ctx_tokens:,}")
+
     context = ContextTracker(
-        max_tokens=config.max_context_tokens,
+        max_tokens=ctx_tokens,
         workspace_dir=config.workspace_dir,
     )
 

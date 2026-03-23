@@ -49,7 +49,7 @@ class TestConfig:
 
         config = load_config(str(config_path))
         assert config.max_concurrent == 4
-        assert config.max_context_tokens == 200000
+        assert config.max_context_tokens == 0  # 0 = auto-detect from model
         assert config.timezone == "Asia/Tashkent"
         assert config.allowed_users == []
 
@@ -79,4 +79,4 @@ class TestConfigDataclass:
         config = Config()
         assert config.provider == "anthropic"
         assert config.model == "claude-sonnet-4-6"
-        assert config.max_context_tokens == 200000
+        assert config.max_context_tokens == 0  # 0 = auto-detect from model

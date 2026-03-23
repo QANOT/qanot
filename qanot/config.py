@@ -71,7 +71,7 @@ class Config:
     sessions_dir: str = "/data/sessions"
     cron_dir: str = "/data/cron"
     plugins_dir: str = "/data/plugins"
-    max_context_tokens: int = 200000
+    max_context_tokens: int = 0  # 0 = auto-detect from model (1M for Opus/Sonnet 4.6, 200K otherwise)
     allowed_users: list[int] = field(default_factory=list)
     response_mode: str = "stream"  # "stream" | "partial" | "blocked"
     stream_flush_interval: float = 0.8  # seconds between draft updates
