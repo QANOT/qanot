@@ -45,6 +45,22 @@ def main():
             if src and dst:
                 vol_args.extend(["-v", f"{src}:{dst}:{mode}"])
 
+        # Extract port bindings
+        port_args = []
+        port_bindings = info.get("HostConfig", {}).get("PortBindings") or {}
+        for container_port, bindings in port_bindings.items():
+            if not bindings:
+                continue
+            for b in bindings:
+                host_port = b.get("HostPort", "")
+                host_ip = b.get("HostIp", "")
+                if host_port:
+                    port_num = container_port.split("/")[0]
+                    if host_ip:
+                        port_args.extend(["-p", f"{host_ip}:{host_port}:{port_num}"])
+                    else:
+                        port_args.extend(["-p", f"{host_port}:{port_num}"])
+
         # Extract network
         networks = list(info.get("NetworkSettings", {}).get("Networks", {}).keys())
         net = networks[0] if networks else "qanot-cloud-net"
@@ -56,7 +72,7 @@ def main():
         # Recreate
         cmd = [
             "docker", "run", "-d", "--name", name, "--user", "1000:1000",
-            *env_args, *vol_args,
+            *env_args, *vol_args, *port_args,
             "--memory=256m", "--cpus=0.25", "--pids-limit=100",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
             f"--network={net}", "--restart=unless-stopped",
