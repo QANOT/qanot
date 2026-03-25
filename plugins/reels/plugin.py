@@ -344,7 +344,7 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
                 pass
 
     def _render_captions(self, words: list[Word], duration: float, output_dir: Path):
-        """Pillow word-by-word caption renderer."""
+        """Optimized caption renderer — cache identical frames, skip empty."""
         from PIL import Image, ImageDraw, ImageFont
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -353,43 +353,77 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
 
         W, H = 1080, 1920
         pages = [words[i:i+4] for i in range(0, len(words), 4)]
+        total_frames = int(duration * 30)
 
-        for frame_num in range(int(duration * 30)):
+        # Pre-render each page state (page_idx, active_word_idx) → img
+        # Instead of rendering 700+ unique frames, we have ~50 unique states
+        empty_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        empty_img.save(output_dir / "empty.png")
+
+        state_cache: dict[tuple, str] = {}
+        space = font.getbbox("  ")[2]
+
+        for frame_num in range(total_frames):
             t = frame_num / 30
+
+            # Find active page + active word
+            page_idx = -1
+            active_idx = -1
+            for pi, p in enumerate(pages):
+                if t >= p[0].start_s - 0.1 and t < p[-1].end_s + 0.15:
+                    page_idx = pi
+                    for wi, w in enumerate(p):
+                        if t >= w.start_s and t < w.end_s:
+                            active_idx = wi
+                    break
+
+            state = (page_idx, active_idx)
+
+            if page_idx == -1:
+                # No caption — symlink to empty
+                fname = f"caption_{frame_num:05d}.png"
+                (output_dir / fname).symlink_to("empty.png") if not (output_dir / fname).exists() else None
+                continue
+
+            if state in state_cache:
+                # Same state — symlink to cached
+                fname = f"caption_{frame_num:05d}.png"
+                src = state_cache[state]
+                if not (output_dir / fname).exists():
+                    try:
+                        (output_dir / fname).symlink_to(src)
+                    except OSError:
+                        import shutil
+                        shutil.copy2(output_dir / src, output_dir / fname)
+                continue
+
+            # New state — render
+            page = pages[page_idx]
             img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
 
-            # Find active page
-            page = None
-            for p in pages:
-                if t >= p[0].start_s - 0.1 and t < p[-1].end_s + 0.15:
-                    page = p
-                    break
+            infos = []
+            for wi, w in enumerate(page):
+                bbox = font.getbbox(w.text)
+                infos.append({"word": w, "w": bbox[2]-bbox[0], "active": wi == active_idx, "past": t >= w.end_s})
 
-            if page:
-                space = font.getbbox("  ")[2]
-                infos = []
-                for w in page:
-                    bbox = font.getbbox(w.text)
-                    infos.append({"word": w, "w": bbox[2]-bbox[0], "active": t >= w.start_s and t < w.end_s, "past": t >= w.end_s})
+            total_w = sum(i["w"] + space for i in infos) - space
+            x = (W - total_w) // 2
+            y = int(H * 0.65)
 
-                total_w = sum(i["w"] + space for i in infos) - space
-                x = (W - total_w) // 2
-                y = int(H * 0.65)
+            for info in infos:
+                w, is_active, is_past = info["word"], info["active"], info["past"]
+                if is_active:
+                    draw.rounded_rectangle([x-12, y-8, x+info["w"]+12, y+int(64*1.15)+8], radius=10, fill=(255, 215, 0, 240))
+                    draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255))
+                else:
+                    draw.text((x+2, y+3), w.text, font=font, fill=(0, 0, 0, 220))
+                    draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255) if is_past else (200, 200, 200, 200))
+                x += info["w"] + space
 
-                for info in infos:
-                    w, is_active, is_past = info["word"], info["active"], info["past"]
-                    if is_active:
-                        draw.rounded_rectangle([x-12, y-8, x+info["w"]+12, y+int(64*1.15)+8], radius=10, fill=(255, 215, 0, 240))
-                        draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255))
-                    else:
-                        for dx in (-2, 0, 2):
-                            for dy in (0, 2, 4):
-                                draw.text((x+dx, y+dy), w.text, font=font, fill=(0, 0, 0, 220))
-                        draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255) if is_past else (200, 200, 200, 200))
-                    x += info["w"] + space
-
-            img.save(output_dir / f"caption_{frame_num:05d}.png")
+            fname = f"caption_{frame_num:05d}.png"
+            img.save(output_dir / fname)
+            state_cache[state] = fname
 
     def _compose(self, title: str, scenes: list[Scene], vo_path: Path, caption_dir: Path, words: list[Word]) -> Path:
         """FFmpeg compose — video + captions + audio."""
