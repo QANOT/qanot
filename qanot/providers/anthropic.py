@@ -173,19 +173,17 @@ class AnthropicProvider(LLMProvider):
             if self._container_id:
                 kwargs["container"] = self._container_id
 
-        # Memory tool type hint — upgrades our client-side "memory" tool
-        # with Anthropic's trained behavior (auto-check, structured notes)
+        # Memory tool type hint — replaces our client-side "memory" tool def
+        # with Anthropic's typed version (only type + name, no extra fields)
         if self._memory_tool:
-            # Replace our generic tool def with the typed version
             for i, t in enumerate(tools):
-                if t.get("name") == "memory" and "type" not in t:
-                    tools[i] = {**MEMORY_TOOL_TYPE, **{k: v for k, v in t.items() if k != "name"}}
+                if t.get("name") == "memory" and t.get("type") != "memory_20250818":
+                    tools[i] = dict(MEMORY_TOOL_TYPE)
                     changed = True
                     break
             else:
-                # Tool not in list yet — add the type hint
                 if not any(t.get("type") == "memory_20250818" for t in tools):
-                    tools.append(MEMORY_TOOL_TYPE)
+                    tools.append(dict(MEMORY_TOOL_TYPE))
                     changed = True
 
         if changed:
