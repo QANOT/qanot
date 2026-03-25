@@ -50,6 +50,7 @@ _LONG_RUNNING_TOOLS = frozenset({
     "delegate_to_agent",
     "converse_with_agent",
     "spawn_sub_agent",
+    "create_reel",
 })
 LONG_TOOL_TIMEOUT = 300  # 5 minutes for delegation/conversation tools
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
