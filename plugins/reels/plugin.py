@@ -36,16 +36,16 @@ OUTPUT_DIR = PLUGIN_DIR / "output"
 # MODELS
 # ═══════════════════════════════════════════
 
-@dataclass
 class Word:
-    text: str
-    start_s: float
-    end_s: float
-    _force_emphasis: bool = False
+    def __init__(self, text: str, start_s: float, end_s: float):
+        self.text = text
+        self.start_s = start_s
+        self.end_s = end_s
+        self.force_emphasis = False
 
     @property
     def is_emphasis(self) -> bool:
-        if self._force_emphasis:
+        if self.force_emphasis:
             return True
         clean = self.text.strip("!?.,")
         return clean.isupper() and len(clean) > 1
@@ -211,7 +211,7 @@ class ReelsPlugin(Plugin):
         emphasis = {e.lower() for e in script.get("emphasis_words", [])}
         for w in words:
             if w.text.lower().rstrip("!?,.'") in emphasis:
-                w._force_emphasis = True
+                w.force_emphasis = True
 
         # 3. Scenes
         scenes = []
