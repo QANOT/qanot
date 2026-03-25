@@ -1,0 +1,10 @@
+{
+  "name": "reels",
+  "version": "1.0.0",
+  "description": "AI-powered Instagram Reel generator — mavzu bering, tayyor video oling",
+  "author": "Sirli AI",
+  "dependencies": ["Pillow"],
+  "required_config": ["elevenlabs_key", "elevenlabs_voice_id", "pexels_key", "openai_key"],
+  "homepage": "https://github.com/sirli-ai/qanot",
+  "license": "MIT"
+}
