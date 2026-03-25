@@ -3,6 +3,19 @@
   "version": "1.0.0",
   "description": "AbsVision HR plugin — 25 HR tools with OAuth refresh token support",
   "author": "Qanot AI",
-  "dependencies": ["aiohttp"],
-  "required_config": ["base_url", "username", "password"]
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [
+    "base_url",
+    "username",
+    "password"
+  ],
+  "cloud": {
+    "display_name": "AbsVision",
+    "icon": "👁️",
+    "category": "pos",
+    "connect_type": "config",
+    "visible": true
+  }
 }

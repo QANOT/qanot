@@ -3,6 +3,22 @@
   "version": "1.0.0",
   "description": "AbsMarket POS plugin — 30 API tools + MySQL query",
   "author": "Qanot AI",
-  "dependencies": ["aiohttp", "aiomysql"],
-  "required_config": ["api_key", "db_host", "db_user", "db_password", "db_name"]
+  "dependencies": [
+    "aiohttp",
+    "aiomysql"
+  ],
+  "required_config": [
+    "api_key",
+    "db_host",
+    "db_user",
+    "db_password",
+    "db_name"
+  ],
+  "cloud": {
+    "display_name": "AbsMarket",
+    "icon": "🛒",
+    "category": "pos",
+    "connect_type": "miniapp",
+    "visible": true
+  }
 }

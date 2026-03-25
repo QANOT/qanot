@@ -3,7 +3,21 @@
   "version": "1.0.0",
   "description": "MySQL SELECT-only query tool with 500-row limit and 5s timeout",
   "author": "SirliAI",
-  "dependencies": ["aiomysql"],
-  "required_config": ["db_host", "db_user", "db_password", "db_name"],
-  "license": "MIT"
+  "dependencies": [
+    "aiomysql"
+  ],
+  "required_config": [
+    "db_host",
+    "db_user",
+    "db_password",
+    "db_name"
+  ],
+  "license": "MIT",
+  "cloud": {
+    "display_name": "MySQL",
+    "icon": "🗄️",
+    "category": "database",
+    "connect_type": "config",
+    "visible": false
+  }
 }

@@ -1,9 +1,18 @@
 {
-    "name": "cloud_reporter",
-    "version": "1.0.0",
-    "description": "Reports usage metrics to Qanot Cloud platform",
-    "author": "Qanot AI",
-    "dependencies": ["aiohttp"],
-    "required_config": [],
-    "license": "MIT"
+  "name": "cloud_reporter",
+  "version": "1.0.0",
+  "description": "Reports usage metrics to Qanot Cloud platform",
+  "author": "Qanot AI",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [],
+  "license": "MIT",
+  "cloud": {
+    "display_name": "Cloud Reporter",
+    "icon": "📈",
+    "category": "internal",
+    "connect_type": "auto",
+    "visible": false
+  }
 }

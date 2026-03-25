@@ -1,8 +1,21 @@
 {
-    "name": "bitrix24",
-    "version": "1.0.0",
-    "description": "Bitrix24 CRM integration — deals, leads, contacts, tasks, activities",
-    "author": "Qanot AI",
-    "dependencies": ["aiohttp"],
-    "required_config": ["domain", "user_id", "webhook_code"]
+  "name": "bitrix24",
+  "version": "1.0.0",
+  "description": "Bitrix24 CRM integration — deals, leads, contacts, tasks, activities",
+  "author": "Qanot AI",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [
+    "domain",
+    "user_id",
+    "webhook_code"
+  ],
+  "cloud": {
+    "display_name": "Bitrix24",
+    "icon": "🏢",
+    "category": "crm",
+    "connect_type": "miniapp",
+    "visible": true
+  }
 }

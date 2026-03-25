@@ -1,8 +1,21 @@
 {
-    "name": "onec",
-    "version": "1.0.0",
-    "description": "1C Enterprise integration — contractors, products, sales, purchases, balances",
-    "author": "Qanot AI",
-    "dependencies": ["aiohttp"],
-    "required_config": ["base_url", "username", "password"]
+  "name": "onec",
+  "version": "1.0.0",
+  "description": "1C Enterprise integration — contractors, products, sales, purchases, balances",
+  "author": "Qanot AI",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [
+    "base_url",
+    "username",
+    "password"
+  ],
+  "cloud": {
+    "display_name": "1C Enterprise",
+    "icon": "🔢",
+    "category": "accounting",
+    "connect_type": "miniapp",
+    "visible": true
+  }
 }

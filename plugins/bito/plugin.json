@@ -1,8 +1,19 @@
 {
-    "name": "bito",
-    "version": "1.0.0",
-    "description": "Bito POS/ERP integration — sotuvlar, tovarlar, mijozlar, ombor",
-    "author": "Qanot AI",
-    "dependencies": ["aiohttp"],
-    "required_config": ["api_key"]
+  "name": "bito",
+  "version": "1.0.0",
+  "description": "Bito POS/ERP integration — sotuvlar, tovarlar, mijozlar, ombor",
+  "author": "Qanot AI",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [
+    "api_key"
+  ],
+  "cloud": {
+    "display_name": "Bito POS",
+    "icon": "🏪",
+    "category": "pos",
+    "connect_type": "miniapp",
+    "visible": true
+  }
 }
