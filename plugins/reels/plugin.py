@@ -20,7 +20,6 @@ import shutil
 import base64
 import urllib.request
 from pathlib import Path
-from dataclasses import dataclass, field
 from typing import Any
 
 from qanot.plugins.base import Plugin, ToolDef, tool
@@ -51,16 +50,17 @@ class Word:
         return clean.isupper() and len(clean) > 1
 
 
-@dataclass
 class Scene:
-    name: str
-    text: str
-    start_s: float
-    end_s: float
-    footage_query: str
-    footage_path: str = ""
-    zoom_style: str = "zoom-in"
-    words: list[Word] = field(default_factory=list)
+    def __init__(self, name: str, text: str, start_s: float, end_s: float,
+                 footage_query: str, footage_path: str = "", zoom_style: str = "zoom-in"):
+        self.name = name
+        self.text = text
+        self.start_s = start_s
+        self.end_s = end_s
+        self.footage_query = footage_query
+        self.footage_path = footage_path
+        self.zoom_style = zoom_style
+        self.words: list[Word] = []
 
     @property
     def duration_s(self) -> float:
