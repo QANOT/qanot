@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">🪶 Qanot AI</h1>
+  <h1 align="center">Qanot AI</h1>
   <p align="center">
     <strong>The AI agent that flies on its own.</strong><br>
     <em>Two commands to fly.</em>
@@ -11,7 +11,7 @@
     <a href="https://github.com/QANOT/qanot/stargazers"><img src="https://img.shields.io/github/stars/QANOT/qanot?style=social" alt="Stars"></a>
   </p>
   <p align="center">
-    <a href="https://plane.topkey.uz/docs/">Docs</a> · <a href="https://plane.topkey.uz/docs/uz/">O'zbekcha</a> · <a href="https://plane.topkey.uz">Website</a> · <a href="https://t.me/qanot_bot">Telegram</a>
+    <a href="https://qanot.github.io/docs/">Docs</a> · <a href="https://qanot.github.io/docs/uz/">O'zbekcha</a> · <a href="https://qanot.github.io">Website</a> · <a href="https://t.me/qanot_bot">Telegram</a>
   </p>
 </p>
 
@@ -34,13 +34,19 @@ That's it. The wizard configures everything and auto-starts your bot.
 
 **Agent Loop** — Up to 25 tool-use iterations per turn with circuit breaker, result-aware loop detection, and smart error recovery.
 
-**3-Tier Model Routing** — Routes messages by complexity. "salom" → Haiku ($0.003). "REST API yozib ber" → Opus ($0.029). Saves 50-60% on costs.
+**3-Tier Model Routing** — Routes messages by complexity. "salom" -> Haiku ($0.003). "REST API yozib ber" -> Opus ($0.029). Saves 50-60% on costs.
+
+**1M Context Window** — Auto-detects 1,000,000 tokens for Claude Opus/Sonnet 4.6. Server-side compaction for infinite conversations.
+
+**22 Telegram Commands** — Full settings management from chat: /model, /think, /voice, /lang, /mode, /routing, /mcp, /plugins, /usage, /context, /export, and more. All with inline keyboard buttons.
 
 **Multi-Agent** — Agents that talk to each other. Delegate tasks, hold conversations between agents, spawn background workers.
 
 **5 Providers** — Claude, GPT, Gemini, Groq, Ollama. Automatic failover with smart cooldowns.
 
-**3-Tier Memory** — WAL captures real-time corrections. Daily notes log conversations. Long-term memory persists in MEMORY.md. Agent evolves its own SOUL.md over time.
+**Anthropic Enhancements** — Server-side code execution (free sandbox), trained memory tool, `thinking.display: "omitted"` for faster streaming. All auto-injected for Claude.
+
+**3-Tier Memory** — WAL captures real-time corrections. Daily notes log conversations. Long-term memory in MEMORY.md. Anthropic memory tool (/memories). Agent evolves its own SOUL.md over time. RAG indexes everything.
 
 **RAG** — Hybrid search (vector + FTS5) with FastEmbed CPU embedder. No GPU needed.
 
@@ -48,25 +54,49 @@ That's it. The wizard configures everything and auto-starts your bot.
 
 **Streaming** — Native Telegram `sendMessageDraft` (Bot API 9.5). Real-time, not edit-message hack.
 
-**115+ Plugin Tools** — amoCRM (34), Bitrix24 (30), 1C Enterprise (18), AbsMarket (32). Build your own with `@tool` decorator.
+**MCP Client** — Connect to 1000+ community MCP servers (filesystem, Postgres, GitHub, etc.). `pip install qanot[mcp]`
 
-**Security** — 3-tier exec security, per-user rate limiting, SSRF protection, safe file writes, SecretRef.
+**Browser Control** — Browse, click, fill forms, screenshot via Playwright. `pip install qanot[browser]`
+
+**Skills System** — Agent creates reusable skills (SKILL.md + scripts). Hot-reload without restart.
+
+**Plugins** — amoCRM, Bitrix24, 1C Enterprise, AbsMarket, iBox POS, and more. Build your own with `@tool` decorator.
+
+**Security** — 3-tier exec security (cautious default), per-user rate limiting, SSRF protection, safe file writes, SecretRef.
 
 ---
 
 ## Architecture
 
 ```
-User → Telegram → Agent Loop (25 iterations max)
-                      ├── Model Router (Haiku / Sonnet / Opus)
-                      ├── LLM Provider (Claude / GPT / Gemini / Groq / Ollama)
-                      ├── Tool Registry (35+ built-in + 115 plugin tools)
-                      ├── Memory (WAL → daily notes → long-term)
-                      ├── RAG Engine (FastEmbed + FTS5 hybrid)
-                      ├── Voice Pipeline (4 providers)
-                      ├── Multi-Agent (delegate / converse / spawn)
-                      └── Security (rate limit + exec approval + file jail)
+User -> Telegram -> Agent Loop (25 iterations max)
+                      |-- Model Router (Haiku / Sonnet / Opus)
+                      |-- LLM Provider (Claude / GPT / Gemini / Groq / Ollama)
+                      |-- Tool Registry (40+ built-in + plugin tools)
+                      |-- Memory (WAL -> daily notes -> MEMORY.md -> /memories)
+                      |-- RAG Engine (FastEmbed + FTS5 hybrid)
+                      |-- Voice Pipeline (4 providers)
+                      |-- Multi-Agent (delegate / converse / spawn)
+                      |-- MCP Client (external tool servers)
+                      |-- Browser (Playwright headless)
+                      |-- Skills (hot-reloadable scripts)
+                      |-- WebChat (WebSocket adapter)
+                      |-- Webhook (external event handler)
+                      +-- Security (rate limit + exec approval + file jail)
 ```
+
+---
+
+## Telegram Commands
+
+All commands have inline keyboard buttons for easy settings management:
+
+| Category | Commands |
+|----------|----------|
+| **Settings** | /model, /think, /voice, /voiceprovider, /lang, /mode, /routing, /group, /exec, /code |
+| **Info** | /status, /usage, /context, /config, /mcp, /plugins, /id |
+| **Actions** | /reset, /compact, /export, /stop |
+| **Help** | /help |
 
 ---
 
@@ -79,6 +109,7 @@ qanot status / logs
 qanot update                # Self-update from PyPI
 qanot doctor --fix          # Health check + auto-repair
 qanot config show / set
+qanot plugin install <name> # Install from registry
 qanot plugin new <name>     # Scaffold a plugin
 ```
 
@@ -86,14 +117,15 @@ qanot plugin new <name>     # Scaffold a plugin
 
 ## Plugins
 
-Ready-made integrations:
+Ready-made integrations at [QanotHub](https://qanot.github.io/qanot-plugins/):
 
-| Plugin | Tools | What it does |
-|--------|-------|-------------|
-| **amoCRM** | 34 | Leads, contacts, companies, tasks, chats, tags, pipelines |
-| **Bitrix24** | 30 | Deals, leads, contacts, invoices, quotes, products, tasks |
-| **1C Enterprise** | 18 | Contractors, products, sales, purchases, cash, balances |
-| **AbsMarket** | 32 | POS sales, purchases, inventory, customers, suppliers + SQL |
+| Plugin | What it does |
+|--------|-------------|
+| **amoCRM** | Leads, contacts, companies, tasks, chats, tags, pipelines |
+| **Bitrix24** | Deals, leads, contacts, invoices, quotes, products, tasks |
+| **1C Enterprise** | Contractors, products, sales, purchases, cash, balances |
+| **AbsMarket** | POS sales, purchases, inventory, customers, suppliers |
+| **iBox POS** | Products, stock, orders, payments, analytics, ABC analysis |
 
 Build your own:
 
@@ -114,13 +146,13 @@ class QanotPlugin(Plugin):
 
 | | English | O'zbekcha |
 |---|---|---|
-| Getting Started | [docs](https://plane.topkey.uz/docs/getting-started/) | [docs](https://plane.topkey.uz/docs/uz/getting-started/) |
-| Full Guide | [docs](https://plane.topkey.uz/docs/GUIDE/) | [docs](https://plane.topkey.uz/docs/uz/GUIDE/) |
-| Configuration | [docs](https://plane.topkey.uz/docs/configuration/) | [docs](https://plane.topkey.uz/docs/uz/configuration/) |
-| Tools | [docs](https://plane.topkey.uz/docs/tools/) | [docs](https://plane.topkey.uz/docs/uz/tools/) |
-| Plugins | [docs](https://plane.topkey.uz/docs/plugins/) | [docs](https://plane.topkey.uz/docs/uz/plugins/) |
-| Architecture | [docs](https://plane.topkey.uz/docs/architecture/) | [docs](https://plane.topkey.uz/docs/uz/architecture/) |
-| API Reference | [docs](https://plane.topkey.uz/docs/api-reference/) | [docs](https://plane.topkey.uz/docs/uz/api-reference/) |
+| Getting Started | [docs](https://qanot.github.io/docs/getting-started/) | [docs](https://qanot.github.io/docs/uz/getting-started/) |
+| Full Guide | [docs](https://qanot.github.io/docs/GUIDE/) | [docs](https://qanot.github.io/docs/uz/GUIDE/) |
+| Configuration | [docs](https://qanot.github.io/docs/configuration/) | [docs](https://qanot.github.io/docs/uz/configuration/) |
+| Tools | [docs](https://qanot.github.io/docs/tools/) | [docs](https://qanot.github.io/docs/uz/tools/) |
+| Plugins | [docs](https://qanot.github.io/docs/plugins/) | [docs](https://qanot.github.io/docs/uz/plugins/) |
+| Architecture | [docs](https://qanot.github.io/docs/architecture/) | [docs](https://qanot.github.io/docs/uz/architecture/) |
+| API Reference | [docs](https://qanot.github.io/docs/api-reference/) | [docs](https://qanot.github.io/docs/uz/api-reference/) |
 
 ---
 
@@ -130,7 +162,7 @@ class QanotPlugin(Plugin):
 git clone https://github.com/QANOT/qanot.git
 cd qanot
 pip install -e .
-python -m pytest tests/ -v   # 757 tests
+python -m pytest tests/ -v   # 1007 tests
 ```
 
 ---
@@ -142,6 +174,6 @@ MIT — use it, fork it, build with it.
 ---
 
 <p align="center">
-  <strong>Built in Tashkent, Uzbekistan 🇺🇿</strong><br>
+  <strong>Built in Tashkent, Uzbekistan</strong><br>
   <sub>Qanot means "wing" — giving your agents the wings to fly.</sub>
 </p>

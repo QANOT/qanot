@@ -1,51 +1,83 @@
 {
   "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
   "provider": "anthropic",
-  "model": "claude-sonnet-4-5-20250514",
+  "model": "claude-sonnet-4-6",
   "api_key": "YOUR_API_KEY",
   "owner_name": "",
   "bot_name": "",
   "timezone": "Asia/Tashkent",
   "max_concurrent": 4,
   "compaction_mode": "safeguard",
-  "max_context_tokens": 200000,
   "allowed_users": [],
+
   "response_mode": "stream",
   "stream_flush_interval": 0.8,
   "telegram_mode": "polling",
   "webhook_url": "",
   "webhook_port": 8443,
+  "reactions_enabled": false,
+  "reply_mode": "coalesced",
+  "group_mode": "mention",
+
   "rag_enabled": true,
+  "rag_mode": "auto",
+
   "voice_provider": "muxlisa",
   "voice_api_key": "",
   "voice_api_keys": {
     "muxlisa": "",
-    "kotib": ""
+    "kotib": "",
+    "aisha": ""
   },
   "voice_mode": "inbound",
   "voice_name": "",
   "voice_language": "",
+
   "brave_api_key": "",
-  "reactions_enabled": false,
-  "reply_mode": "coalesced",
-  "group_mode": "mention",
+
+  "thinking_level": "off",
+  "thinking_budget": 10000,
+  "code_execution": false,
+  "memory_tool": true,
+  "exec_security": "cautious",
+  "exec_allowlist": [],
+
+  "routing_enabled": false,
+  "routing_model": "claude-haiku-4-5-20251001",
+  "routing_mid_model": "claude-sonnet-4-6",
+  "routing_threshold": 0.3,
+
+  "image_api_key": "",
+  "image_model": "gemini-3-pro-image-preview",
+
   "heartbeat_enabled": true,
   "heartbeat_interval": "0 */4 * * *",
   "briefing_enabled": true,
   "briefing_schedule": "0 8 * * *",
   "max_memory_injection_chars": 4000,
-  "thinking_level": "off",
-  "thinking_budget": 10000,
-  "routing_enabled": false,
-  "routing_model": "claude-haiku-4-5",
-  "routing_threshold": 0.3,
-  "image_api_key": "",
-  "image_model": "gemini-3-pro-image-preview",
+  "history_limit": 50,
+
+  "dashboard_enabled": true,
+  "dashboard_port": 8765,
+  "dashboard_host": "127.0.0.1",
+  "backup_enabled": true,
+
+  "browser_enabled": false,
+  "webhook_enabled": false,
+  "webhook_token": "",
+  "webchat_enabled": false,
+  "webchat_token": "",
+  "webchat_origins": [],
+  "webchat_max_sessions": 50,
+  "monitor_group_id": 0,
+
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",
   "cron_dir": "/data/cron",
   "plugins_dir": "/data/plugins",
-  "monitor_group_id": 0,
+
+  "mcp_servers": [],
+
   "agents": [
     {
       "id": "deep-researcher",
@@ -53,7 +85,7 @@
       "prompt": "You are a deep research agent. Use web_search and web_fetch extensively. Investigate topics thoroughly with multiple sources. Always cite your sources.",
       "model": "claude-opus-4-6",
       "bot_token": "",
-      "tools_allow": ["web_search", "web_fetch", "memory_search", "read_file"],
+      "tools_allow": ["web_search", "web_fetch", "memory_search", "read_file", "memory"],
       "delegate_allow": [],
       "timeout": 180
     },
@@ -61,24 +93,13 @@
       "id": "fast-coder",
       "name": "Tezkor Dasturchi",
       "prompt": "You are a fast coding agent. Write clean, working code quickly. Follow existing project conventions. Use read_file to understand context before writing.",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-4-5-20251001",
       "bot_token": "",
       "tools_deny": ["web_search", "web_fetch"],
       "delegate_allow": ["deep-researcher"],
       "timeout": 60
     }
   ],
-  "plugins": [],
-  "browser_enabled": false,
-  "webhook_enabled": false,
-  "webhook_token": "",
-  "webchat_enabled": false,
-  "webchat_token": "",
-  "mcp_servers": [
-    {
-      "name": "filesystem",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data/workspace"]
-    }
-  ]
+
+  "plugins": []
 }
