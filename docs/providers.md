@@ -25,10 +25,19 @@ Qanot AI supports four LLM providers out of the box, with automatic failover whe
 | Model | Input $/MTok | Output $/MTok | Cache Read | Cache Write |
 |-------|-------------|---------------|------------|-------------|
 | `claude-sonnet-4-6` | 3.00 | 15.00 | 0.30 | 3.75 |
-| `claude-opus-4-20250514` | 15.00 | 75.00 | 1.50 | 18.75 |
+| `claude-opus-4-6` | 15.00 | 75.00 | 1.50 | 18.75 |
 | `claude-haiku-4-5-20251001` | 0.80 | 4.00 | 0.08 | 1.00 |
 
 **OAuth tokens:** If your API key starts with `sk-ant-oat`, Qanot automatically switches to Bearer authentication with the `anthropic-beta: oauth-2025-04-20` header.
+
+**1M context window:** Opus 4.6 and Sonnet 4.6 support up to 1M tokens context window. Qanot auto-detects these models and adjusts `max_context_tokens` accordingly.
+
+**Thinking display:** Qanot sets `thinking.display: "omitted"` by default, which reduces time-to-first-token by not streaming the thinking content back.
+
+**Server-side features:**
+
+- **Code execution** (`code_execution_20250825`): Enable with `"code_execution": true` in config. Allows the agent to run Python code in Anthropic's sandbox. Free when used with web search.
+- **Memory tool** (`memory_20250818`): Enable with `"memory_tool": true` in config. Adds trained memory behavior where the model auto-checks and creates structured memory notes.
 
 ### OpenAI (GPT)
 

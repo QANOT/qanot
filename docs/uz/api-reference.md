@@ -176,12 +176,14 @@ class Config:
     # Kengaytirilgan fikrlash (Claude reasoning rejimi)
     thinking_level: str = "off"            # "off" | "low" | "medium" | "high"
     thinking_budget: int = 10000           # maksimal fikrlash tokenlari
+    thinking_display: str = "omitted"      # "omitted" | "full"
     # Bajarish xavfsizligi
-    exec_security: str = "open"            # "open" | "cautious" | "strict"
+    exec_security: str = "cautious"        # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)
     # Dashboard
     dashboard_enabled: bool = True
     dashboard_port: int = 8765
+    dashboard_host: str = "127.0.0.1"  # Docker uchun "0.0.0.0"
     # Backup
     backup_enabled: bool = True
     # Model routing (narx optimallashtirish)
@@ -196,6 +198,12 @@ class Config:
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring
     monitor_group_id: int = 0              # Monitoring uchun Telegram guruh ID
+    # MCP serverlar
+    mcp_servers: list[dict] = field(default_factory=list)  # MCP server ta'riflari
+    # Kod bajarish
+    code_execution: bool = False           # Anthropic server tomonida kod bajarish
+    # WebChat
+    webchat_enabled: bool = False          # WebSocket asosidagi webchat
 ```
 
 ```python

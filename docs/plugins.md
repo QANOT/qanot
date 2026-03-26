@@ -309,5 +309,23 @@ It checks required fields and basic type matching (string, integer, number, bool
 | 1C Enterprise | 13 | Accounting: contractors, products, sales, purchases, balances |
 | AbsMarket | 8 | POS system: products, sales, inventory, reports |
 | AbsVision | 3 | HR system: employees, attendance, payroll |
+| iBox POS | -- | POS system integration for iBox terminals |
+| Eskiz SMS | -- | SMS sending via Eskiz.uz API |
 | MySQL Query | 1 | Standalone SELECT-only SQL query tool |
 | Cloud Reporter | 1 | Usage reporting to Qanot Cloud platform |
+
+## QanotHub
+
+Browse and install community plugins from QanotHub: [https://qanot.github.io/qanot-plugins/](https://qanot.github.io/qanot-plugins/)
+
+### Installing Plugins from QanotHub
+
+```bash
+# Search available plugins
+qanot plugin search
+
+# Install a plugin by name
+qanot plugin install <name>
+```
+
+Installed plugins are placed in your `plugins_dir` and can be configured in `config.json` like any other plugin.

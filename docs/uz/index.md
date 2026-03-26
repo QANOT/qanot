@@ -29,18 +29,31 @@ O'zbekiston bozori uchun qurilgan: `Asia/Tashkent` timezone, Telegram-first diza
 - **Ijro xavfsizligi** -- 3 daraja (open/cautious/strict) -- sandboxed buyruq bajarish.
 - **Web qidiruv** -- Brave Search API, SSRF himoyali web fetch.
 - **Narx kuzatuv** -- har user uchun token va narx statistikasi.
-- **115+ plugin toollar** -- amoCRM, Bitrix24, 1C, AbsMarket va boshqalar uchun tayyor pluginlar.
+- **MCP klient** -- Model Context Protocol orqali 1000+ tashqi tool serverlariga ulanish.
+- **Brauzer toollar** -- Playwright orqali sahifalarni ko'rish, bosish, forma to'ldirish, skrinshot olish.
+- **Ko'nikmalar tizimi** -- agent takroriy vazifalar uchun qayta ishlatiladigan SKILL.md + skriptlar yaratadi, qayta ishga tushirmasdan hot-reload.
+- **22 ta Telegram buyruqlar** -- inline tugma bilan sozlamalar boshqaruvi (model, ovoz, til, routing, xavfsizlik va boshqalar).
+- **Anthropic xotira tooli** -- `/memories` papkasi va o'rnatilgan xotira xatti-harakati bilan ikki darajali arxitektura.
+- **Server tomonida kod bajarish** -- Anthropic `code_execution_20250825` orqali sandboxed Python bajarish.
+- **Webhook va WebChat** -- tashqi voqealar uchun webhook (GitHub, CRM, CI/CD) va WebSocket asosidagi webchat adapter.
+- **Hayot sikli hooklari** -- on_startup, on_shutdown, on_pre_turn, on_post_turn kengaytirish nuqtalari.
+- **1M kontekst oynasi** -- Opus 4.6 va Sonnet 4.6 uchun avtomatik aniqlash.
+- **115+ plugin toollar** -- amoCRM, Bitrix24, 1C, AbsMarket, iBox POS, Eskiz SMS va boshqalar uchun tayyor pluginlar.
 
 ## OpenClaw bilan solishtirish
 
 | Jihat | Qanot AI | OpenClaw |
 |-------|----------|----------|
-| Hajm | Yengil (~30 modul) | Og'ir (ko'p modullar) |
+| Hajm | Yengil (~35 modul) | Og'ir (ko'p modullar) |
 | Providerlar | 4 ta tayyor + failover | Odatda bitta provider |
 | Streaming | Native `sendMessageDraft` | Faqat `editMessageText` |
 | RAG | Tayyor gibrid qidiruv | Tashqi dependency |
-| Xotira | WAL protocol + kunlik qaydlar | Oddiy xotira |
-| Context | Avto-compaction + working buffer | Qo'lda boshqarish |
+| Xotira | WAL protocol + kunlik qaydlar + Anthropic xotira tooli | Oddiy xotira |
+| Context | Avto-compaction + working buffer (1M oyna) | Qo'lda boshqarish |
+| MCP | 1000+ tool server uchun tayyor klient | MCP qo'llab-quvvatlanmaydi |
+| Brauzer | Playwright asosidagi browse/click/fill/screenshot | Brauzer toollari yo'q |
+| Ko'nikmalar | Hot-reload skriptlari bilan o'z-o'zini yaxshilaydigan agent | Ko'nikmalar tizimi yo'q |
+| Buyruqlar | 22 ta Telegram slash buyruqlari, inline tugmalar | Cheklangan buyruqlar |
 | Bozor | O'zbekiston (timezone, Telegram) | Umumiy |
 
 ## Tez boshlash
@@ -81,3 +94,5 @@ Bot Telegram da ishga tushdi. Unga xabar yuboring.
 - Telegram bot token ([@BotFather](https://t.me/BotFather) dan)
 - Kamida bitta LLM API key (Anthropic, OpenAI, Gemini, yoki Groq)
 - Ixtiyoriy: RAG vector qidiruv uchun `sqlite-vec` (`pip install qanot[rag]`)
+- Ixtiyoriy: MCP klient -- tashqi tool serverlarga ulanish (`pip install qanot[mcp]`)
+- Ixtiyoriy: Brauzer toollar -- Playwright orqali (`pip install qanot[browser]`)

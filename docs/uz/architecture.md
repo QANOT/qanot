@@ -329,6 +329,9 @@ Yuqorida tavsiflangan asosiy modullardan tashqari, Qanot quyidagi qo'shimcha kom
 | `daemon.py` | Krossplatforma daemon (systemd/launchd/schtasks) |
 | `scheduler.py` | APScheduler cron (isolated + systemEvent rejimlari) |
 | `cli.py` | CLI: init/start/stop/restart/status/config/update/doctor |
+| `mcp_client.py` | MCP (Model Context Protocol) klient -- tashqi tool serverlariga ulanish |
+| `webchat.py` | WebSocket asosidagi webchat adapter |
+| `hooks.py` | Hayot sikli hooklari (on_startup, on_shutdown, on_pre_turn, on_post_turn) |
 
 ### Tool modullari (`tools/`)
 
@@ -345,3 +348,6 @@ Yuqorida tavsiflangan asosiy modullardan tashqari, Qanot quyidagi qo'shimcha kom
 | `doctor.py` | Tizim diagnostikasi |
 | `workspace.py` | Workspace init + shablonlar |
 | `jobs_io.py` | Cron jobs JSON I/O yordamchi funksiyalar |
+| `browser.py` | Playwright asosidagi brauzer toollar (browse/click/fill/screenshot/extract) |
+| `skills.py` | Ko'nikma boshqaruvi (create/list/run/delete) |
+| `memories.py` | Anthropic xotira tooli (/memories CRUD operatsiyalari) |

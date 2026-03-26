@@ -29,18 +29,31 @@ Built for the Uzbekistan market: defaults to `Asia/Tashkent` timezone, Telegram-
 - **Execution security** -- 3 levels (open/cautious/strict) for sandboxed command execution.
 - **Web search and fetch** -- Brave Search API integration with SSRF-protected web fetching.
 - **Cost tracking** -- per-user token and cost tracking across providers.
-- **115+ plugin tools** -- ready-made plugins for amoCRM, Bitrix24, 1C, AbsMarket, and more.
+- **MCP client** -- connect to 1000+ external tool servers via the Model Context Protocol.
+- **Browser tools** -- browse URLs, click elements, fill forms, take screenshots via Playwright.
+- **Skills system** -- agent creates reusable SKILL.md + scripts for repetitive tasks, hot-reload without restart.
+- **22 Telegram commands** -- inline keyboard settings management (model, voice, language, routing, exec security, and more).
+- **Anthropic memory tool** -- dual-layer architecture with `/memories` directory and trained memory behavior.
+- **Server-side code execution** -- Anthropic `code_execution_20250825` for Python sandboxed execution.
+- **Webhook and WebChat** -- external event webhooks (GitHub, CRM, CI/CD) and WebSocket-based webchat adapter.
+- **Lifecycle hooks** -- on_startup, on_shutdown, on_pre_turn, on_post_turn extension points.
+- **1M context window** -- auto-detection for Opus 4.6 and Sonnet 4.6.
+- **115+ plugin tools** -- ready-made plugins for amoCRM, Bitrix24, 1C, AbsMarket, iBox POS, Eskiz SMS, and more.
 
 ## How It Compares to OpenClaw
 
 | Aspect | Qanot AI | OpenClaw |
 |--------|----------|----------|
-| Size | Lightweight (~30 modules) | Heavy (many modules) |
+| Size | Lightweight (~35 modules) | Heavy (many modules) |
 | Providers | 4 built-in + failover | Typically single provider |
 | Streaming | Native `sendMessageDraft` | `editMessageText` only |
 | RAG | Built-in hybrid search | External dependency |
-| Memory | WAL protocol + daily notes | Basic memory |
-| Context | Auto-compaction + working buffer | Manual management |
+| Memory | WAL protocol + daily notes + Anthropic memory tool | Basic memory |
+| Context | Auto-compaction + working buffer (1M window) | Manual management |
+| MCP | Built-in client for 1000+ tool servers | No MCP support |
+| Browser | Playwright-based browse/click/fill/screenshot | No browser tools |
+| Skills | Self-improving agent with hot-reload scripts | No skill system |
+| Commands | 22 Telegram slash commands with inline keyboards | Limited commands |
 | Market focus | Uzbekistan (timezone, Telegram) | General |
 
 ## Quick Start
@@ -81,3 +94,5 @@ Your bot is now live on Telegram. Send it a message.
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - At least one LLM API key (Anthropic, OpenAI, Gemini, or Groq)
 - Optional: `sqlite-vec` for RAG vector search (`pip install qanot[rag]`)
+- Optional: MCP client for external tool servers (`pip install qanot[mcp]`)
+- Optional: Browser tools via Playwright (`pip install qanot[browser]`)

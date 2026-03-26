@@ -31,6 +31,24 @@ pip install qanot[rag]
 
 Bu `sqlite-vec` ni o'rnatadi -- vector saqlash uchun SQLite extension.
 
+MCP klient (tashqi tool serverlarga ulanish) kerak bo'lsa:
+
+```bash
+pip install qanot[mcp]
+```
+
+Brauzer toollar (sahifalarni ko'rish, bosish, forma to'ldirish, skrinshot) kerak bo'lsa:
+
+```bash
+pip install qanot[browser]
+```
+
+Bir nechta extralarni birlashtirish mumkin:
+
+```bash
+pip install qanot[rag,mcp,browser]
+```
+
 ## Loyiha yaratish
 
 CLI orqali yangi loyiha yarating:

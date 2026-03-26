@@ -307,6 +307,52 @@ Controls when the bot uses Telegram's reply-to feature to link its response to t
 
 Default is `"coalesced"`.
 
+## Telegram Slash Commands
+
+Qanot AI provides 22 slash commands for settings management, information display, and actions. Most settings commands display inline keyboard buttons for easy selection.
+
+### Settings Commands
+
+| Command | Description |
+|---------|-------------|
+| `/model` | Switch the AI model. Shows inline buttons for available models (e.g., claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001). |
+| `/think` | Toggle extended thinking level. Inline buttons: off, low, medium, high. |
+| `/voice` | Change TTS voice name for the current voice provider. |
+| `/voiceprovider` | Switch voice provider. Inline buttons: Muxlisa, KotibAI, Aisha, Whisper. |
+| `/lang` | Set STT language. Inline buttons: uz, ru, en, auto. |
+| `/mode` | Switch response mode. Inline buttons: stream, partial, blocked. |
+| `/routing` | Toggle 3-tier model routing on/off. |
+| `/group` | Set group chat mode. Inline buttons: off, mention, all. |
+| `/exec` | Set execution security level. Inline buttons: open, cautious, strict. |
+| `/code` | Toggle Anthropic server-side code execution on/off. |
+
+### Info Commands
+
+| Command | Description |
+|---------|-------------|
+| `/status` | Current bot status: uptime, context usage %, token count, active conversations. |
+| `/usage` | Token usage and cost statistics for the current user. |
+| `/context` | Detailed context window information: tokens used, buffer status, compaction mode. |
+| `/config` | Show current configuration (secrets are masked). |
+| `/id` | Show your Telegram user ID. |
+| `/mcp` | View connected MCP servers, tool counts, and connection status. |
+| `/plugins` | List installed plugins. Enable/disable via inline buttons. |
+
+### Action Commands
+
+| Command | Description |
+|---------|-------------|
+| `/reset` | Reset conversation history. Includes a model hint in the fresh context. |
+| `/compact` | Force context compaction immediately (useful when context is filling up). |
+| `/export` | Export current conversation to a file and send it via Telegram. |
+| `/stop` | Stop the current response generation. |
+
+### Inline Keyboard Buttons
+
+Settings commands use Telegram inline keyboard buttons for selection. When you send `/model`, the bot responds with a message containing buttons for each available model. Tapping a button updates the config and confirms the change.
+
+Buttons follow the OpenClaw-style settings management pattern, making it easy to adjust settings without typing values manually.
+
 ## Typing Indicator
 
 During processing, the bot sends a typing indicator every 4 seconds until the response is ready. This is visible as "Bot is typing..." in the Telegram client. The typing loop is cancelled as soon as the first streaming draft is sent.

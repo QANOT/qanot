@@ -101,6 +101,21 @@ Cron jobs can send messages to users through the `proactive-outbox.md` mechanism
 
 This is the only way for isolated cron jobs to communicate with users. System event jobs communicate directly through the conversation.
 
+## Scheduling Skills
+
+Skills created via the `create_skill` tool can be scheduled to run periodically using cron jobs. The cron prompt can reference the `run_skill_script` tool:
+
+```json
+{
+  "name": "weekly-seo-check",
+  "schedule": "0 9 * * 1",
+  "mode": "isolated",
+  "prompt": "Run the seo-check skill for all tracked URLs and summarize results"
+}
+```
+
+The isolated agent will use the `run_skill_script` tool to execute the skill and process the results.
+
 ## Managing Cron Jobs
 
 ### Via Tools (in conversation)

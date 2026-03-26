@@ -177,11 +177,27 @@ class Config:
     thinking_level: str = "off"            # "off" | "low" | "medium" | "high"
     thinking_budget: int = 10000           # max thinking tokens
     # Execution security
-    exec_security: str = "open"            # "open" | "cautious" | "strict"
+    exec_security: str = "cautious"        # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)
+    # Code execution and memory tool (Anthropic)
+    code_execution: bool = False           # Anthropic server-side code execution
+    memory_tool: bool = False              # Anthropic memory tool (/memories directory)
     # Dashboard
     dashboard_enabled: bool = True
     dashboard_port: int = 8765
+    dashboard_host: str = "127.0.0.1"     # "0.0.0.0" for Docker
+    # Browser
+    browser_enabled: bool = False          # Playwright browser tools
+    # Webhook (external events)
+    webhook_enabled: bool = False          # External event webhook endpoint
+    webhook_token: str = ""                # Bearer token for webhook auth
+    # WebChat
+    webchat_enabled: bool = False          # WebSocket webchat adapter
+    webchat_token: str = ""                # Auth token for webchat
+    webchat_origins: list[str] = field(default_factory=list)  # CORS origins
+    webchat_max_sessions: int = 50         # Max concurrent webchat sessions
+    # MCP (Model Context Protocol)
+    mcp_servers: list[dict] = field(default_factory=list)  # MCP server definitions
     # Backup
     backup_enabled: bool = True
     # Model routing (cost optimization)

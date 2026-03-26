@@ -16,8 +16,14 @@ Lightweight Python agent framework for Telegram bots. Built for the Uzbekistan m
 8. [RAG](#8-rag)
 9. [Multi-Agent](#9-multi-agent)
 10. [Dashboard](#10-dashboard)
-11. [CLI Reference](#11-cli-reference)
-12. [Troubleshooting](#12-troubleshooting)
+11. [MCP Client](#11-mcp-client)
+12. [Browser Tools](#12-browser-tools)
+13. [Skills System](#13-skills-system)
+14. [Telegram Commands](#14-telegram-commands)
+15. [Anthropic Memory Tool](#15-anthropic-memory-tool)
+16. [Code Execution](#16-code-execution)
+17. [CLI Reference](#17-cli-reference)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -157,7 +163,7 @@ All configuration lives in `config.json`. The `qanot init` wizard generates it, 
   "thinking_budget": 10000,            // Max thinking tokens
 
   // ── Execution Security ──
-  "exec_security": "open",             // "open"|"cautious"|"strict"
+  "exec_security": "cautious",         // "open"|"cautious"|"strict"
   "exec_allowlist": [],                // Commands allowed in strict mode
 
   // ── Model Routing ──
@@ -530,17 +536,7 @@ With routing enabled, typical bots see a 40-60% cost reduction.
 
 The `run_command` tool has three security levels for shell command execution.
 
-#### open (Default)
-
-Only dangerous commands are blocked (rm -rf /, fork bombs, disk fill attacks, etc.). Everything else runs freely.
-
-```json
-{
-  "exec_security": "open"
-}
-```
-
-#### cautious
+#### cautious (Default)
 
 Dangerous commands are blocked. Risky commands (pip install, curl, sudo, docker, git push, etc.) require user approval via inline button or text confirmation.
 
@@ -551,6 +547,16 @@ Dangerous commands are blocked. Risky commands (pip install, curl, sudo, docker,
 ```
 
 The bot will ask: "Bu buyruqni bajarishga ruxsat berasizmi: `pip install requests`?" and wait for approval.
+
+#### open
+
+Only dangerous commands are blocked (rm -rf /, fork bombs, disk fill attacks, etc.). Everything else runs freely.
+
+```json
+{
+  "exec_security": "open"
+}
+```
 
 #### strict
 
@@ -968,7 +974,224 @@ curl http://localhost:8765/api/status
 
 ---
 
-## 11. CLI Reference
+## 11. MCP Client
+
+Qanot AI includes a built-in MCP (Model Context Protocol) client that connects to external tool servers, giving your bot access to 1000+ tools from the MCP ecosystem.
+
+### Installation
+
+```bash
+pip install qanot[mcp]
+```
+
+### Configuration
+
+Add MCP servers to your `config.json`:
+
+```json
+{
+  "mcp_servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-filesystem", "/data"],
+      "enabled": true
+    },
+    {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-github"],
+      "env": {"GITHUB_TOKEN": "ghp_..."},
+      "enabled": true
+    }
+  ]
+}
+```
+
+Each MCP server definition:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Unique server name |
+| `command` | string | Command to launch the server |
+| `args` | list | Command arguments |
+| `env` | dict | Environment variables for the server process |
+| `enabled` | bool | Whether to connect on startup |
+
+### Checking MCP Status
+
+Use the `/mcp` Telegram command to view connected MCP servers, tool counts, and connection status.
+
+---
+
+## 12. Browser Tools
+
+Qanot AI can browse the web, click elements, fill forms, take screenshots, and extract structured data from web pages using Playwright.
+
+### Installation
+
+```bash
+pip install qanot[browser]
+```
+
+### Configuration
+
+```json
+{
+  "browser_enabled": true
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `browse_url` | Open a URL and return the page content |
+| `click_element` | Click an element on the current page by CSS selector |
+| `fill_form` | Fill form fields on the current page |
+| `screenshot` | Take a screenshot of the current page |
+| `extract_data` | Extract structured data from the current page using CSS selectors |
+
+### Example Conversation
+
+```
+User: Go to example.com and take a screenshot
+Agent: [calls browse_url with url="https://example.com"]
+       [calls screenshot]
+       Here is a screenshot of example.com. [sends image]
+```
+
+---
+
+## 13. Skills System
+
+The agent can create reusable skills -- saved SKILL.md instructions and scripts that it can run later. Skills let the agent learn from repetitive tasks and automate them.
+
+### How Skills Work
+
+1. The agent identifies a repetitive task pattern
+2. It creates a skill with `create_skill` (name, description, and script)
+3. The skill is saved to `workspace/skills/{name}/`
+4. Later, the agent can run the skill with `run_skill_script`
+5. Skills hot-reload without restarting the bot
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `create_skill` | Create a new skill with name, description, and script |
+| `list_skills` | List all available skills |
+| `run_skill_script` | Execute a skill's script |
+| `delete_skill` | Remove a skill |
+
+### Skills can also be scheduled via cron jobs
+
+```
+User: Run the SEO check skill every Monday at 9am
+Agent: [calls cron_create with prompt="run_skill_script seo-check", schedule="0 9 * * 1"]
+```
+
+---
+
+## 14. Telegram Commands
+
+Qanot AI provides 22 Telegram slash commands with inline keyboard buttons for settings management.
+
+### Settings Commands
+
+| Command | Description |
+|---|---|
+| `/model` | Switch the AI model (shows inline buttons for available models) |
+| `/think` | Toggle extended thinking level (off/low/medium/high) |
+| `/voice` | Change voice name |
+| `/voiceprovider` | Switch voice provider (Muxlisa/KotibAI/Aisha/Whisper) |
+| `/lang` | Set STT language (uz/ru/en/auto) |
+| `/mode` | Switch response mode (stream/partial/blocked) |
+| `/routing` | Toggle model routing on/off |
+| `/group` | Set group chat mode (off/mention/all) |
+| `/exec` | Set execution security level (open/cautious/strict) |
+| `/code` | Toggle server-side code execution on/off |
+
+### Info Commands
+
+| Command | Description |
+|---|---|
+| `/status` | Current bot status (uptime, context %, tokens) |
+| `/usage` | Token usage and cost statistics |
+| `/context` | Detailed context window information |
+| `/config` | Show current configuration |
+| `/id` | Show your Telegram user ID |
+| `/mcp` | View connected MCP servers and tool counts |
+| `/plugins` | List/enable/disable plugins via inline buttons |
+
+### Action Commands
+
+| Command | Description |
+|---|---|
+| `/reset` | Reset conversation with model hint |
+| `/compact` | Force context compaction |
+| `/export` | Export conversation to file |
+| `/stop` | Stop the current response |
+
+All settings commands display inline keyboard buttons for easy selection without typing values.
+
+---
+
+## 15. Anthropic Memory Tool
+
+Qanot AI v2.0.4 adds Anthropic's trained memory tool (`memory_20250818`) with a dual-layer architecture.
+
+### Dual-Layer Architecture
+
+1. **All providers** get the `/memories` tool for viewing, creating, editing, and deleting memory entries in the `workspace/memories/` directory
+2. **Anthropic** gets the trained memory behavior via the `memory_20250818` type hint -- the model auto-checks memories at conversation start and creates structured notes
+
+### Memory Tool Operations
+
+| Operation | Description |
+|---|---|
+| `view` | List or read memory entries |
+| `create` | Create a new memory entry |
+| `str_replace` | Replace text in a memory entry |
+| `insert` | Insert text at a position in a memory entry |
+| `delete` | Delete a memory entry |
+| `rename` | Rename a memory entry |
+
+### How It Works
+
+- Memory entries are stored as files in `workspace/memories/`
+- The `/memories` directory is automatically indexed by RAG for semantic search
+- Anthropic models check memories proactively at conversation start (trained behavior)
+- Other providers use the tool when explicitly asked or when the agent decides to
+
+---
+
+## 16. Code Execution
+
+Anthropic's server-side code execution (`code_execution_20250825`) allows the agent to run Python code in a sandboxed environment on Anthropic's servers.
+
+### Configuration
+
+```json
+{
+  "code_execution": true
+}
+```
+
+### How It Works
+
+- Code execution is free when used alongside web search
+- The agent can run Python code to perform calculations, data analysis, and generate visualizations
+- Results are returned directly in the conversation
+- Toggle on/off via the `/code` Telegram command
+
+### Security
+
+Code runs in Anthropic's sandboxed environment, not on your server. This is separate from the local `run_command` tool which is controlled by `exec_security`.
+
+---
+
+## 17. CLI Reference
 
 ### Commands
 
@@ -990,6 +1213,8 @@ curl http://localhost:8765/api/status
 | `qanot config remove-provider` | Remove an AI provider. |
 | `qanot plugin new <name>` | Scaffold a new plugin directory. |
 | `qanot plugin list` | List installed plugins. |
+| `qanot plugin install <name>` | Install a plugin from QanotHub. |
+| `qanot plugin search` | Search available plugins on QanotHub. |
 | `qanot update` | Update to latest version from PyPI + restart. |
 | `qanot version` | Show installed version. |
 | `qanot help` | Show help. |
@@ -1011,7 +1236,7 @@ The CLI searches for `config.json` in this order:
 
 ---
 
-## 12. Troubleshooting
+## 18. Troubleshooting
 
 ### Bot Not Starting
 

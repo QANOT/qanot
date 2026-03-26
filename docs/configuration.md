@@ -140,7 +140,7 @@ RAG requires a Gemini or OpenAI provider for embeddings. See [RAG documentation]
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `exec_security` | string | `"open"` | Command execution security level: `open` (all commands), `cautious` (prompts for dangerous ops), `strict` (allowlist only) |
+| `exec_security` | string | `"cautious"` | Command execution security level: `open` (all commands), `cautious` (prompts for dangerous ops), `strict` (allowlist only) |
 | `exec_allowlist` | list[string] | `[]` | In `strict` mode, only these commands are allowed |
 
 ### Dashboard
@@ -149,12 +149,68 @@ RAG requires a Gemini or OpenAI provider for embeddings. See [RAG documentation]
 |-------|------|---------|-------------|
 | `dashboard_enabled` | bool | `true` | Enable web dashboard |
 | `dashboard_port` | int | `8765` | Port for the web dashboard |
+| `dashboard_host` | string | `"127.0.0.1"` | Dashboard bind address (`0.0.0.0` for Docker, `127.0.0.1` for local) |
 
 ### Backup
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `backup_enabled` | bool | `true` | Enable automatic workspace backups on startup |
+
+### Code Execution and Memory Tool
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `code_execution` | bool | `false` | Enable Anthropic server-side code execution (`code_execution_20250825`). Free with web search. |
+| `memory_tool` | bool | `false` | Enable Anthropic memory tool (`memory_20250818`). Creates `/memories` directory for structured notes. |
+
+### Browser
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `browser_enabled` | bool | `false` | Enable Playwright browser tools (browse_url, click, fill_form, screenshot, extract_data). Requires `pip install qanot[browser]`. |
+
+### Webhook (External Events)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `webhook_enabled` | bool | `false` | Enable webhook endpoint for external events (GitHub, CRM, CI/CD) |
+| `webhook_token` | string | `""` | Bearer token for webhook authentication |
+
+### WebChat
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `webchat_enabled` | bool | `false` | Enable WebChat adapter with WebSocket streaming |
+| `webchat_token` | string | `""` | Authentication token for webchat connections |
+| `webchat_origins` | list[string] | `[]` | Allowed CORS origins for webchat (empty = allow all) |
+| `webchat_max_sessions` | int | `50` | Maximum concurrent webchat sessions |
+
+### MCP (Model Context Protocol)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mcp_servers` | list | `[]` | MCP server definitions. Requires `pip install qanot[mcp]`. |
+
+Each MCP server entry:
+
+```json
+{
+  "name": "server-name",
+  "command": "npx",
+  "args": ["-y", "@anthropic/mcp-server"],
+  "env": {"API_KEY": "..."},
+  "enabled": true
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | required | Unique server identifier |
+| `command` | string | required | Command to launch the MCP server |
+| `args` | list[string] | `[]` | Command arguments |
+| `env` | dict | `{}` | Environment variables for the server process |
+| `enabled` | bool | `true` | Whether to connect on startup |
 
 ### Model Routing
 

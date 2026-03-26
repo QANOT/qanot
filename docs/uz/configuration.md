@@ -135,12 +135,13 @@ RAG embedding uchun Gemini yoki OpenAI provider kerak. Batafsil [RAG hujjatlari]
 |--------|-----|---------|--------|
 | `thinking_level` | string | `"off"` | Claude reasoning rejimi: `off`, `low`, `medium`, `high` |
 | `thinking_budget` | int | `10000` | Maksimal thinking tokenlar |
+| `thinking_display` | string | `"omitted"` | Thinking mazmunini foydalanuvchiga ko'rsatish: `"omitted"` (tezroq TTFT), `"full"` (to'liq ko'rsatish) |
 
 ### Ijro xavfsizligi
 
 | Maydon | Tur | Default | Tavsif |
 |--------|-----|---------|--------|
-| `exec_security` | string | `"open"` | Buyruq bajarish xavfsizlik darajasi: `open` (barcha buyruqlar), `cautious` (xavfli operatsiyalar uchun so'raydi), `strict` (faqat ruxsat berilganlar) |
+| `exec_security` | string | `"cautious"` | Buyruq bajarish xavfsizlik darajasi: `open` (barcha buyruqlar), `cautious` (xavfli operatsiyalar uchun so'raydi), `strict` (faqat ruxsat berilganlar) |
 | `exec_allowlist` | list[string] | `[]` | `strict` rejimda faqat shu buyruqlarga ruxsat beriladi |
 
 ### Dashboard
@@ -149,6 +150,7 @@ RAG embedding uchun Gemini yoki OpenAI provider kerak. Batafsil [RAG hujjatlari]
 |--------|-----|---------|--------|
 | `dashboard_enabled` | bool | `true` | Web dashboard ni yoqish |
 | `dashboard_port` | int | `8765` | Dashboard uchun port |
+| `dashboard_host` | string | `"127.0.0.1"` | Dashboard server host (Docker uchun `"0.0.0.0"` qo'ying) |
 
 ### Backup
 
@@ -237,6 +239,42 @@ Har bir plugin yozuvi:
 | `name` | string | Plugin papka nomi (`plugins/` ichki, keyin `plugins_dir` da qidiriladi) |
 | `enabled` | bool | Bu plugin ni yuklash yoki yo'q |
 | `config` | dict | `plugin.setup(config)` ga beriladigan ixtiyoriy config |
+
+### MCP serverlar
+
+| Maydon | Tur | Default | Tavsif |
+|--------|-----|---------|--------|
+| `mcp_servers` | list | `[]` | MCP server ta'riflari. Har biri `name`, `command`, `args`, va ixtiyoriy `env` o'z ichiga oladi. |
+
+Har bir MCP server yozuvi:
+
+```json
+{
+  "name": "github",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "env": {"GITHUB_TOKEN": "ghp_..."}
+}
+```
+
+MCP klient o'rnatish uchun: `pip install qanot[mcp]`
+
+### Kod bajarish
+
+| Maydon | Tur | Default | Tavsif |
+|--------|-----|---------|--------|
+| `code_execution` | bool | `false` | Anthropic server tomonida kod bajarish toolini yoqish (`code_execution_20250825`) |
+
+Faqat Anthropic provider bilan ishlaydi. Web search bilan birga bepul.
+
+### Webhook va WebChat
+
+| Maydon | Tur | Default | Tavsif |
+|--------|-----|---------|--------|
+| `webhook_secret` | string | `""` | Tashqi webhook endpoint uchun autentifikatsiya kaliti |
+| `webchat_enabled` | bool | `false` | WebSocket asosidagi webchat adapterni yoqish |
+
+Webhook endpoint tashqi voqealar uchun ishlatiladi (GitHub, CRM, CI/CD). WebChat WebSocket streaming bilan web interfeys uchun.
 
 ### Ko'p provider sozlash
 

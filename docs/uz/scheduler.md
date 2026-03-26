@@ -153,6 +153,16 @@ Bu o'zgarishlar botni qayta ishga tushirmasdan darhol kuchga kirishini ta'minlay
 - **Muvaffaqiyatsiz system event'lar:** Xatolar loglanadi va keyingi proaktiv loop iteratsiyasida qayta uriniladi
 - **Noto'g'ri cron ifodalar:** 5 ta maydon bo'lmagan ifodali job'lar ogohlantirish bilan o'tkazib yuboriladi
 
+## Ko'nikmalar bilan integratsiya
+
+Cron job'lar va ko'nikmalar tizimi birgalikda ishlaydi. Agent takroriy cron vazifalarni aniqlaydi va ular uchun ko'nikmalar yaratishi mumkin:
+
+1. Agent `create_skill` orqali ko'nikma va skript yaratadi
+2. `cron_create` orqali rejalashtirilgan vazifa sifatida ro'yxatga oladi
+3. Cron job `run_skill_script` orqali ko'nikma skriptini bajaradi
+
+Masalan: agent har kuni soat 20:00 da hisobot yaratish uchun avval skriptni ko'nikma sifatida yaratadi, keyin cron job orqali avtomatik ishga tushiradi.
+
 ## Arxitektura eslatmalari
 
 - Scheduler APScheduler 3.x dan `AsyncIOScheduler` ishlatadi

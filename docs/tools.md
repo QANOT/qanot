@@ -573,6 +573,165 @@ Restart the entire bot process. Useful after configuration changes, new agent cr
 
 Returns immediately. The bot restarts after a 2-second delay.
 
+## Memory Tool
+
+Available when `memory_tool: true` is set in config. Provides file-based memory management in the `workspace/memories/` directory. For Anthropic, this uses the `memory_20250818` type hint for trained memory behavior.
+
+### memory
+
+Manage memory entries in the `/memories` directory.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `command` | string | Yes | Operation: `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
+| `path` | string | No | Memory file path (relative to memories directory) |
+| `content` | string | No | Content for create/insert operations |
+| `old_str` | string | No | String to find (for str_replace) |
+| `new_str` | string | No | Replacement string (for str_replace) |
+| `insert_line` | integer | No | Line number for insert operation |
+| `new_path` | string | No | New path for rename operation |
+
+**Operations:**
+
+| Command | Description |
+|---------|-------------|
+| `view` | List all memory entries, or read a specific entry if `path` is given |
+| `create` | Create a new memory entry with the given `path` and `content` |
+| `str_replace` | Replace `old_str` with `new_str` in the memory entry at `path` |
+| `insert` | Insert `content` at `insert_line` in the memory entry at `path` |
+| `delete` | Delete the memory entry at `path` |
+| `rename` | Rename the memory entry from `path` to `new_path` |
+
+```json
+{"command": "create", "path": "user-preferences.md", "content": "# Preferences\n\n- Prefers dark mode\n- Language: Uzbek"}
+```
+
+## Browser Tools
+
+Available when `browser_enabled: true` and `pip install qanot[browser]` is installed. Uses Playwright for real browser automation.
+
+### browse_url
+
+Open a URL in a headless browser and return the page content.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | Yes | URL to open |
+| `wait_for` | string | No | CSS selector to wait for before returning content |
+
+```json
+{"url": "https://example.com", "wait_for": ".main-content"}
+```
+
+### click_element
+
+Click an element on the current page.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `selector` | string | Yes | CSS selector of the element to click |
+
+```json
+{"selector": "button.submit"}
+```
+
+### fill_form
+
+Fill form fields on the current page.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fields` | object | Yes | Map of CSS selectors to values |
+
+```json
+{"fields": {"#email": "user@example.com", "#password": "secret123"}}
+```
+
+### screenshot
+
+Take a screenshot of the current page.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `full_page` | boolean | No | Capture full page (default: false, viewport only) |
+
+```json
+{"full_page": true}
+```
+
+Returns `{"success": true, "path": "...", "size_bytes": 123456}`. The screenshot is saved to `workspace/generated/` and sent to the user via Telegram.
+
+### extract_data
+
+Extract structured data from the current page using CSS selectors.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `selectors` | object | Yes | Map of field names to CSS selectors |
+
+```json
+{"selectors": {"title": "h1", "price": ".price", "description": ".product-desc"}}
+```
+
+Returns extracted text content for each selector.
+
+## Skill Tools
+
+The agent can create reusable skills with scripts that can be run later.
+
+### create_skill
+
+Create a new skill with a name, description, and executable script.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Skill name (lowercase alphanumeric + hyphens) |
+| `description` | string | Yes | What the skill does |
+| `script` | string | Yes | Script content (Python or shell) |
+
+```json
+{
+  "name": "seo-check",
+  "description": "Check SEO metrics for a URL",
+  "script": "#!/usr/bin/env python3\nimport sys\nurl = sys.argv[1]\nprint(f'Checking SEO for {url}')"
+}
+```
+
+### list_skills
+
+List all available skills with their descriptions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| (none) | -- | -- | No parameters |
+
+### run_skill_script
+
+Execute a skill's script.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Skill name to run |
+| `args` | string | No | Arguments to pass to the script |
+
+```json
+{"name": "seo-check", "args": "https://example.com"}
+```
+
+### delete_skill
+
+Remove a skill and its files.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Skill name to delete |
+
+## MCP Tools
+
+When MCP servers are configured (`mcp_servers` in config), their tools are dynamically registered at startup. MCP tools are prefixed with the server name to avoid collisions (e.g., `github_create_issue`, `filesystem_read_file`).
+
+Use the `/mcp` Telegram command to see all connected servers and their available tools.
+
 ## Doctor Tool
 
 ### doctor

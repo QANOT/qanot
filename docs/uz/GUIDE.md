@@ -16,8 +16,14 @@ Telegram botlar uchun yengil Python agent framework. O'zbekiston bozori uchun ya
 8. [RAG](#8-rag)
 9. [Ko'p agentli tizim](#9-kop-agentli-tizim)
 10. [Dashboard](#10-dashboard)
-11. [CLI ma'lumotnomasi](#11-cli-malumotnomasi)
-12. [Muammolarni hal qilish](#12-muammolarni-hal-qilish)
+11. [MCP klient](#11-mcp-klient)
+12. [Brauzer toollar](#12-brauzer-toollar)
+13. [Ko'nikmalar tizimi](#13-konikmalar-tizimi)
+14. [Telegram buyruqlari](#14-telegram-buyruqlari)
+15. [Anthropic xotira tooli](#15-anthropic-xotira-tooli)
+16. [Kod bajarish](#16-kod-bajarish)
+17. [CLI ma'lumotnomasi](#17-cli-malumotnomasi)
+18. [Muammolarni hal qilish](#18-muammolarni-hal-qilish)
 
 ---
 
@@ -29,6 +35,15 @@ Uch qadam bilan ishlaydigan bot.
 
 ```bash
 pip install qanot
+```
+
+Qo'shimcha imkoniyatlar uchun extralar:
+
+```bash
+pip install qanot[rag]           # RAG (document indexing, semantik qidiruv)
+pip install qanot[mcp]           # MCP klient (tashqi tool serverlar)
+pip install qanot[browser]       # Brauzer toollar (Playwright)
+pip install qanot[rag,mcp,browser]  # Hammasi birga
 ```
 
 ### 2-qadam: Initsializatsiya
@@ -155,9 +170,10 @@ Barcha konfiguratsiya `config.json` da joylashadi. `qanot init` sihrbozi uni yar
   // ── Kengaytirilgan fikrlash (Claude) ──
   "thinking_level": "off",             // "off"|"low"|"medium"|"high"
   "thinking_budget": 10000,            // Maksimal fikrlash tokenlari
+  "thinking_display": "omitted",       // "omitted" = tezroq TTFT, "full" = to'liq ko'rsatish
 
   // ── Bajarish xavfsizligi ──
-  "exec_security": "open",             // "open"|"cautious"|"strict"
+  "exec_security": "cautious",         // "open"|"cautious"|"strict"
   "exec_allowlist": [],                // strict rejimda ruxsat berilgan buyruqlar
 
   // ── Model routing ──
@@ -173,6 +189,7 @@ Barcha konfiguratsiya `config.json` da joylashadi. `qanot init` sihrbozi uni yar
   // ── Dashboard ──
   "dashboard_enabled": true,           // :8765 portda web UI
   "dashboard_port": 8765,
+  "dashboard_host": "127.0.0.1",      // Docker uchun "0.0.0.0"
 
   // ── Backup ──
   "backup_enabled": true,              // Ishga tushirishda avtomatik backup
@@ -180,6 +197,15 @@ Barcha konfiguratsiya `config.json` da joylashadi. `qanot init` sihrbozi uni yar
   // ── Ko'p agentli ──
   "agents": [],                        // Agent ta'riflari (Ko'p agentli bo'limga qarang)
   "monitor_group_id": 0,               // Agent monitoring uchun Telegram guruh ID
+
+  // ── MCP serverlar ──
+  "mcp_servers": [],                   // MCP server ta'riflari (pip install qanot[mcp])
+
+  // ── Kod bajarish ──
+  "code_execution": false,             // Anthropic server tomonida Python bajarish
+
+  // ── WebChat ──
+  "webchat_enabled": false,            // WebSocket asosidagi webchat adapter
 
   // ── Plugin'lar ──
   "plugins": []                        // Plugin konfiguratsiyalari
@@ -238,11 +264,13 @@ OAuth tokenlar avtomatik Claude Code identifikatsiya headerlarini yoqadi — bu 
 
 **Mavjud modellar:**
 
-| Model | Qachon ishlatish |
-|---|---|
-| `claude-sonnet-4-6` | Tez, ko'p vazifalar uchun tavsiya etiladi |
-| `claude-opus-4-6` | Eng qobiliyatli, murakkab fikrlash uchun |
-| `claude-haiku-4-5-20251001` | Eng arzon, oddiy so'rovlar uchun |
+| Model | Qachon ishlatish | Kontekst |
+|---|---|---|
+| `claude-sonnet-4-6` | Tez, ko'p vazifalar uchun tavsiya etiladi | 200K / 1M |
+| `claude-opus-4-6` | Eng qobiliyatli, murakkab fikrlash uchun | 200K / 1M |
+| `claude-haiku-4-5-20251001` | Eng arzon, oddiy so'rovlar uchun | 200K |
+
+Opus 4.6 va Sonnet 4.6 modellari 1M token kontekst oynasini qo'llab-quvvatlaydi. Qanot modelni aniqlaydi va `max_context_tokens` ni avtomatik sozlaydi.
 
 **Kengaytirilgan fikrlash:**
 
@@ -530,7 +558,7 @@ Routing yoqilganda, odatiy botlar 40-60% xarajat kamayishini ko'rishadi.
 
 `run_command` tool'i shell buyruqlarini bajarish uchun uchta xavfsizlik darajasiga ega.
 
-#### open (standart)
+#### open
 
 Faqat xavfli buyruqlar bloklanadi (rm -rf /, fork bomb'lar, disk to'ldirish hujumlari va h.k.). Qolgan hamma narsa erkin ishlaydi.
 
@@ -540,7 +568,7 @@ Faqat xavfli buyruqlar bloklanadi (rm -rf /, fork bomb'lar, disk to'ldirish huju
 }
 ```
 
-#### cautious
+#### cautious (standart)
 
 Xavfli buyruqlar bloklanadi. Xatarli buyruqlar (pip install, curl, sudo, docker, git push va h.k.) inline tugma yoki matnli tasdiqlash orqali foydalanuvchi ruxsatini talab qiladi.
 
@@ -799,6 +827,7 @@ Agar FastEmbed o'rnatilmagan bo'lsa, Ollama `nomic-embed-text` modeli orqali o'z
 - `MEMORY.md` -- uzoq muddatli faktlar
 - `SESSION-STATE.md` -- faol sessiya holati
 - `memory/*.md` -- kunlik yozuvlar (oxirgi 30 ta fayl)
+- `memories/*.md` -- Anthropic xotira tooli fayllari
 
 Fayllar kontenti o'zgarganda qayta indekslanadi (hash asosidagi deduplikatsiya).
 
@@ -968,7 +997,214 @@ curl http://localhost:8765/api/status
 
 ---
 
-## 11. CLI ma'lumotnomasi
+## 11. MCP klient
+
+MCP (Model Context Protocol) orqali agent tashqi tool serverlariga ulanib, minglab qo'shimcha toollardan foydalana oladi.
+
+### O'rnatish
+
+```bash
+pip install qanot[mcp]
+```
+
+### Konfiguratsiya
+
+`config.json` da MCP serverlarini sozlang:
+
+```json
+{
+  "mcp_servers": [
+    {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_TOKEN": "ghp_..."}
+    },
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+    }
+  ]
+}
+```
+
+### Qanday ishlaydi
+
+1. Bot ishga tushganda MCP serverlar subprocess sifatida ishga tushiriladi
+2. Har bir serverning toollari avtomatik ro'yxatga olinadi
+3. Agent MCP toollarni o'zining tayyor toollaridek chaqira oladi
+4. `/mcp` Telegram buyrug'i bilan ulangan serverlar va tool sonlarini ko'rish mumkin
+
+### Mavjud MCP serverlari
+
+Model Context Protocol ekotizimi 1000+ dan ortiq serverni o'z ichiga oladi:
+
+- **GitHub** -- repolar, issue'lar, PR'lar bilan ishlash
+- **Filesystem** -- fayl tizimi operatsiyalari
+- **PostgreSQL/MySQL** -- database so'rovlari
+- **Slack/Discord** -- xabar yuborish
+- **Google Drive** -- hujjatlar bilan ishlash
+
+To'liq ro'yxat: [github.com/modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+
+---
+
+## 12. Brauzer toollar
+
+Playwright orqali agent web sahifalarni ko'rishi, elementlarni bosishi, formalarni to'ldirishi va skrinshotlar olishi mumkin.
+
+### O'rnatish
+
+```bash
+pip install qanot[browser]
+playwright install chromium
+```
+
+### Mavjud toollar
+
+| Tool | Tavsif |
+|---|---|
+| `browse_url` | URL ni ochish va sahifa mazmunini olish |
+| `click_element` | Sahifadagi elementni bosish (CSS selector orqali) |
+| `fill_form` | Forma maydonlarini to'ldirish |
+| `screenshot` | Sahifaning skrinshotini olish |
+| `extract_data` | Sahifadan strukturalangan ma'lumotlarni ajratish |
+
+### Foydalanish misoli
+
+```
+User: "example.com dan narxlar jadvalini olib ber"
+Bot: [browse_url orqali sahifani ochadi]
+     [extract_data orqali jadval ma'lumotlarini oladi]
+Bot: "Mana narxlar jadvali: ..."
+```
+
+Brauzer headless rejimda ishlaydi -- grafikasiz server muhitlarida ham ishlaydi.
+
+---
+
+## 13. Ko'nikmalar tizimi
+
+Agent takroriy vazifalarni aniqlaydi va ular uchun qayta ishlatiladigan ko'nikmalar yaratadi.
+
+### Qanday ishlaydi
+
+1. Agent takroriy pattern'ni aniqlaydi (masalan, har kuni bir xil hisobot)
+2. `create_skill` tooli orqali ko'nikma yaratadi -- `SKILL.md` ga qoidalar va `workspace/skills/` papkasiga skriptlar saqlanadi
+3. Keyingi safar shu vazifa kelganda, agent `run_skill_script` orqali tayyor skriptni ishga tushiradi
+
+### Mavjud toollar
+
+| Tool | Tavsif |
+|---|---|
+| `create_skill` | Yangi ko'nikma yaratish (nom, tavsif, qoidalar, ixtiyoriy skript) |
+| `list_skills` | Barcha ko'nikmalarni ko'rsatish |
+| `run_skill_script` | Ko'nikma skriptini bajarish |
+| `delete_skill` | Ko'nikmani o'chirish |
+
+### Hot-reload
+
+Ko'nikmalar fayllari o'zgartirilganda qayta ishga tushirish shart emas -- agent keyingi navbatda yangilangan ko'nikmalarni avtomatik ko'radi.
+
+---
+
+## 14. Telegram buyruqlari
+
+Qanot 22 ta Telegram slash buyruqni qo'llab-quvvatlaydi. Har biri inline tugmalar bilan ishlaydi.
+
+### Sozlash buyruqlari
+
+| Buyruq | Tavsif |
+|---|---|
+| `/model` | AI modelni tanlash (Sonnet, Opus, Haiku va h.k.) |
+| `/think` | Kengaytirilgan fikrlash darajasini sozlash (off/low/medium/high) |
+| `/voice` | Ovoz rejimini o'zgartirish (off/inbound/always) |
+| `/voiceprovider` | Ovoz providerini tanlash (Muxlisa, KotibAI, Aisha, Whisper) |
+| `/lang` | Interfeys tilini o'zgartirish |
+| `/mode` | Javob rejimini tanlash (stream/partial/blocked) |
+| `/routing` | Model routing ni yoqish/o'chirish |
+| `/group` | Guruh rejimini sozlash (off/mention/all) |
+| `/exec` | Buyruq bajarish xavfsizligini o'zgartirish (open/cautious/strict) |
+| `/code` | Kod bajarish rejimini sozlash |
+
+### Ma'lumot buyruqlari
+
+| Buyruq | Tavsif |
+|---|---|
+| `/status` | Bot holati: model, kontekst %, uptime |
+| `/usage` | Token va narx statistikasi |
+| `/context` | Kontekst oynasi holati |
+| `/config` | Joriy konfiguratsiya |
+| `/id` | Telegram user ID ni ko'rsatish |
+| `/mcp` | Ulangan MCP serverlar va tool sonlari |
+| `/plugins` | Pluginlarni ko'rish, yoqish/o'chirish |
+
+### Amal buyruqlari
+
+| Buyruq | Tavsif |
+|---|---|
+| `/reset` | Suhbatni qayta boshlash (model maslahat bilan) |
+| `/compact` | Kontekstni qo'lda siqish |
+| `/export` | Suhbat tarixini eksport qilish |
+| `/stop` | Joriy jarayonni to'xtatish |
+
+Barcha buyruqlar inline tugmalar ko'rsatadi -- bosilganda sozlama darhol o'zgaradi.
+
+---
+
+## 15. Anthropic xotira tooli
+
+Anthropic ning `memory_20250818` tooli ikki darajali xotira arxitekturasini ta'minlaydi.
+
+### Ikki darajali arxitektura
+
+1. **Barcha providerlar:** `/memories` tooli orqali xotira fayllari bilan ishlash (ko'rish, yaratish, tahrirlash, o'chirish, nomini o'zgartirish)
+2. **Anthropic provideri:** O'rnatilgan xotira xatti-harakati -- har xabar boshida xotiralarni avtomatik tekshiradi, strukturalangan qaydlar yozadi
+
+### Qanday ishlaydi
+
+```
+User: "Mening tug'ilgan kunim 15-mart"
+Bot: [xotiraga saqlaydi: tug'ilgan kun = 15-mart]
+Bot: "Eslab qoldim!"
+
+[Keyingi suhbatda]
+User: "Bugun qanday sana?"
+Bot: [xotiradan tekshiradi] "Bugun 15-mart -- tug'ilgan kuningiz bilan tabriklayman!"
+```
+
+### /memories papkasi
+
+Xotira fayllari `workspace/memories/` papkasida saqlanadi. RAG tizimi bu papkani avtomatik indekslaydi -- shu orqali semantik qidiruv ham ishlaydi.
+
+---
+
+## 16. Kod bajarish
+
+Anthropic ning `code_execution_20250825` tooli orqali agent Python kodni server tomonida xavfsiz muhitda bajarishi mumkin.
+
+### Imkoniyatlari
+
+- Sandboxed Python muhitda kod bajarish
+- Hisoblashlar, ma'lumot tahlili, grafik yaratish
+- Bepul -- web search bilan birga keladi
+- Natijalar to'g'ridan-to'g'ri suhbatda ko'rsatiladi
+
+### Konfiguratsiya
+
+```json
+{
+  "provider": "anthropic",
+  "code_execution": true
+}
+```
+
+Kod bajarish faqat Anthropic provider bilan ishlaydi.
+
+---
+
+## 17. CLI ma'lumotnomasi
 
 ### Buyruqlar
 
@@ -1011,7 +1247,7 @@ CLI `config.json` ni shu tartibda qidiradi:
 
 ---
 
-## 12. Muammolarni hal qilish
+## 18. Muammolarni hal qilish
 
 ### Bot ishga tushmayapti
 

@@ -307,6 +307,48 @@ Bot'ning Telegram reply-to funksiyasini qachon ishlatishini boshqaradi.
 
 Standart qiymati `"coalesced"`.
 
+## Telegram buyruqlari
+
+Qanot 22 ta slash buyruqni qo'llab-quvvatlaydi. Har biri inline tugmalar orqali ishlaydi -- foydalanuvchi tugmani bosganda sozlama darhol o'zgaradi.
+
+### Sozlash buyruqlari
+
+| Buyruq | Tavsif |
+|--------|--------|
+| `/model` | AI modelni tanlash (inline tugmalar bilan) |
+| `/think` | Kengaytirilgan fikrlash darajasini sozlash (off/low/medium/high) |
+| `/voice` | Ovoz rejimini o'zgartirish (off/inbound/always) |
+| `/voiceprovider` | Ovoz providerini tanlash |
+| `/lang` | Interfeys tilini o'zgartirish |
+| `/mode` | Javob rejimini tanlash (stream/partial/blocked) |
+| `/routing` | Model routing ni yoqish/o'chirish |
+| `/group` | Guruh rejimini sozlash (off/mention/all) |
+| `/exec` | Buyruq bajarish xavfsizligini o'zgartirish |
+| `/code` | Kod bajarish rejimini sozlash |
+
+### Ma'lumot buyruqlari
+
+| Buyruq | Tavsif |
+|--------|--------|
+| `/status` | Bot holati: model, kontekst %, uptime |
+| `/usage` | Token va narx statistikasi |
+| `/context` | Kontekst oynasi holati |
+| `/config` | Joriy konfiguratsiya |
+| `/id` | Telegram user ID ni ko'rsatish |
+| `/mcp` | Ulangan MCP serverlar va tool sonlari |
+| `/plugins` | Pluginlarni ko'rish, yoqish/o'chirish (inline tugmalar bilan) |
+
+### Amal buyruqlari
+
+| Buyruq | Tavsif |
+|--------|--------|
+| `/reset` | Suhbatni qayta boshlash (model maslahat bilan) |
+| `/compact` | Kontekstni qo'lda siqish |
+| `/export` | Suhbat tarixini eksport qilish |
+| `/stop` | Joriy jarayonni to'xtatish |
+
+Buyruqlar inline tugmalar ko'rsatadi. Masalan, `/model` bosganingizda mavjud modellar ro'yxati tugmalar sifatida ko'rinadi -- tanlagan modelingiz darhol yoqiladi.
+
 ## Yozish indikatori
 
 Qayta ishlash davomida bot har 4 soniyada yozish indikatorini yuboradi — javob tayyor bo'lguncha. Telegram klientda "Bot yozyapti..." sifatida ko'rinadi. Birinchi streaming draft yuborilishi bilanoq yozish loop'i bekor qilinadi.

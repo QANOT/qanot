@@ -309,5 +309,9 @@ Bu majburiy maydonlar va asosiy tur mosligini tekshiradi (string, integer, numbe
 | 1C Enterprise | 13 | Buxgalteriya: kontragentlar, mahsulotlar, sotuvlar, xaridlar, qoldiqlar |
 | AbsMarket | 8 | POS tizimi: mahsulotlar, sotuvlar, inventar, hisobotlar |
 | AbsVision | 3 | HR tizimi: xodimlar, davomat, ish haqi |
+| iBox POS | 10 | POS tizimi: mahsulotlar, buyurtmalar, to'lovlar, qoldiqlar |
+| Eskiz SMS | 4 | SMS yuborish, shablon boshqaruvi, yetkazish holati (Eskiz.uz orqali) |
 | MySQL Query | 1 | Mustaqil faqat-SELECT SQL so'rov tooli |
 | Cloud Reporter | 1 | Qanot Cloud platformasiga foydalanish hisoboti |
+
+Ko'proq pluginlar [QanotHub](https://hub.qanot.ai) da mavjud -- jamoat va rasmiy pluginlar katalogi.

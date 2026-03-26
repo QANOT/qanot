@@ -186,9 +186,10 @@ Berilgan manba uchun barcha bo'laklarni o'chiradi va BM25 indeksni tozalaydi.
 
 RAG agentning xotira fayllarini avtomatik indekslaydi:
 
-1. **Ishga tushganda:** `index_workspace()` MEMORY.md, SESSION-STATE.md va oxirgi 30 kunlik yozuvlarni indekslaydi
+1. **Ishga tushganda:** `index_workspace()` MEMORY.md, SESSION-STATE.md, oxirgi 30 kunlik yozuvlar va `memories/` papkasidagi barcha fayllarni indekslaydi
 2. **Xotira yozilganda:** WAL yozuvlari yoki kunlik yozuvlar yozilganda write hook qayta indekslashni ishga tushiradi
-3. **Content-hash deduplikatsiya:** Fayllar faqat mazmuni o'zgarganda qayta indekslanadi
+3. **`/memories` papkasi:** Anthropic xotira tooli yaratgan fayllar ham avtomatik indekslanadi
+4. **Content-hash deduplikatsiya:** Fayllar faqat mazmuni o'zgarganda qayta indekslanadi
 
 O'rnatilgan `memory_search` tooli avval RAG ni tekshiradi (mavjud bo'lsa), keyin substring qidiruvga qaytadi:
 

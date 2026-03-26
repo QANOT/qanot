@@ -25,10 +25,19 @@ Qanot AI to'rtta LLM providerni qo'llab-quvvatlaydi, bir nechta provider sozlang
 | Model | Kirish $/MTok | Chiqish $/MTok | Cache o'qish | Cache yozish |
 |-------|--------------|----------------|-------------|-------------|
 | `claude-sonnet-4-6` | 3.00 | 15.00 | 0.30 | 3.75 |
+| `claude-opus-4-6` | 15.00 | 75.00 | 1.50 | 18.75 |
 | `claude-opus-4-20250514` | 15.00 | 75.00 | 1.50 | 18.75 |
 | `claude-haiku-4-5-20251001` | 0.80 | 4.00 | 0.08 | 1.00 |
 
 **OAuth tokenlar:** API kalit `sk-ant-oat` bilan boshlansa, Qanot avtomatik `anthropic-beta: oauth-2025-04-20` headeri bilan Bearer autentifikatsiyaga o'tadi.
+
+**1M kontekst oynasi:** Opus 4.6 va Sonnet 4.6 modellari 1M token kontekst oynasini qo'llab-quvvatlaydi. Qanot modelni aniqlaydi va `max_context_tokens` ni avtomatik 1,000,000 ga sozlaydi.
+
+**Qo'shimcha imkoniyatlar (v2.0.4):**
+
+- `code_execution_20250825` -- server tomonida Python kod bajarish (bepul, web search bilan birga keladi)
+- `memory_20250818` -- o'rnatilgan xotira tooli (ikki darajali arxitektura)
+- `thinking.display: "omitted"` -- tezroq birinchi token uchun thinking mazmunini yashirish
 
 ### OpenAI (GPT)
 

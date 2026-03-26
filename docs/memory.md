@@ -155,6 +155,45 @@ add_write_hook(on_memory_write)
 
 This means RAG search results include the latest memory entries without manual re-indexing.
 
+## Anthropic Memory Tool
+
+Qanot AI v2.0.4 adds Anthropic's trained memory tool (`memory_20250818`) with a dual-layer architecture.
+
+### Dual-Layer Architecture
+
+The memory system operates on two layers:
+
+1. **All providers** get the `/memories` tool -- a file-based memory system in `workspace/memories/` with operations: view, create, str_replace, insert, delete, rename. This works with any LLM provider.
+2. **Anthropic** gets the `memory_20250818` type hint, which activates trained memory behavior. The model automatically checks memories at conversation start and creates structured notes without explicit instructions.
+
+### /memories Directory
+
+Memory entries are stored as files in `workspace/memories/`:
+
+```
+workspace/
+  memories/
+    user-preferences.md
+    project-context.md
+    api-endpoints.md
+```
+
+The `/memories` directory is automatically indexed by RAG alongside MEMORY.md and daily notes, making all memory entries searchable via semantic search.
+
+### Configuration
+
+```json
+{
+  "memory_tool": true
+}
+```
+
+When enabled:
+- The `memory` tool is registered with all six operations (view, create, str_replace, insert, delete, rename)
+- The `workspace/memories/` directory is created if it does not exist
+- RAG indexes the `/memories` directory on startup and on changes
+- For Anthropic providers, the `memory_20250818` type hint is included in tool definitions
+
 ## File Locations
 
 | File | Purpose | Included in System Prompt |

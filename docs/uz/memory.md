@@ -155,11 +155,27 @@ add_write_hook(on_memory_write)
 
 Bu RAG qidiruv natijalari qo'lda qayta indekslashsiz eng so'nggi xotira yozuvlarini o'z ichiga olishini anglatadi.
 
+## Anthropic xotira tooli
+
+v2.0.4 dan boshlab Qanot Anthropic ning `memory_20250818` toolini ikki darajali arxitektura bilan qo'llab-quvvatlaydi.
+
+### Ikki darajali arxitektura
+
+1. **Barcha providerlar** uchun `/memories` tooli mavjud -- xotira fayllarini ko'rish, yaratish, tahrirlash, o'chirish va nomini o'zgartirish imkonini beradi
+2. **Anthropic provider** qo'shimcha ravishda o'rnatilgan xotira xatti-harakatiga ega -- har xabar boshida xotiralarni avtomatik tekshiradi va strukturalangan qaydlar yozadi
+
+### /memories papkasi
+
+Xotira fayllari `workspace/memories/` papkasida saqlanadi. Bu papka RAG tizimi tomonidan avtomatik indekslanadi -- shu orqali semantik qidiruv ham ishlaydi.
+
+MEMORY.md dan farqi: MEMORY.md bitta fayl bo'lib, WAL protocol va agent tomonidan boshqariladi. `/memories` papkasi esa ko'p fayllardan iborat -- har bir mavzu uchun alohida fayl.
+
 ## Fayl joylashuvi
 
 | Fayl | Maqsad | System promptga kiritilgan |
 |------|--------|---------------------------|
 | `workspace/SESSION-STATE.md` | Joriy sessiya WAL yozuvlari | Ha |
 | `workspace/MEMORY.md` | Uzoq muddatli xotira | Ha ("Your Long-Term Memory" bo'limi sifatida) |
+| `workspace/memories/*.md` | Anthropic xotira tooli fayllari | Yo'q (RAG orqali qidiriladi) |
 | `workspace/memory/YYYY-MM-DD.md` | Kunlik suhbat yozuvlari | Yo'q (talab bo'yicha qidiriladi) |
 | `workspace/memory/working-buffer.md` | Xavfli zona zaxira logi | Faqat siqishdan tiklash vaqtida |

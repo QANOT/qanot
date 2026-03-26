@@ -75,8 +75,8 @@ Workspace papkasida shell buyruq bajaradi.
 
 **Xavfsizlik:** `exec_security` orqali 3 bosqichli xavfsizlik modeli:
 
-- **`open`** (default) -- Faqat xavfli patternlar bloklisti amal qiladi. `rm -rf /`, `mkfs`, `dd`, fork bomblar va hujum toollari har doim bloklanadi.
-- **`cautious`** -- Xavfli patternlar bloklanadi, bundan tashqari riskli buyruqlar (pip install, curl, sudo, git push, docker, database klientlar va h.k.) user tasdiqlashini talab qiladi. User rad etsa, buyruq bekor qilinadi.
+- **`open`** -- Faqat xavfli patternlar bloklisti amal qiladi. `rm -rf /`, `mkfs`, `dd`, fork bomblar va hujum toollari har doim bloklanadi.
+- **`cautious`** (standart) -- Xavfli patternlar bloklanadi, bundan tashqari riskli buyruqlar (pip install, curl, sudo, git push, docker, database klientlar va h.k.) user tasdiqlashini talab qiladi. User rad etsa, buyruq bekor qilinadi.
 - **`strict`** -- Faqat `exec_allowlist` dagi buyruqlarga (prefix match) ruxsat beriladi. Qolganlari bloklanadi.
 
 Buyruqlar 120 soniyadan keyin timeout bo'ladi. Chiqish 50,000 belgiga cheklanadi.
@@ -614,6 +614,188 @@ Natija:
   "timestamp": "2026-03-16T12:00:00+00:00"
 }
 ```
+
+## Brauzer toollar
+
+`pip install qanot[browser]` o'rnatilganda mavjud. Playwright orqali web sahifalar bilan ishlaydi.
+
+### browse_url
+
+URL ni ochish va sahifa mazmunini olish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `url` | string | Ha | Ochiladigan web sahifa URL |
+| `wait_for` | string | Yo'q | Kutish uchun CSS selector (default: sahifa yuklanganda) |
+
+```json
+{"url": "https://example.com"}
+```
+
+Sahifa mazmunini HTML yoki soddalashtirilgan matn sifatida qaytaradi.
+
+### click_element
+
+Sahifadagi elementni bosish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `selector` | string | Ha | CSS selector (masalan, `"button.submit"`, `"#login"`) |
+
+```json
+{"selector": "button.submit"}
+```
+
+### fill_form
+
+Forma maydonlarini to'ldirish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `fields` | object | Ha | Maydon nomlari va qiymatlari (masalan, `{"username": "admin", "password": "123"}`) |
+
+```json
+{"fields": {"email": "user@example.com", "message": "Salom"}}
+```
+
+### screenshot
+
+Sahifaning skrinshotini olish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `selector` | string | Yo'q | Faqat ma'lum elementning skrinshoti (default: to'liq sahifa) |
+
+```json
+{}
+```
+
+Skrinshot `workspace/generated/` ga saqlanadi va userga Telegram orqali yuboriladi.
+
+### extract_data
+
+Sahifadan strukturalangan ma'lumotlarni ajratish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `selector` | string | Ha | Ajratiladigan elementlar uchun CSS selector |
+| `attributes` | array[string] | Yo'q | Ajratiladigan atributlar (default: matn mazmuni) |
+
+```json
+{"selector": "table.prices tr", "attributes": ["innerText"]}
+```
+
+## Ko'nikma toollar
+
+Agent o'z-o'zini yaxshilash uchun qayta ishlatiladigan ko'nikmalar yaratadi va boshqaradi.
+
+### create_skill
+
+Yangi ko'nikma yaratish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `name` | string | Ha | Ko'nikma nomi |
+| `description` | string | Ha | Ko'nikma tavsifi |
+| `rules` | string | Yo'q | SKILL.md ga qo'shiladigan qoidalar |
+| `script` | string | Yo'q | `workspace/skills/` ga saqlanadigan skript mazmuni |
+
+```json
+{
+  "name": "weekly-report",
+  "description": "Haftalik hisobot yaratish",
+  "rules": "Har juma kechqurun haftalik hisobot yoz",
+  "script": "#!/bin/bash\ndate >> report.md"
+}
+```
+
+### list_skills
+
+Barcha ko'nikmalarni ko'rsatish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| (yo'q) | -- | -- | Parametr yo'q |
+
+### run_skill_script
+
+Ko'nikma skriptini bajarish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `name` | string | Ha | Bajariladigan ko'nikma nomi |
+
+```json
+{"name": "weekly-report"}
+```
+
+### delete_skill
+
+Ko'nikmani o'chirish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `name` | string | Ha | O'chiriladigan ko'nikma nomi |
+
+## Xotira toollar
+
+Anthropic xotira tooli (`memory_20250818`) ikki darajali arxitekturani ta'minlaydi.
+
+### memories_view
+
+Xotira fayllarini ko'rish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `path` | string | Yo'q | Ko'riladigan xotira fayli yo'li (default: barcha fayllar) |
+
+### memories_create
+
+Yangi xotira fayli yaratish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `path` | string | Ha | Xotira fayli yo'li (`memories/` papkasida) |
+| `content` | string | Ha | Fayl mazmuni |
+
+### memories_str_replace
+
+Xotira faylida matnni almashtirish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `path` | string | Ha | Xotira fayli yo'li |
+| `old_str` | string | Ha | Eski matn |
+| `new_str` | string | Ha | Yangi matn |
+
+### memories_insert
+
+Xotira fayliga ma'lum joyga matn qo'shish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `path` | string | Ha | Xotira fayli yo'li |
+| `insert_line` | int | Ha | Kiritish qatori raqami |
+| `content` | string | Ha | Kiritiladigan matn |
+
+### memories_delete
+
+Xotira faylini o'chirish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `path` | string | Ha | O'chiriladigan xotira fayli yo'li |
+
+### memories_rename
+
+Xotira faylining nomini o'zgartirish.
+
+| Parametr | Tur | Majburiy | Tavsif |
+|----------|-----|----------|--------|
+| `old_path` | string | Ha | Joriy fayl yo'li |
+| `new_path` | string | Ha | Yangi fayl yo'li |
+
+Barcha xotira fayllari `workspace/memories/` papkasida saqlanadi. RAG tizimi bu papkani avtomatik indekslaydi.
 
 ## Maxsus tool yaratish
 

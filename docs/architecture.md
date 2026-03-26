@@ -23,6 +23,9 @@ This page describes the internal structure of Qanot AI: the agent loop, data flo
               |   Tracker   +---> Cron Tools
               |             +---> RAG Tools
               |             +---> Plugin Tools
+              |             +---> MCP Tools
+              |             +---> Browser Tools
+              |             +---> Skill Tools
               |
         +-----+-----+
         |     |     |
@@ -49,8 +52,14 @@ This page describes the internal structure of Qanot AI: the agent loop, data flo
 12. **Create agent** -- Wire provider, tools, session, context
 13. **Register RAG tools** -- `rag_index`, `rag_search`, `rag_list`, `rag_forget` (needs agent reference)
 14. **Register memory hooks** -- Wire RAG indexer to memory write events
-15. **Start scheduler** -- Load jobs, start APScheduler
-16. **Start Telegram** -- Start polling or webhook server
+15. **Register MCP tools** (if enabled) -- Connect to MCP servers, register discovered tools
+16. **Register browser tools** (if enabled) -- Register Playwright-based browser tools
+17. **Register skill tools** -- Register skill management tools
+18. **Register memory tool** (if enabled) -- Register Anthropic memory tool operations
+19. **Run lifecycle hooks** -- Execute on_startup hooks
+20. **Start scheduler** -- Load jobs, start APScheduler
+21. **Start webhook/webchat** (if enabled) -- Start webhook endpoint and/or webchat WebSocket server
+22. **Start Telegram** -- Start polling or webhook server
 
 ## Agent Loop
 
@@ -329,6 +338,10 @@ Beyond the core modules described above, Qanot includes these additional compone
 | `daemon.py` | Cross-platform daemon (systemd/launchd/schtasks) |
 | `scheduler.py` | APScheduler cron (isolated + systemEvent modes) |
 | `cli.py` | CLI: init/start/stop/restart/status/config/update/doctor |
+| `mcp_client.py` | MCP (Model Context Protocol) client for external tool servers |
+| `webhook.py` | Webhook endpoint for external events (GitHub, CRM, CI/CD) |
+| `webchat.py` | WebChat adapter with WebSocket streaming |
+| `hooks.py` | Lifecycle hooks system (on_startup, on_shutdown, on_pre_turn, on_post_turn) |
 
 ### Tool Modules (`tools/`)
 
@@ -345,3 +358,6 @@ Beyond the core modules described above, Qanot includes these additional compone
 | `doctor.py` | System diagnostics |
 | `workspace.py` | Workspace init + templates |
 | `jobs_io.py` | Cron jobs JSON I/O utilities |
+| `memory_tool.py` | Anthropic memory tool (view/create/str_replace/insert/delete/rename) |
+| `browser.py` | Browser tools via Playwright (browse_url, click, fill_form, screenshot, extract_data) |
+| `skill_tools.py` | Skill management tools (create_skill, list_skills, run_skill_script, delete_skill) |

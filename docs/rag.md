@@ -186,8 +186,8 @@ Deletes all chunks for the given source and clears the BM25 index.
 
 RAG automatically indexes the agent's memory files:
 
-1. **On startup:** `index_workspace()` indexes MEMORY.md, SESSION-STATE.md, and the last 30 daily notes
-2. **On memory writes:** A write hook triggers re-indexing when WAL entries or daily notes are written
+1. **On startup:** `index_workspace()` indexes MEMORY.md, SESSION-STATE.md, the last 30 daily notes, and the `memories/` directory (Anthropic memory tool entries)
+2. **On memory writes:** A write hook triggers re-indexing when WAL entries, daily notes, or `/memories` entries are written
 3. **Content-hash deduplication:** Files are only re-indexed when their content changes
 
 The `memory_search` built-in tool checks RAG first (when available) before falling back to substring search:
