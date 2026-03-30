@@ -44,6 +44,7 @@ class AgentBot:
         config: Config,
         provider: LLMProvider,
         parent_registry: ToolRegistry,
+        subagent_manager=None,
     ):
         self.agent_def = agent_def
         self.config = config
@@ -51,6 +52,7 @@ class AgentBot:
         self.dp = Dispatcher()
         self._agent: Agent | None = None
         self._provider = provider
+        self._subagent_manager = subagent_manager
         self._parent_registry = parent_registry
         self._bot_username: str = ""  # Resolved on first message
         self._setup_handlers()
@@ -210,7 +212,7 @@ class AgentBot:
         from qanot.context import ContextTracker
         from qanot.session import SessionWriter
         from qanot.tools.builtin import register_builtin_tools
-        from qanot.tools.delegate import register_delegate_tools, _load_agent_identity
+        from qanot.orchestrator.context_scope import load_agent_identity
 
         # Create agent-specific provider if model/provider differs
         provider = self._create_agent_provider()
@@ -228,13 +230,13 @@ class AgentBot:
         session = SessionWriter(self.config.sessions_dir)
 
         # Build system prompt from agent identity or config
-        identity = _load_agent_identity(self.config.workspace_dir, self.agent_def.id)
+        identity = load_agent_identity(self.config.workspace_dir, self.agent_def.id)
         system_prompt = identity or self.agent_def.prompt or (
             f"You are {self.agent_def.name or self.agent_def.id}. "
             f"Complete tasks assigned to you."
         )
 
-        # Create agent with custom system prompt
+        # Create agent with custom system prompt (child agent, don't clobber singleton)
         agent = Agent(
             config=self._make_agent_config(),
             provider=provider,
@@ -243,13 +245,16 @@ class AgentBot:
             context=context,
             prompt_mode="minimal",
             system_prompt_override=system_prompt,
+            _is_child=True,
         )
 
-        # Register delegate tools so this agent can talk to others
-        register_delegate_tools(
-            tool_registry, self.config, self._provider, self._parent_registry,
-            get_user_id=lambda: agent.current_user_id,
-        )
+        # Register orchestrator tools so this agent can delegate at depth=1
+        if self._subagent_manager:
+            from qanot.orchestrator import register_orchestrator_tools
+            register_orchestrator_tools(
+                tool_registry, self._subagent_manager, self.config, depth=1,
+                get_user_id=lambda: agent.current_user_id,
+            )
 
         self._agent = agent
         logger.info(
@@ -277,11 +282,11 @@ class AgentBot:
 
     def _build_tool_registry(self) -> ToolRegistry:
         """Build filtered tool registry based on agent's allow/deny lists."""
-        from qanot.tools.delegate import _build_delegate_registry
+        from qanot.orchestrator.tool_policy import build_child_registry
 
-        return _build_delegate_registry(
+        return build_child_registry(
             self._parent_registry,
-            depth=1,  # Agent bots can delegate once more (depth 1 of max 2)
+            depth=1,  # Agent bots are depth-1 children
             tools_allow=self.agent_def.tools_allow or None,
             tools_deny=self.agent_def.tools_deny or None,
         )
@@ -398,6 +403,7 @@ async def start_agent_bots(
     config: Config,
     provider: LLMProvider,
     parent_registry: ToolRegistry,
+    subagent_manager=None,
 ) -> list[AgentBot]:
     """Start all agent bots that have bot_token configured.
 
@@ -415,6 +421,7 @@ async def start_agent_bots(
             config=config,
             provider=provider,
             parent_registry=parent_registry,
+            subagent_manager=subagent_manager,
         )
         bots.append(agent_bot)
 

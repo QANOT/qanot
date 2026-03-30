@@ -34,6 +34,7 @@ class ToolRegistry:
         self._handlers: dict[str, Callable[[dict], Awaitable[str]]] = {}
         self._categories: dict[str, str] = {}  # tool_name -> category
         self._cached_definitions: list[dict] | None = None
+        self._cached_core: list[dict] | None = None
 
     def register(
         self,

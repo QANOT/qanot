@@ -50,6 +50,7 @@ _LONG_RUNNING_TOOLS = frozenset({
     "delegate_to_agent",
     "converse_with_agent",
     "spawn_sub_agent",
+    "spawn_agent",
     "create_reel",
 })
 LONG_TOOL_TIMEOUT = 600  # 10 minutes for heavy tools (reel creation, delegation)
@@ -70,6 +71,8 @@ class Agent:
         prompt_mode: str = "full",
         system_prompt_override: str = "",
         hooks=None,
+        _is_child: bool = False,
+        max_iterations: int = MAX_ITERATIONS,
     ):
         self.config = config
         self.provider = provider
@@ -85,6 +88,8 @@ class Agent:
         self._current_chat_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
         self.cost_tracker = CostTracker(config.workspace_dir)
+        self._max_iterations = max_iterations
+        self._is_child = _is_child
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
         self._conv_manager = ConversationManager(
@@ -102,7 +107,9 @@ class Agent:
         self._pending_files: dict[str, list[str]] = {}
         # Lifecycle hooks
         self.hooks: HookRegistry = hooks or HookRegistry()
-        Agent._instance = self
+        # Only main agent sets _instance (child agents must not clobber it)
+        if not _is_child:
+            Agent._instance = self
 
     # Class-level reference for tools to push images without direct agent access
     _instance: "Agent | None" = None
@@ -567,7 +574,7 @@ class Agent:
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
 
-        for iteration in range(MAX_ITERATIONS):
+        for iteration in range(self._max_iterations):
             messages, system, tool_defs = await self._prepare_iteration(
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,
@@ -657,7 +664,7 @@ class Agent:
                 break
         else:
             final_text = "(Agent reached maximum iterations)"
-            logger.warning("Agent hit max iterations (%d)", MAX_ITERATIONS)
+            logger.warning("Agent hit max iterations (%d)", self._max_iterations)
 
         # Lifecycle hooks: post-turn
         modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
@@ -707,7 +714,7 @@ class Agent:
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
 
-        for iteration in range(MAX_ITERATIONS):
+        for iteration in range(self._max_iterations):
             messages, system, tool_defs = await self._prepare_iteration(
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,

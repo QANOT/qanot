@@ -67,6 +67,16 @@ class HandlersMixin:
                 self._switch_model(new_model)
 
         self.agent.reset(conv_key)
+
+        # Cancel all running sub-agents for this user
+        if hasattr(self, 'subagent_manager') and self.subagent_manager:
+            try:
+                cancelled = await self.subagent_manager.cancel_all_for_user(conv_key)
+                if cancelled:
+                    logger.info("Cancelled %d sub-agents on reset for %s", cancelled, conv_key)
+            except Exception as e:
+                logger.debug("Failed to cancel sub-agents on reset: %s", e)
+
         await self._send_final(
             message.chat.id,
             "Suhbat tozalandi. Yangi suhbatni boshlashingiz mumkin.",

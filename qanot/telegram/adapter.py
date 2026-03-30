@@ -45,10 +45,12 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         config: "Config",
         agent: "Agent",
         scheduler: "CronScheduler | None" = None,
+        subagent_manager=None,
     ):
         self.config = config
         self.agent = agent
         self.scheduler = scheduler
+        self.subagent_manager = subagent_manager
         self.bot = Bot(token=config.bot_token)
         self.dp = Dispatcher()
         self._setup_handlers()

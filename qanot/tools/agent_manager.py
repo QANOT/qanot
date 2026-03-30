@@ -133,6 +133,7 @@ def register_agent_manager_tools(
     parent_registry: ToolRegistry,
     *,
     get_user_id: callable,
+    subagent_manager=None,
 ) -> None:
     """Register dynamic agent creation/management tools."""
 
@@ -189,14 +190,13 @@ def register_agent_manager_tools(
             soul_path.write_text(prompt, encoding="utf-8")
             logger.info("Created agent identity: %s", soul_path)
 
-        # Re-register delegate tools to include new agent in enum
-        from qanot.tools.delegate import register_delegate_tools
-        # Re-register so the updated agent list is reflected in the tool schema
-        # (tools with same name get overwritten in the registry)
-        register_delegate_tools(
-            registry, config, provider, parent_registry,
-            get_user_id=get_user_id,
-        )
+        # Re-register orchestrator tools to include new agent in enum
+        if subagent_manager:
+            from qanot.orchestrator.tools import register_orchestrator_tools
+            register_orchestrator_tools(
+                registry, subagent_manager, config, depth=0,
+                get_user_id=get_user_id,
+            )
 
         # Hot-launch if bot_token provided
         if bot_token:
@@ -278,12 +278,13 @@ def register_agent_manager_tools(
         # Persist
         _save_agents_to_config(config)
 
-        # Re-register delegate tools
-        from qanot.tools.delegate import register_delegate_tools
-        register_delegate_tools(
-            registry, config, provider, parent_registry,
-            get_user_id=get_user_id,
-        )
+        # Re-register orchestrator tools
+        if subagent_manager:
+            from qanot.orchestrator.tools import register_orchestrator_tools
+            register_orchestrator_tools(
+                registry, subagent_manager, config, depth=0,
+                get_user_id=get_user_id,
+            )
 
         logger.info("Agent updated: %s (changed: %s)", agent_id, ", ".join(changes))
         return json.dumps({
@@ -312,12 +313,13 @@ def register_agent_manager_tools(
         # Persist
         _save_agents_to_config(config)
 
-        # Re-register delegate tools
-        from qanot.tools.delegate import register_delegate_tools
-        register_delegate_tools(
-            registry, config, provider, parent_registry,
-            get_user_id=get_user_id,
-        )
+        # Re-register orchestrator tools
+        if subagent_manager:
+            from qanot.orchestrator.tools import register_orchestrator_tools
+            register_orchestrator_tools(
+                registry, subagent_manager, config, depth=0,
+                get_user_id=get_user_id,
+            )
 
         logger.info("Agent deleted: %s (was running: %s)", agent_id, was_running)
         return json.dumps({

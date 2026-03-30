@@ -363,20 +363,19 @@ async def main() -> None:
     if mcp_manager:
         telegram._mcp_manager = mcp_manager
 
-    # Register sub-agent tools (needs agent + telegram for delivery)
-    from qanot.tools.subagent import register_sub_agent_tools
-    register_sub_agent_tools(
-        tool_registry, config, provider, tool_registry,
+    # Register orchestrator tools (unified delegation + sub-agents)
+    from qanot.orchestrator import SubagentManager, register_orchestrator_tools
+    subagent_manager = SubagentManager(
+        config=config,
+        provider=provider,
+        parent_registry=tool_registry,
+        announce_callback=telegram.send_message,
+        persist_dir=config.workspace_dir,
+    )
+    register_orchestrator_tools(
+        tool_registry, subagent_manager, config, depth=0,
         get_user_id=get_user_id,
         get_chat_id=lambda: agent.current_chat_id,
-        send_callback=telegram.send_message,
-    )
-
-    # Register agent-to-agent delegation tools
-    from qanot.tools.delegate import register_delegate_tools, set_notify_callback
-    register_delegate_tools(
-        tool_registry, config, provider, tool_registry,
-        get_user_id=get_user_id,
     )
 
     # Register dynamic agent management tools (create/update/delete agents at runtime)
@@ -384,23 +383,16 @@ async def main() -> None:
     register_agent_manager_tools(
         tool_registry, config, provider, tool_registry,
         get_user_id=get_user_id,
+        subagent_manager=subagent_manager,
     )
-    logger.info("Agent tools registered (delegation + management + sub-agent)")
+    logger.info("Agent tools registered (orchestrator + management)")
 
-    # Wire live agent monitoring notifications to Telegram
-    async def _notify_user(text: str) -> None:
-        try:
-            if cid := agent.current_chat_id:
-                await telegram.send_message(cid, text)
-        except Exception as e:
-            logger.debug("Failed to send notification to user: %s", e)
-
-    for uid in config.allowed_users:
-        set_notify_callback(str(uid), _notify_user)
+    # Wire sub-agent cancellation into Telegram /reset
+    telegram.subagent_manager = subagent_manager
 
     # Start per-agent Telegram bots (each with their own bot_token)
     from qanot.agent_bot import start_agent_bots
-    agent_bots = await start_agent_bots(config, provider, tool_registry)
+    agent_bots = await start_agent_bots(config, provider, tool_registry, subagent_manager)
 
     # Start web dashboard (with optional webhook + webchat routes)
     dashboard = None
@@ -432,6 +424,11 @@ async def main() -> None:
     finally:
         # Fire shutdown hooks
         await agent_hooks.fire("on_shutdown")
+        # Cancel all running sub-agents gracefully
+        try:
+            await subagent_manager.shutdown()
+        except Exception as e:
+            logger.warning("Error shutting down sub-agents: %s", e)
         # Stop agent bots
         for ab in agent_bots:
             try:
