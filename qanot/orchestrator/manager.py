@@ -51,6 +51,7 @@ from qanot.orchestrator.tool_policy import (
     resolve_role,
     build_child_registry,
 )
+from qanot.orchestrator.monitor import mirror_to_group, send_typing_to_group
 
 if TYPE_CHECKING:
     from qanot.config import Config, AgentDefinition
@@ -374,6 +375,13 @@ class SubagentManager:
         run.started_at = time.time()
         self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
 
+        # Mirror to monitoring group
+        await mirror_to_group(
+            self.config, "main", run.agent_id,
+            run.task[:3000], direction="delegate",
+        )
+        await send_typing_to_group(self.config, run.agent_id)
+
         try:
             result = await asyncio.wait_for(
                 agent.run_turn(prompt, user_id=run.parent_user_id),
@@ -399,6 +407,11 @@ class SubagentManager:
             run.ended_at = time.time()
             self._collect_stats(run, agent)
             self._finalize_run(run)
+            # Mirror result to monitoring group
+            await mirror_to_group(
+                self.config, run.agent_id, "main",
+                (run.result_text or "")[:3000], direction="result",
+            )
 
     def _run_async_task(self, run: SubagentRun, agent: Any, prompt: str) -> None:
         """Async: fire and announce on completion."""

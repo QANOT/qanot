@@ -65,6 +65,10 @@ def register_orchestrator_tools(
     _register_clear_board(registry, manager, get_user_id)
     _register_agent_history(registry, manager, get_user_id)
 
+    # Monitor group (only at depth 0)
+    if depth == 0:
+        _register_set_monitor_group(registry, config)
+
 
 def _register_spawn_agent(
     registry: ToolRegistry,
@@ -406,6 +410,38 @@ def _register_agent_history(
                     "type": "integer",
                     "description": "Max entries to return (default 10, max 20).",
                     "default": 10,
+                },
+            },
+        },
+        handler=handler,
+        category="agent",
+    )
+
+
+def _register_set_monitor_group(
+    registry: ToolRegistry,
+    config: Config,
+) -> None:
+    """Register the set_monitor_group tool."""
+    from qanot.orchestrator.monitor import handle_set_monitor_group
+
+    async def handler(params: dict) -> str:
+        return await handle_set_monitor_group(config, params)
+
+    registry.register(
+        name="set_monitor_group",
+        description=(
+            "Telegram guruhni monitoring uchun sozlash. "
+            "Agentlar o'zaro gaplashganda xabarlar shu guruhga yuboriladi — "
+            "siz real-time ko'rasiz. Har bir agent bot guruhga qo'shilgan bo'lishi kerak."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["group_id"],
+            "properties": {
+                "group_id": {
+                    "type": "integer",
+                    "description": "Telegram guruh ID (manfiy raqam, masalan: -1001234567890).",
                 },
             },
         },
