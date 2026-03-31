@@ -786,3 +786,373 @@ class TestLoopDetection:
         mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Research Python features")
         assert result is None
+
+    def test_no_loop_different_user(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        run = _make_run(
+            parent_user_id="u2", agent_id="researcher",
+            status=STATUS_COMPLETED, task="Research Python features",
+        )
+        mgr.registry.register(run)
+        result = mgr._check_loop("u1", "researcher", "Research Python features")
+        assert result is None
+
+
+# ═══════════════════════════════════════════════════════
+# Additional coverage (ported from old tests)
+# ═══════════════════════════════════════════════════════
+
+
+class TestConstants:
+    """Verify key constants are sane."""
+
+    def test_max_spawn_depth(self):
+        assert MAX_SPAWN_DEPTH == 3
+
+    def test_max_concurrent(self):
+        assert MAX_CONCURRENT_PER_USER == 5
+
+    def test_default_timeout(self):
+        from qanot.orchestrator.manager import DEFAULT_TIMEOUT
+        assert DEFAULT_TIMEOUT == 120
+
+    def test_max_result_chars(self):
+        from qanot.orchestrator.manager import MAX_RESULT_CHARS
+        assert MAX_RESULT_CHARS == 8000
+
+    def test_max_context_chars(self):
+        from qanot.orchestrator.manager import MAX_CONTEXT_CHARS
+        assert MAX_CONTEXT_CHARS == 4000
+
+    def test_max_task_chars(self):
+        from qanot.orchestrator.manager import MAX_TASK_CHARS
+        assert MAX_TASK_CHARS == 10000
+
+    def test_max_board_entries(self):
+        from qanot.orchestrator.announce import MAX_BOARD_ENTRIES
+        assert MAX_BOARD_ENTRIES == 20
+
+
+class TestAgentDefinitionConfig:
+    """Verify AgentDefinition defaults and custom values."""
+
+    def test_defaults(self):
+        ad = AgentDefinition(id="test")
+        assert ad.timeout == 120
+        assert ad.max_iterations == 15
+        assert ad.tools_allow == []
+        assert ad.tools_deny == []
+        assert ad.delegate_allow == []
+        assert ad.bot_token == ""
+        assert ad.model == ""
+
+    def test_custom(self):
+        ad = AgentDefinition(id="test", model="gpt-4", timeout=60)
+        assert ad.model == "gpt-4"
+        assert ad.timeout == 60
+
+    def test_delegate_allow(self):
+        ad = AgentDefinition(id="test", delegate_allow=["researcher", "coder"])
+        assert "researcher" in ad.delegate_allow
+        assert "coder" in ad.delegate_allow
+        assert "writer" not in ad.delegate_allow
+
+
+class TestContextTruncation:
+    """Verify context truncation in scoped prompts."""
+
+    def test_short_context_unchanged(self):
+        prompt = build_scoped_prompt(
+            task="test", agent_identity="id",
+            parent_context="short context",
+        )
+        assert "short context" in prompt
+
+    def test_long_context_in_prompt(self):
+        long_ctx = "x" * 5000
+        prompt = build_scoped_prompt(
+            task="test", agent_identity="id",
+            parent_context=long_ctx,
+        )
+        # MAX_CONTEXT_CHARS = 4000, prompt builder takes first 4000
+        assert len(prompt) < len(long_ctx) + 500
+
+
+class TestIdentityEdgeCases:
+    """Edge cases for agent identity loading."""
+
+    def test_empty_soul_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            soul_dir = Path(td) / "agents" / "empty"
+            soul_dir.mkdir(parents=True)
+            (soul_dir / "SOUL.md").write_text("")
+            identity = load_agent_identity(td, "empty")
+            assert identity == ""
+
+    def test_whitespace_only_soul_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            soul_dir = Path(td) / "agents" / "ws"
+            soul_dir.mkdir(parents=True)
+            (soul_dir / "SOUL.md").write_text("   \n  \n  ")
+            identity = load_agent_identity(td, "ws")
+            assert identity == ""
+
+
+class TestBoardOperations:
+    """Additional board coverage."""
+
+    def test_per_user_isolation(self):
+        board: dict[str, list] = {}
+        p1 = AnnouncePayload(
+            run_id="r1", agent_id="r", agent_name="R",
+            status="completed", result="User1 result", elapsed_seconds=1.0,
+        )
+        p2 = AnnouncePayload(
+            run_id="r2", agent_id="r", agent_name="R",
+            status="completed", result="User2 result", elapsed_seconds=1.0,
+        )
+        post_to_board(board, "u1", p1, task="Task 1")
+        post_to_board(board, "u2", p2, task="Task 2")
+        assert len(board["u1"]) == 1
+        assert len(board["u2"]) == 1
+        assert board["u1"][0]["result"] != board["u2"][0]["result"]
+
+    def test_result_truncated_on_board(self):
+        board: dict[str, list] = {}
+        payload = AnnouncePayload(
+            run_id="r1", agent_id="r", agent_name="R",
+            status="completed", result="x" * 5000, elapsed_seconds=1.0,
+        )
+        post_to_board(board, "u1", payload)
+        assert len(board["u1"][0]["result"]) == 2000
+
+    @pytest.mark.asyncio
+    async def test_board_with_entries(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        reg = ToolRegistry()
+        from qanot.orchestrator.tools import register_orchestrator_tools
+        register_orchestrator_tools(reg, mgr, config, depth=0)
+
+        # Add entries
+        p = AnnouncePayload(
+            run_id="r1", agent_id="researcher", agent_name="R",
+            status="completed", result="Found stuff", elapsed_seconds=2.0,
+        )
+        post_to_board(mgr._project_board, "default", p, task="Research")
+        p2 = AnnouncePayload(
+            run_id="r2", agent_id="coder", agent_name="C",
+            status="completed", result="Wrote code", elapsed_seconds=3.0,
+        )
+        post_to_board(mgr._project_board, "default", p2, task="Code")
+
+        result = json.loads(await reg.execute("view_board", {}))
+        assert result["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_board_filter_by_agent(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        reg = ToolRegistry()
+        from qanot.orchestrator.tools import register_orchestrator_tools
+        register_orchestrator_tools(reg, mgr, config, depth=0)
+
+        for aid in ["researcher", "coder", "researcher"]:
+            p = AnnouncePayload(
+                run_id=make_run_id(), agent_id=aid, agent_name=aid,
+                status="completed", result="ok", elapsed_seconds=1.0,
+            )
+            post_to_board(mgr._project_board, "default", p)
+
+        result = json.loads(await reg.execute("view_board", {"agent_id": "researcher"}))
+        assert result["total"] == 2
+
+
+class TestAgentHistory:
+    """Test agent_history tool with data."""
+
+    @pytest.mark.asyncio
+    async def test_history_with_data(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        reg = ToolRegistry()
+        from qanot.orchestrator.tools import register_orchestrator_tools
+        register_orchestrator_tools(reg, mgr, config, depth=0)
+
+        # Register some runs
+        for i in range(3):
+            run = _make_run(
+                parent_user_id="default",
+                agent_id="researcher",
+                status=STATUS_COMPLETED,
+                result_text=f"Result {i}",
+            )
+            run.created_at = time.time() + i
+            mgr.registry.register(run)
+
+        result = json.loads(await reg.execute("agent_history", {}))
+        assert result["total"] == 3
+
+    @pytest.mark.asyncio
+    async def test_history_filter_by_agent(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        reg = ToolRegistry()
+        from qanot.orchestrator.tools import register_orchestrator_tools
+        register_orchestrator_tools(reg, mgr, config, depth=0)
+
+        for aid in ["researcher", "coder", "researcher"]:
+            run = _make_run(parent_user_id="default", agent_id=aid, status=STATUS_COMPLETED)
+            mgr.registry.register(run)
+
+        result = json.loads(await reg.execute("agent_history", {"agent_id": "researcher"}))
+        assert result["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_history_limit(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        reg = ToolRegistry()
+        from qanot.orchestrator.tools import register_orchestrator_tools
+        register_orchestrator_tools(reg, mgr, config, depth=0)
+
+        for i in range(10):
+            run = _make_run(parent_user_id="default", status=STATUS_COMPLETED)
+            run.created_at = time.time() + i
+            mgr.registry.register(run)
+
+        result = json.loads(await reg.execute("agent_history", {"limit": 3}))
+        assert result["total"] == 3
+
+
+class TestDelegateAccess:
+    """Additional delegate_allow edge cases."""
+
+    def test_builtin_role_always_allowed(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        # Builtin "researcher" is not in config.agents, so _check_access returns True
+        assert mgr._check_access("researcher", "coder") is True
+
+    def test_unknown_caller_allowed(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        assert mgr._check_access("unknown_agent", "researcher") is True
+
+
+class TestSpawnValidation:
+    """Test spawn parameter validation without actually running agents."""
+
+    @pytest.mark.asyncio
+    async def test_empty_task(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(SpawnParams(task=""), user_id="u1")
+        assert isinstance(result, str)
+        assert "required" in result
+
+    @pytest.mark.asyncio
+    async def test_task_too_long(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(SpawnParams(task="x" * 20000), user_id="u1")
+        assert isinstance(result, str)
+        assert "too long" in result
+
+    @pytest.mark.asyncio
+    async def test_max_depth_exceeded(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(SpawnParams(task="test"), user_id="u1", depth=MAX_SPAWN_DEPTH)
+        assert isinstance(result, str)
+        assert "depth" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_agent(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(
+            SpawnParams(task="test", agent_id="nonexistent"),
+            user_id="u1",
+        )
+        assert isinstance(result, str)
+        assert "unknown" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_concurrency_limit(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        # Fill up concurrency
+        for _ in range(MAX_CONCURRENT_PER_USER):
+            run = _make_run(parent_user_id="u1", status=STATUS_RUNNING)
+            mgr.registry.register(run)
+        result = await mgr.spawn(SpawnParams(task="test"), user_id="u1")
+        assert isinstance(result, str)
+        assert "concurrent" in result
+
+    @pytest.mark.asyncio
+    async def test_access_denied(self):
+        agent_def = AgentDefinition(id="restricted", delegate_allow=["researcher"])
+        config = _make_config(agents=[agent_def])
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(
+            SpawnParams(task="test", agent_id="coder"),
+            user_id="u1",
+            caller_agent_id="restricted",
+        )
+        assert isinstance(result, str)
+        assert "not allowed" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_mode(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.spawn(SpawnParams(task="test", mode="invalid"), user_id="u1")
+        assert isinstance(result, str)
+        assert "unknown mode" in result.lower()
+
+
+class TestCancelOperations:
+    """Test cancel functionality."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_nonexistent(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        result = await mgr.cancel("nonexistent")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_completed(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        run = _make_run(status=STATUS_COMPLETED)
+        mgr.registry.register(run)
+        result = await mgr.cancel(run.run_id)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_active_run(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        run = _make_run(status=STATUS_RUNNING)
+        mgr.registry.register(run)
+        result = await mgr.cancel(run.run_id)
+        assert result is True
+        assert mgr.registry.get(run.run_id).status == STATUS_CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_for_user(self):
+        config = _make_config()
+        mgr = SubagentManager(config, MagicMock(), _make_registry())
+        for _ in range(3):
+            run = _make_run(parent_user_id="u1", status=STATUS_RUNNING)
+            mgr.registry.register(run)
+        run_other = _make_run(parent_user_id="u2", status=STATUS_RUNNING)
+        mgr.registry.register(run_other)
+
+        count = await mgr.cancel_all_for_user("u1")
+        assert count == 3
+        # u2 should be unaffected
+        assert mgr.registry.count_active_for_user("u2") == 1
