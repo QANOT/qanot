@@ -204,6 +204,8 @@ async def main() -> None:
         exec_security=config.exec_security,
         exec_allowlist=config.exec_allowlist,
         approval_callback=_approval_callback if config.exec_security == "cautious" else None,
+        get_bot=lambda: _telegram_ref[0].bot if _telegram_ref else None,
+        get_chat_id=lambda: _agent_ref[0].current_chat_id if _agent_ref else None,
     )
 
     # Register Anthropic-compatible memory tool (/memories directory)

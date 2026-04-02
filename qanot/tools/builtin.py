@@ -148,6 +148,8 @@ def register_builtin_tools(
     exec_security: str = "open",
     exec_allowlist: list[str] | None = None,
     approval_callback: "callable | None" = None,
+    get_bot: "callable | None" = None,
+    get_chat_id: "callable | None" = None,
 ) -> None:
     """Register all built-in tools.
 
@@ -456,12 +458,23 @@ def register_builtin_tools(
         size = os.path.getsize(full)
         if size > MAX_FILE_SIZE:
             return json.dumps({"error": f"File too large: {size / 1024 / 1024:.1f}MB (max {MAX_FILE_SIZE // (1024 * 1024)}MB)"})
-        # Push to pending files queue (telegram adapter will send it)
+        # Direct send via Telegram bot (immediate feedback to agent)
+        bot = get_bot() if get_bot else None
+        chat_id = get_chat_id() if get_chat_id else None
+        if bot and chat_id:
+            try:
+                from aiogram.types import FSInputFile
+                doc = FSInputFile(full)
+                await bot.send_document(chat_id=chat_id, document=doc)
+                return json.dumps({"success": True, "sent": True, "path": full, "size": size})
+            except Exception as e:
+                return json.dumps({"error": f"Telegram send failed: {e}", "path": full, "size": size})
+        # Fallback: queue for post-response delivery (bot not available)
         from qanot.agent import Agent
         if Agent._instance:
             user_id = get_user_id() if get_user_id else ""
             Agent._instance._pending_files.setdefault(user_id, []).append(full)
-        return json.dumps({"success": True, "path": full, "size": size})
+        return json.dumps({"success": True, "sent": False, "queued": True, "path": full, "size": size})
 
     registry.register(
         name="send_file",
