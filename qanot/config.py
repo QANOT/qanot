@@ -133,6 +133,8 @@ class Config:
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group
     monitor_group_id: int = 0
+    # Multi-agent orchestrator (spawn_agent, list_agents, etc.)
+    agents_enabled: bool = False
     # MCP (Model Context Protocol) servers
     mcp_servers: list[dict] = field(default_factory=list)
     # Browser control (Playwright)

@@ -366,28 +366,33 @@ async def main() -> None:
         telegram._mcp_manager = mcp_manager
 
     # Register orchestrator tools (unified delegation + sub-agents)
-    from qanot.orchestrator import SubagentManager, register_orchestrator_tools
-    subagent_manager = SubagentManager(
-        config=config,
-        provider=provider,
-        parent_registry=tool_registry,
-        announce_callback=telegram.send_message,
-        persist_dir=config.workspace_dir,
-    )
-    register_orchestrator_tools(
-        tool_registry, subagent_manager, config, depth=0,
-        get_user_id=get_user_id,
-        get_chat_id=lambda: agent.current_chat_id,
-    )
+    # Only when explicitly enabled — prevents model from over-delegating simple tasks
+    subagent_manager = None
+    if config.agents_enabled:
+        from qanot.orchestrator import SubagentManager, register_orchestrator_tools
+        subagent_manager = SubagentManager(
+            config=config,
+            provider=provider,
+            parent_registry=tool_registry,
+            announce_callback=telegram.send_message,
+            persist_dir=config.workspace_dir,
+        )
+        register_orchestrator_tools(
+            tool_registry, subagent_manager, config, depth=0,
+            get_user_id=get_user_id,
+            get_chat_id=lambda: agent.current_chat_id,
+        )
 
-    # Register dynamic agent management tools (create/update/delete agents at runtime)
-    from qanot.tools.agent_manager import register_agent_manager_tools
-    register_agent_manager_tools(
-        tool_registry, config, provider, tool_registry,
-        get_user_id=get_user_id,
-        subagent_manager=subagent_manager,
-    )
-    logger.info("Agent tools registered (orchestrator + management)")
+        # Register dynamic agent management tools (create/update/delete agents at runtime)
+        from qanot.tools.agent_manager import register_agent_manager_tools
+        register_agent_manager_tools(
+            tool_registry, config, provider, tool_registry,
+            get_user_id=get_user_id,
+            subagent_manager=subagent_manager,
+        )
+        logger.info("Agent tools registered (orchestrator + management)")
+    else:
+        logger.info("Agent tools disabled (set agents_enabled: true to enable)")
 
     # Wire sub-agent cancellation into Telegram /reset
     telegram.subagent_manager = subagent_manager
