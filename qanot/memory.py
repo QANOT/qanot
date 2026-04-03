@@ -134,6 +134,25 @@ def wal_write(
     if not state_path.exists():
         state_path.write_text("# SESSION-STATE.md — Active Working Memory\n\n", encoding="utf-8")
 
+    # Cap file size: truncate oldest entries when over 100KB
+    _MAX_STATE_SIZE = 100_000
+    try:
+        if state_path.stat().st_size > _MAX_STATE_SIZE:
+            content = state_path.read_text(encoding="utf-8")
+            # Keep header + last 60% of content
+            header_end = content.find("\n\n")
+            if header_end > 0:
+                header = content[:header_end + 2]
+                body = content[header_end + 2:]
+                keep = body[len(body) * 2 // 5:]  # drop oldest 40%
+                state_path.write_text(
+                    header + "[... older entries truncated ...]\n\n" + keep,
+                    encoding="utf-8",
+                )
+                logger.info("Truncated SESSION-STATE.md: %d → %d bytes", len(content), len(header) + len(keep))
+    except OSError:
+        pass
+
     lines: list[str] = []
     uid_tag = _uid_tag(user_id)
     for entry in entries:

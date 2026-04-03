@@ -45,7 +45,9 @@ def _resolve_safe(memories_dir: Path, rel_path: str) -> Path | None:
     target = (memories_dir / clean).resolve()
     mem_resolved = memories_dir.resolve()
 
-    if not str(target).startswith(str(mem_resolved)):
+    try:
+        target.relative_to(mem_resolved)
+    except ValueError:
         return None  # path traversal attempt
     return target
 

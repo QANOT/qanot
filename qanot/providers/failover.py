@@ -55,6 +55,8 @@ class ProviderProfile:
     _failure_count: int = field(default=0, repr=False)
     _last_error_type: str = field(default="", repr=False)
     _consecutive_overloads: int = field(default=0, repr=False)
+    _original_thinking_level: str = field(default="", repr=False)
+    _success_streak: int = field(default=0, repr=False)
 
     @property
     def is_available(self) -> bool:
@@ -93,15 +95,29 @@ class ProviderProfile:
         if self.thinking_level != "off" and self._failure_count >= 2:
             new_level = _THINKING_DOWNGRADE.get(self.thinking_level)
             if new_level:
+                if not self._original_thinking_level:
+                    self._original_thinking_level = self.thinking_level
                 logger.info("Downgrading thinking: %s → %s for %s",
                            self.thinking_level, new_level, self.name)
                 self.thinking_level = new_level
+        self._success_streak = 0
 
     def mark_success(self) -> None:
         """Reset failure state on success."""
         self._failure_count = 0
         self._last_error_type = ""
         self._cooldown_until = 0.0
+        self._success_streak += 1
+        # Restore thinking level after 5 consecutive successes
+        if (
+            self._original_thinking_level
+            and self.thinking_level != self._original_thinking_level
+            and self._success_streak >= 5
+        ):
+            logger.info("Restoring thinking: %s → %s for %s",
+                        self.thinking_level, self._original_thinking_level, self.name)
+            self.thinking_level = self._original_thinking_level
+            self._original_thinking_level = ""
         self._consecutive_overloads = 0
 
 

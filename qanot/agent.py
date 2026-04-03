@@ -454,10 +454,14 @@ class Agent:
         for tc in tool_calls:
             logger.info("Executing tool: %s", tc.name)
             timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
-            result = await self.tools.execute(
-                tc.name, tc.input, timeout=timeout,
-                workspace_dir=self.config.workspace_dir,
-            )
+            try:
+                result = await self.tools.execute(
+                    tc.name, tc.input, timeout=timeout,
+                    workspace_dir=self.config.workspace_dir,
+                )
+            except Exception as e:
+                logger.error("Tool %s raised unexpected exception: %s", tc.name, e)
+                result = json.dumps({"error": f"Tool execution failed: {type(e).__name__}"})
 
             # Strip verbose detail fields from JSON results to save context
             result = strip_verbose_result(result)

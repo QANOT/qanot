@@ -109,17 +109,23 @@ class Dashboard:
 
     async def _handle_api_memory_file(self, request: web.Request) -> web.Response:
         filename = request.match_info["filename"]
-        # Security: only allow .md files from workspace
-        if ".." in filename or "/" in filename or not filename.endswith(".md"):
+        # Security: only allow .md files, block traversal
+        if ".." in filename or "/" in filename or "\\" in filename or not filename.endswith(".md"):
             return web.json_response({"error": "invalid path"}, status=400)
 
-        ws = Path(self.config.workspace_dir)
+        ws = Path(self.config.workspace_dir).resolve()
         # Try workspace root first, then memory dir
-        path = ws / filename
+        path = (ws / filename).resolve()
         if not path.exists():
-            path = ws / "memory" / filename
+            path = (ws / "memory" / filename).resolve()
         if not path.exists():
             return web.json_response({"error": "not found"}, status=404)
+
+        # Verify resolved path is within workspace
+        try:
+            path.relative_to(ws)
+        except ValueError:
+            return web.json_response({"error": "invalid path"}, status=400)
 
         return web.json_response({"name": filename, "content": path.read_text(encoding="utf-8")})
 

@@ -164,11 +164,17 @@ def register_builtin_tools(
         path = params.get("path", "")
         if not path:
             return json.dumps({"error": "path is required"})
-        full = _resolve_path(path, workspace_dir)
+        try:
+            full = _resolve_path(path, workspace_dir)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         error = validate_read_path(full)
         if error:
             return json.dumps({"error": f"Read blocked: {error}", "path": full})
         try:
+            fsize = Path(full).stat().st_size
+            if fsize > MAX_OUTPUT * 10:
+                return json.dumps({"error": f"File too large ({fsize} bytes). Use run_command with head/tail."})
             content = Path(full).read_text(encoding="utf-8")
             if len(content) > MAX_OUTPUT:
                 content = content[:MAX_OUTPUT] + f"\n... (truncated, {len(content)} total chars)"
@@ -198,7 +204,10 @@ def register_builtin_tools(
         content = params.get("content", "")
         if not path:
             return json.dumps({"error": "path is required"})
-        full = _resolve_path(path, workspace_dir)
+        try:
+            full = _resolve_path(path, workspace_dir)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         # Security: block writes to system directories
         error = validate_write_path(full)
         if error:
@@ -228,7 +237,10 @@ def register_builtin_tools(
     async def list_files(params: dict) -> str:
         from qanot.fs_safe import validate_read_path
         path = params.get("path", ".")
-        full = _resolve_path(path, workspace_dir)
+        try:
+            full = _resolve_path(path, workspace_dir)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         error = validate_read_path(full)
         if error:
             return json.dumps({"error": f"Read blocked: {error}", "path": full})
@@ -448,7 +460,10 @@ def register_builtin_tools(
         path = params.get("path", "")
         if not path:
             return json.dumps({"error": "path is required"})
-        full = _resolve_path(path, workspace_dir)
+        try:
+            full = _resolve_path(path, workspace_dir)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         error = validate_read_path(full)
         if error:
             return json.dumps({"error": f"Read blocked: {error}", "path": full})
@@ -491,7 +506,11 @@ def register_builtin_tools(
 
 
 def _resolve_path(path: str, workspace_dir: str) -> str:
-    """Resolve a path — absolute paths used as-is, relative resolved from workspace."""
-    if os.path.isabs(path):
-        return path
-    return os.path.normpath(os.path.join(workspace_dir, path))
+    """Resolve a path safely within workspace. Blocks escape attempts."""
+    resolved = Path(os.path.join(workspace_dir, path)).resolve()
+    ws_resolved = Path(workspace_dir).resolve()
+    try:
+        resolved.relative_to(ws_resolved)
+    except ValueError:
+        raise ValueError(f"Path '{path}' resolves outside workspace directory")
+    return str(resolved)

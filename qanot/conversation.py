@@ -28,10 +28,11 @@ class ConversationManager:
         self._ttl = ttl
 
     def _get_or_create(self, user_id: str | None) -> Conversation:
-        """Get existing conversation or create new one."""
-        if user_id not in self._conversations:
-            self._conversations[user_id] = Conversation()
-        return self._conversations[user_id]
+        """Get existing conversation or create new one (race-safe)."""
+        conv = self._conversations.get(user_id)
+        if conv is None:
+            conv = self._conversations.setdefault(user_id, Conversation())
+        return conv
 
     def get_messages(self, user_id: str | None) -> list[dict]:
         """Get message history for a user (empty list if none)."""
