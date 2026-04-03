@@ -44,6 +44,7 @@ class StreamingMixin:
         interval = self.config.stream_flush_interval
         drafting_paused = False
 
+        done_response = None
         try:
             async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
                 if event.type == "text_delta":
@@ -67,11 +68,14 @@ class StreamingMixin:
                     typing_task = asyncio.create_task(self._typing_loop(chat_id))
 
                 elif event.type == "done":
+                    done_response = event.response
                     break
         finally:
             typing_task.cancel()
 
-        final_text = accumulated or "(No response)"
+        # Use accumulated stream text, fall back to done response content, then error message
+        done_content = (done_response.content if done_response and done_response.content else "")
+        final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
         await self._send_final(chat_id, final_text, reply_to=reply_to)
 
     async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
@@ -82,6 +86,7 @@ class StreamingMixin:
         interval = self.config.stream_flush_interval
         sent_msg_id: int | None = None
 
+        done_response = None
         try:
             async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
                 if event.type == "text_delta":
@@ -108,11 +113,13 @@ class StreamingMixin:
                         last_flush = now
 
                 elif event.type == "done":
+                    done_response = event.response
                     break
         finally:
             typing_task.cancel()
 
-        final_text = accumulated or "(No response)"
+        done_content = (done_response.content if done_response and done_response.content else "")
+        final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
         if sent_msg_id:
             html = _md_to_html(final_text)
             try:

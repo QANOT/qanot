@@ -80,6 +80,8 @@ def classify_error(error: Exception) -> str:
         return ERROR_TIMEOUT
     if "not_found" in msg or "not found" in msg:
         return ERROR_NOT_FOUND
+    if "internal server error" in msg or "'type': 'api_error'" in msg:
+        return ERROR_OVERLOADED
     return ERROR_UNKNOWN
 
 
