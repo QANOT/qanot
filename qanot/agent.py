@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Awaitable
@@ -35,6 +36,7 @@ from qanot.providers.errors import (
     ERROR_BILLING,
     ERROR_RATE_LIMIT,
     ERROR_CONTEXT_OVERFLOW,
+    ERROR_UNKNOWN,
 )
 from qanot.plugins.base import validate_tool_params
 from qanot.hooks import HookRegistry
@@ -56,6 +58,8 @@ _LONG_RUNNING_TOOLS = frozenset({
 LONG_TOOL_TIMEOUT = 600  # 10 minutes for heavy tools (reel creation, delegation)
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
 MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
+BASE_DELAY = 1.0  # seconds, base for exponential backoff
+MAX_DELAY = 30.0  # seconds, backoff ceiling
 
 
 class Agent:
@@ -495,9 +499,9 @@ class Agent:
         messages: list[dict],
         tools: list[dict] | None,
         system: str,
-        max_retries: int = 2,
+        max_retries: int = 3,
     ) -> ProviderResponse:
-        """Call the LLM provider with retry logic for transient errors."""
+        """Call the LLM provider with exponential backoff and jitter."""
         last_error: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
@@ -518,10 +522,16 @@ class Agent:
                 if error_type in PERMANENT_FAILURES:
                     raise
 
-                # Retry transient errors with backoff
-                if attempt < max_retries and error_type in TRANSIENT_FAILURES:
-                    backoff = min(2 ** attempt * 2, 30)  # 2s, 4s, max 30s
-                    logger.info("Retrying in %ds...", backoff)
+                # Retry transient errors, and unknown errors on first attempt
+                retryable = (
+                    error_type in TRANSIENT_FAILURES
+                    or (attempt == 0 and error_type == ERROR_UNKNOWN)
+                )
+                if attempt < max_retries and retryable:
+                    base = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
+                    jitter = random.uniform(0, 0.25 * base)
+                    backoff = base + jitter
+                    logger.info("Retrying in %.1fs...", backoff)
                     await asyncio.sleep(backoff)
                     continue
 

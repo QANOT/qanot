@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -23,6 +25,9 @@ PRICING = {
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
 
+# Idle watchdog: abort stream if no events arrive within this window (seconds)
+STREAM_IDLE_TIMEOUT = 60
+
 # Server-side code execution tool definition
 CODE_EXECUTION_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}
 
@@ -36,6 +41,34 @@ _SERVER_TOOL_TYPES = frozenset({
     "bash_code_execution_tool_result",
     "text_editor_code_execution_tool_result",
 })
+
+# Regex to parse context overflow: "… 190000 + 8192 > 200000"
+_OVERFLOW_RE = re.compile(r"(\d+)\s*\+\s*(\d+)\s*>\s*(\d+)")
+
+# Floor for max_tokens when retrying after overflow
+_MIN_MAX_TOKENS = 1024
+
+
+def _parse_overflow(error_msg: str) -> tuple[int, int, int] | None:
+    """Parse context overflow error. Returns (input_tokens, max_tokens, context_limit) or None."""
+    m = _OVERFLOW_RE.search(error_msg)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    return None
+
+
+async def _iter_with_timeout(stream_iter: Any, timeout: float) -> AsyncIterator:
+    """Wrap async iterator with per-event idle timeout."""
+    aiter = stream_iter.__aiter__()
+    while True:
+        try:
+            event = await asyncio.wait_for(aiter.__anext__(), timeout=timeout)
+            yield event
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            logger.warning("Stream idle for %ss — no events received, aborting", timeout)
+            raise TimeoutError(f"Stream idle for {timeout}s — no events received")
 
 
 def _is_oauth_token(api_key: str) -> bool:
@@ -293,11 +326,24 @@ class AnthropicProvider(LLMProvider):
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
 
-        try:
-            response = await self.client.messages.create(**kwargs)
-        except anthropic.APIError as e:
-            logger.error("Anthropic API error: %s", e)
-            raise
+        for _overflow_attempt in range(2):
+            try:
+                response = await self.client.messages.create(**kwargs)
+                break
+            except anthropic.APIError as e:
+                parsed = _parse_overflow(str(e))
+                if parsed and _overflow_attempt == 0:
+                    input_tokens, _, context_limit = parsed
+                    safety_buffer = 1000
+                    new_max = max(_MIN_MAX_TOKENS, context_limit - input_tokens - safety_buffer)
+                    logger.info(
+                        "Context overflow: reducing max_tokens %d -> %d",
+                        kwargs["max_tokens"], new_max,
+                    )
+                    kwargs["max_tokens"] = new_max
+                    continue
+                logger.error("Anthropic API error: %s", e)
+                raise
 
         self._capture_container(response)
 
@@ -361,84 +407,106 @@ class AnthropicProvider(LLMProvider):
         # Track server-side tool blocks (code execution)
         _in_server_block = False
 
-        try:
-            async with self.client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    if event.type == "content_block_start":
-                        block = event.content_block
-                        if block.type == "thinking":
-                            _in_thinking_block = True
-                            _in_server_block = False
-                        elif block.type in _SERVER_TOOL_TYPES:
-                            _in_server_block = True
-                            _in_thinking_block = False
-                            # Surface server tool invocations as text
-                            exec_text = _extract_code_execution_text(block)
-                            if exec_text:
-                                text_parts.append(exec_text)
-                                yield StreamEvent(type="text_delta", text=exec_text)
-                        elif block.type == "tool_use":
-                            _in_thinking_block = False
-                            _in_server_block = False
-                            current_tool_id = block.id
-                            current_tool_name = block.name
-                            current_tool_json_parts = []
-                        else:
-                            _in_thinking_block = False
-                            _in_server_block = False
-
-                    elif event.type == "content_block_delta":
-                        if _in_thinking_block or _in_server_block:
-                            continue
-                        delta = event.delta
-                        if delta.type == "text_delta":
-                            text_parts.append(delta.text)
-                            yield StreamEvent(type="text_delta", text=delta.text)
-                        elif delta.type == "input_json_delta":
-                            current_tool_json_parts.append(delta.partial_json)
-
-                    elif event.type == "content_block_stop":
-                        if _in_thinking_block:
-                            _in_thinking_block = False
-                            continue
-                        if _in_server_block:
-                            _in_server_block = False
-                            continue
-                        if current_tool_id:
-                            current_tool_json = "".join(current_tool_json_parts)
-                            # Guard against unbounded tool JSON accumulation
-                            if len(current_tool_json) > 1_000_000:
-                                logger.warning(
-                                    "Tool call %s JSON too large (%d bytes), truncating",
-                                    current_tool_name, len(current_tool_json),
-                                )
-                                tool_input = {}
+        # Retry once on context overflow with reduced max_tokens
+        for _overflow_attempt in range(2):
+            try:
+                async with self.client.messages.stream(**kwargs) as stream:
+                    async for event in _iter_with_timeout(stream, STREAM_IDLE_TIMEOUT):
+                        if event.type == "content_block_start":
+                            block = event.content_block
+                            if block.type == "thinking":
+                                _in_thinking_block = True
+                                _in_server_block = False
+                            elif block.type in _SERVER_TOOL_TYPES:
+                                _in_server_block = True
+                                _in_thinking_block = False
+                                # Surface server tool invocations as text
+                                exec_text = _extract_code_execution_text(block)
+                                if exec_text:
+                                    text_parts.append(exec_text)
+                                    yield StreamEvent(type="text_delta", text=exec_text)
+                            elif block.type == "tool_use":
+                                _in_thinking_block = False
+                                _in_server_block = False
+                                current_tool_id = block.id
+                                current_tool_name = block.name
+                                current_tool_json_parts = []
                             else:
-                                try:
-                                    tool_input = json.loads(current_tool_json) if current_tool_json else {}
-                                except json.JSONDecodeError:
+                                _in_thinking_block = False
+                                _in_server_block = False
+
+                        elif event.type == "content_block_delta":
+                            if _in_thinking_block or _in_server_block:
+                                continue
+                            delta = event.delta
+                            if delta.type == "text_delta":
+                                text_parts.append(delta.text)
+                                yield StreamEvent(type="text_delta", text=delta.text)
+                            elif delta.type == "input_json_delta":
+                                current_tool_json_parts.append(delta.partial_json)
+
+                        elif event.type == "content_block_stop":
+                            if _in_thinking_block:
+                                _in_thinking_block = False
+                                continue
+                            if _in_server_block:
+                                _in_server_block = False
+                                continue
+                            if current_tool_id:
+                                current_tool_json = "".join(current_tool_json_parts)
+                                # Guard against unbounded tool JSON accumulation
+                                if len(current_tool_json) > 1_000_000:
                                     logger.warning(
-                                        "Invalid JSON in tool call %s: %s",
-                                        current_tool_name, current_tool_json[:200],
+                                        "Tool call %s JSON too large (%d bytes), truncating",
+                                        current_tool_name, len(current_tool_json),
                                     )
                                     tool_input = {}
-                            tc = ToolCall(
-                                id=current_tool_id,
-                                name=current_tool_name,
-                                input=tool_input,
-                            )
-                            tool_calls.append(tc)
-                            yield StreamEvent(type="tool_use", tool_call=tc)
-                            current_tool_id = ""
-                            current_tool_name = ""
-                            current_tool_json_parts = []
+                                else:
+                                    try:
+                                        tool_input = json.loads(current_tool_json) if current_tool_json else {}
+                                    except json.JSONDecodeError:
+                                        logger.warning(
+                                            "Invalid JSON in tool call %s: %s",
+                                            current_tool_name, current_tool_json[:200],
+                                        )
+                                        tool_input = {}
+                                tc = ToolCall(
+                                    id=current_tool_id,
+                                    name=current_tool_name,
+                                    input=tool_input,
+                                )
+                                tool_calls.append(tc)
+                                yield StreamEvent(type="tool_use", tool_call=tc)
+                                current_tool_id = ""
+                                current_tool_name = ""
+                                current_tool_json_parts = []
 
-                # Get final message for usage stats
-                final = await stream.get_final_message()
+                    # Get final message for usage stats
+                    final = await stream.get_final_message()
+                break  # success, exit retry loop
 
-        except anthropic.APIError as e:
-            logger.error("Anthropic streaming error: %s", e)
-            raise
+            except anthropic.APIError as e:
+                parsed = _parse_overflow(str(e))
+                if parsed and _overflow_attempt == 0:
+                    input_tokens, _, context_limit = parsed
+                    safety_buffer = 1000
+                    new_max = max(_MIN_MAX_TOKENS, context_limit - input_tokens - safety_buffer)
+                    logger.info(
+                        "Context overflow (stream): reducing max_tokens %d -> %d",
+                        kwargs["max_tokens"], new_max,
+                    )
+                    kwargs["max_tokens"] = new_max
+                    # Reset accumulation state for the retry
+                    text_parts.clear()
+                    tool_calls.clear()
+                    current_tool_id = ""
+                    current_tool_name = ""
+                    current_tool_json_parts = []
+                    _in_thinking_block = False
+                    _in_server_block = False
+                    continue
+                logger.error("Anthropic streaming error: %s", e)
+                raise
 
         self._capture_container(final)
         usage_dict = self._extract_usage_dict(final.usage)
