@@ -220,6 +220,10 @@ class Agent:
 
         Returns the (possibly modified) user_message.
         """
+        # Unicode sanitization: strip invisible/dangerous chars before processing
+        from qanot.utils import sanitize_unicode
+        user_message = sanitize_unicode(user_message)
+
         # WAL Protocol: scan user message BEFORE generating response
         wal_entries = wal_scan(user_message)
         if wal_entries:

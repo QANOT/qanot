@@ -12,28 +12,19 @@ for arg in "$@"; do [[ "$arg" == "--rebuild" ]] && REBUILD="--no-cache"; done
 # QANOT FRAMEWORK
 # ═══════════════════════════════════════
 deploy_qanot() {
-    local REMOTE="/opt/qanot-bot"
+    local REMOTE="/root/qanotai"
     local LOCAL="$(cd "$(dirname "$0")/.." && pwd)"
 
     echo "=== Qanot Framework Deploy ==="
 
-    echo "[1/5] Syncing source..."
-    rsync -az --delete \
-        --exclude='__pycache__' --exclude='.pytest_cache' --exclude='*.pyc' \
-        --exclude='.git' --exclude='tests/' --exclude='scripts/' \
-        --exclude='docs/' --exclude='claudedocs/' --exclude='.claude/' \
-        "$LOCAL/qanot/" "$SERVER:$REMOTE/qanot/"
-    rsync -az --delete --exclude='__pycache__' --exclude='*.pyc' \
-        "$LOCAL/plugins/" "$SERVER:$REMOTE/plugins/"
-    rsync -az --delete --exclude='__pycache__' \
-        "$LOCAL/templates/" "$SERVER:$REMOTE/templates/"
-    # Build files (requirements, Dockerfile, pyproject)
-    scp -q "$LOCAL/requirements.txt" "$SERVER:$REMOTE/requirements.txt"
-    scp -q "$LOCAL/Dockerfile" "$SERVER:$REMOTE/Dockerfile"
-    scp -q "$LOCAL/pyproject.toml" "$SERVER:$REMOTE/pyproject.toml"
+    echo "[1/5] Pushing to remotes..."
+    cd "$LOCAL"
+    git push origin main 2>&1 | tail -2
+    git push qanot main 2>&1 | tail -2
     echo "   Done."
 
-    echo "[2/5] Building image..."
+    echo "[2/5] Pulling & building image on server..."
+    ssh "$SERVER" "cd $REMOTE && git pull origin main 2>&1 | tail -3"
     ssh "$SERVER" "cd $REMOTE && docker build $REBUILD -t qanot-bot:latest . 2>&1 | tail -3"
     echo "   Done."
 

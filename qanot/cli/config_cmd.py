@@ -144,7 +144,8 @@ def _config_set(args: list[str]) -> None:
 
     old_value = raw.get(key, _dim("(not set)"))
     raw[key] = value
-    config_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+    from qanot.utils import atomic_write
+    atomic_write(config_path, json.dumps(raw, indent=2, ensure_ascii=False))
     print(f"  {_green('\u2713')} {key}: {old_value} \u2192 {_cyan(str(value))}")
     print(f"  {_dim('Restart bot for changes to take effect: qanot restart')}")
 
@@ -211,7 +212,8 @@ def _config_add_provider(args: list[str]) -> None:
         })
         raw.setdefault("provider", "openai")
         raw.setdefault("model", selected_model)
-        config_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        from qanot.utils import atomic_write
+    atomic_write(config_path, json.dumps(raw, indent=2, ensure_ascii=False))
         print(f"\n  {_green('\u2713')} Added Ollama ({selected_model})")
         print(f"  {_dim('Restart bot: qanot restart')}")
         print()
@@ -246,7 +248,8 @@ def _config_add_provider(args: list[str]) -> None:
         "model": selected_model,
         "api_key": api_key,
     })
-    config_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+    from qanot.utils import atomic_write
+    atomic_write(config_path, json.dumps(raw, indent=2, ensure_ascii=False))
 
     print()
     print(f"  {_green('\u2713')} Added {info['label']} ({selected_model})")
@@ -288,6 +291,7 @@ def _config_remove_provider(args: list[str]) -> None:
 
     if removed:
         raw["providers"] = [p for p in providers if p["name"] != selected]
-        config_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        from qanot.utils import atomic_write
+    atomic_write(config_path, json.dumps(raw, indent=2, ensure_ascii=False))
         print(f"  {_green('\u2713')} Removed {removed['provider']} ({removed.get('model', '?')})")
         print(f"  {_dim('Restart bot for changes to take effect: qanot restart')}")

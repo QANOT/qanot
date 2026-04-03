@@ -64,9 +64,15 @@ class ToolRegistry:
         self._cached_core = None
 
     def get_definitions(self) -> list[dict]:
-        """Get ALL tool definitions (fallback, full list)."""
+        """Get ALL tool definitions, sorted by name for prompt cache stability.
+
+        Consistent ordering ensures the tool section of the API request is
+        identical across calls, maximizing Anthropic prompt cache hits.
+        """
         if self._cached_definitions is None:
-            self._cached_definitions = list(self._tools.values())
+            self._cached_definitions = sorted(
+                self._tools.values(), key=lambda t: t["name"]
+            )
         return self._cached_definitions
 
     def get_lazy_definitions(self, user_message: str = "") -> list[dict]:

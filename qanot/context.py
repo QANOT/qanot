@@ -511,11 +511,11 @@ class CostTracker:
                 self._users = {}
 
     def _save(self) -> None:
-        """Persist cost data to disk."""
+        """Persist cost data to disk (atomic write)."""
+        from qanot.utils import atomic_write
         path = self._cost_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            path.write_text(json.dumps(self._users, indent=2), encoding="utf-8")
+            atomic_write(path, json.dumps(self._users, indent=2))
         except OSError as e:
             logger.warning("Failed to save costs.json: %s", e)
 

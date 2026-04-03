@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+
+from qanot.utils import redact_secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -135,7 +137,8 @@ def wal_write(
     lines: list[str] = []
     uid_tag = _uid_tag(user_id)
     for entry in entries:
-        lines.append(f"- [{entry.timestamp}]{uid_tag} **{entry.category}**: {entry.detail}\n")
+        detail = redact_secrets(entry.detail)
+        lines.append(f"- [{entry.timestamp}]{uid_tag} **{entry.category}**: {detail}\n")
 
     with open(state_path, "a", encoding="utf-8") as f:
         f.writelines(lines)
@@ -178,7 +181,7 @@ def _append_to_memory(
         if is_dup:
             logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
             continue
-        new_line = f"- **{entry.category}**:{uid_tag} {entry.detail}\n"
+        new_line = f"- **{entry.category}**:{uid_tag} {redact_secrets(entry.detail)}\n"
         new_lines.append(new_line)
         existing_lines.append(new_line.lower().strip())
 
