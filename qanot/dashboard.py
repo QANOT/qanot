@@ -28,9 +28,22 @@ class Dashboard:
     def __init__(self, config: "Config", agent: "Agent"):
         self.config = config
         self.agent = agent
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._auth_middleware])
         self._setup_routes()
         self._start_time = time.time()
+
+    @web.middleware
+    async def _auth_middleware(self, request: web.Request, handler) -> web.Response:
+        """Token-based auth for dashboard API. Skips if no token configured."""
+        token = self.config.dashboard_token
+        if not token:
+            return await handler(request)
+        # Check Authorization header or ?token= query param
+        auth = request.headers.get("Authorization", "")
+        query_token = request.query.get("token", "")
+        if auth == f"Bearer {token}" or query_token == token:
+            return await handler(request)
+        return web.json_response({"error": "Unauthorized"}, status=401)
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self._handle_index)

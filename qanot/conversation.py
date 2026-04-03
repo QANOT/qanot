@@ -22,6 +22,8 @@ class Conversation:
 class ConversationManager:
     """Manages per-user conversations with history, locking, and cleanup."""
 
+    MAX_CONVERSATIONS = 500  # LRU cap — evict oldest idle when exceeded
+
     def __init__(self, history_limit: int = 50, ttl: float = 3600.0):
         self._conversations: dict[str | None, Conversation] = {}
         self._history_limit = history_limit
@@ -81,7 +83,10 @@ class ConversationManager:
         return len(self._conversations)
 
     def evict_stale(self) -> None:
-        """Remove conversation state for users idle longer than TTL."""
+        """Remove conversation state for users idle longer than TTL.
+
+        Also enforces MAX_CONVERSATIONS cap via LRU eviction.
+        """
         now = time.monotonic()
         stale = [
             uid for uid, conv in self._conversations.items()
@@ -90,6 +95,17 @@ class ConversationManager:
         for uid in stale:
             self._conversations.pop(uid, None)
             logger.debug("Evicted stale conversation for user_id=%s", uid)
+
+        # LRU cap: evict oldest idle conversations when over limit
+        overflow = len(self._conversations) - self.MAX_CONVERSATIONS
+        if overflow > 0:
+            by_age = sorted(
+                self._conversations.items(),
+                key=lambda kv: kv[1].last_active,
+            )
+            for uid, _ in by_age[:overflow]:
+                self._conversations.pop(uid, None)
+                logger.debug("LRU evicted conversation for user_id=%s", uid)
 
     def restore_from_session(
         self, user_id: str | None, messages: list[dict],

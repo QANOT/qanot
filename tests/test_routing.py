@@ -281,11 +281,15 @@ class TestContextAwareRouting:
 
     @pytest.mark.asyncio
     async def test_ha_after_tool_use_stays_on_last_model(self):
-        """'ha' reply after tool use → stays on previous model (continuation)."""
+        """'ha' reply after tool use → stays on previous model (continuation).
+
+        With expanded context window (5 messages), the tool_use block is
+        visible in the context assessment, so 'ha' is correctly treated
+        as continuation rather than a fresh greeting.
+        """
         fake = FakeProvider(model="claude-sonnet-4-6")
         router = RoutingProvider(fake, threshold=0.3)
 
-        # Immediate context has tool_result → ctx_score >= 0.5
         messages = [
             {"role": "user", "content": "implement database migration"},
             {"role": "assistant", "content": [
@@ -300,10 +304,8 @@ class TestContextAwareRouting:
         ]
         router._last_model = "claude-sonnet-4-6"
         await router.chat(messages)
-        # "ha" (msg_score<0.1) + recent context has no tool → Haiku
-        # But _last_model was Sonnet, so continuation keeps Sonnet
-        # Actually with new logic: last 2 msgs = "Migration done" + "ha" → no tool → ctx<0.5 → greeting
-        assert fake.last_model_used == "claude-haiku-4-5-20251001"
+        # "ha" (msg_score<0.1) + recent 5 msgs include tool_use → ctx>=0.5 → continuation on Sonnet
+        assert fake.last_model_used == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
     async def test_salom_in_fresh_conversation_uses_cheap(self):
@@ -366,8 +368,7 @@ class TestContextAwareRouting:
         assert RoutingProvider._assess_context([{"role": "user", "content": "hi"}]) == 0.0
 
     def test_assess_context_only_recent(self):
-        """Context score only looks at last 2 messages."""
-        # Tool use far in history — should NOT affect score
+        """Context score looks at last 5 messages — tool use within window scores high."""
         messages = [
             {"role": "user", "content": "run tests"},
             {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "cmd", "input": {}}]},
@@ -376,7 +377,22 @@ class TestContextAwareRouting:
             {"role": "user", "content": "rahmat"},
         ]
         score = RoutingProvider._assess_context(messages)
-        # Last 2: "Done" + "rahmat" — no tool, short → low score
+        # Last 5: includes tool_use + tool_result → score >= 0.5
+        assert score >= 0.5
+
+    def test_assess_context_old_tool_use_out_of_window(self):
+        """Tool use >5 messages back should NOT affect score."""
+        messages = [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "cmd", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
+            {"role": "assistant", "content": "Done"},
+            {"role": "user", "content": "ok"},
+            {"role": "assistant", "content": "Anything else?"},
+            {"role": "user", "content": "rahmat"},
+            {"role": "assistant", "content": "Goodbye"},
+        ]
+        score = RoutingProvider._assess_context(messages)
+        # Last 5: "ok", "Anything else?", "rahmat", "Goodbye", (end) — no tool → low
         assert score < 0.5
 
     def test_assess_context_immediate_tool(self):

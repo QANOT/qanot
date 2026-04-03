@@ -102,7 +102,7 @@ class TestAudioConversion:
             mock_proc.returncode = 1
             mock_proc.communicate = AsyncMock(return_value=(b"", b"error"))
             mock_exec.return_value = mock_proc
-            with pytest.raises(RuntimeError, match="ffmpeg conversion failed"):
+            with pytest.raises(RuntimeError, match="ffmpeg OGG.MP3"):
                 asyncio.run(convert_ogg_to_mp3("/tmp/test.ogg"))
 
     def test_video_to_mp3(self):
@@ -140,7 +140,7 @@ class TestAudioConversion:
             mock_proc.returncode = 1
             mock_proc.communicate = AsyncMock(return_value=(b"", b"codec missing"))
             mock_exec.return_value = mock_proc
-            with pytest.raises(RuntimeError, match="WAV→OGG failed"):
+            with pytest.raises(RuntimeError, match="ffmpeg WAV.OGG"):
                 asyncio.run(convert_wav_to_ogg("/tmp/speech.wav"))
 
 

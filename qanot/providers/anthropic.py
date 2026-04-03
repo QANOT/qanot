@@ -73,7 +73,7 @@ async def _iter_with_timeout(stream_iter: Any, timeout: float) -> AsyncIterator:
 
 def _is_oauth_token(api_key: str) -> bool:
     """Check if the API key is an Anthropic OAuth token."""
-    return "sk-ant-oat" in api_key
+    return api_key.startswith("sk-ant-oat")
 
 
 def _extract_code_execution_text(block) -> str | None:
@@ -496,7 +496,9 @@ class AnthropicProvider(LLMProvider):
                         kwargs["max_tokens"], new_max,
                     )
                     kwargs["max_tokens"] = new_max
-                    # Reset accumulation state for the retry
+                    # Reset accumulation state for the retry.
+                    # Overflow errors are upfront (before streaming), so these
+                    # should already be empty — but clear defensively.
                     text_parts.clear()
                     tool_calls.clear()
                     current_tool_id = ""

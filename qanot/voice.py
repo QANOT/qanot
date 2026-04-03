@@ -21,6 +21,8 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+FFMPEG_TIMEOUT = 30  # seconds — kill ffmpeg if it hangs
+
 # ── Shared session management ───────────────────────────
 
 _session: aiohttp.ClientSession | None = None
@@ -67,77 +69,60 @@ class TTSResult:
 # ── Audio Conversion ─────────────────────────────────────
 
 
-async def convert_ogg_to_mp3(ogg_path: str) -> str:
-    """Convert OGG Opus (Telegram voice) to MP3 via ffmpeg."""
-    mp3_path = ogg_path.rsplit(".", 1)[0] + ".mp3"
+async def _run_ffmpeg(args: list[str], error_prefix: str) -> None:
+    """Run ffmpeg with timeout protection. Kills process if hung."""
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-i", ogg_path,
-        "-codec:a", "libmp3lame",
-        "-q:a", "4",
-        mp3_path,
-        "-y",
+        "ffmpeg", *args,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await proc.communicate()
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=FFMPEG_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"{error_prefix}: timed out after {FFMPEG_TIMEOUT}s")
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg conversion failed: {stderr.decode()[:200]}")
+        raise RuntimeError(f"{error_prefix}: {stderr.decode()[:200]}")
+
+
+async def convert_ogg_to_mp3(ogg_path: str) -> str:
+    """Convert OGG Opus (Telegram voice) to MP3 via ffmpeg."""
+    mp3_path = ogg_path.rsplit(".", 1)[0] + ".mp3"
+    await _run_ffmpeg(
+        ["-i", ogg_path, "-codec:a", "libmp3lame", "-q:a", "4", mp3_path, "-y"],
+        "ffmpeg OGG→MP3",
+    )
     return mp3_path
 
 
 async def convert_video_to_mp3(video_path: str) -> str:
     """Extract audio from video note (MP4) to MP3 via ffmpeg."""
     mp3_path = video_path.rsplit(".", 1)[0] + ".mp3"
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-i", video_path,
-        "-vn",
-        "-codec:a", "libmp3lame",
-        "-q:a", "4",
-        mp3_path,
-        "-y",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
+    await _run_ffmpeg(
+        ["-i", video_path, "-vn", "-codec:a", "libmp3lame", "-q:a", "4", mp3_path, "-y"],
+        "ffmpeg MP4→MP3",
     )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg extraction failed: {stderr.decode()[:200]}")
     return mp3_path
 
 
 async def convert_video_to_ogg(video_path: str) -> str:
     """Extract audio from video note (MP4) to OGG for Muxlisa."""
     ogg_path = video_path.rsplit(".", 1)[0] + ".ogg"
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-i", video_path,
-        "-vn",
-        "-codec:a", "libopus",
-        "-b:a", "32k",
-        ogg_path,
-        "-y",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
+    await _run_ffmpeg(
+        ["-i", video_path, "-vn", "-codec:a", "libopus", "-b:a", "32k", ogg_path, "-y"],
+        "ffmpeg MP4→OGG",
     )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg extraction failed: {stderr.decode()[:200]}")
     return ogg_path
 
 
 async def convert_wav_to_ogg(wav_path: str) -> str:
     """Convert WAV to OGG Opus for Telegram voice messages."""
     ogg_path = wav_path.rsplit(".", 1)[0] + ".ogg"
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-i", wav_path,
-        "-codec:a", "libopus",
-        "-b:a", "32k",
-        ogg_path,
-        "-y",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
+    await _run_ffmpeg(
+        ["-i", wav_path, "-codec:a", "libopus", "-b:a", "32k", ogg_path, "-y"],
+        "ffmpeg WAV→OGG",
     )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg WAV→OGG failed: {stderr.decode()[:200]}")
     return ogg_path
 
 

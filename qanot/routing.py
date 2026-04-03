@@ -221,8 +221,9 @@ class RoutingProvider(LLMProvider):
         - Tool use in recent assistant messages (tool_use = complex task)
         - Previous assistant response length (long response = complex topic)
         """
-        # Only look at the LAST 2 messages (immediate context, not history)
-        recent = messages[-2:]
+        # Look at the last 5 messages for context (not just 2).
+        # With only 2, short replies after complex tool work score 0.
+        recent = messages[-5:]
         if not recent:
             return 0.0
 
@@ -236,7 +237,7 @@ class RoutingProvider(LLMProvider):
                 isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result")
                 for block in content
             ):
-                score += 0.5
+                score += 0.25
 
             # Long response → complex topic
             if isinstance(content, str):
@@ -249,7 +250,7 @@ class RoutingProvider(LLMProvider):
             else:
                 text_len = 0
             if text_len > 500:
-                score += 0.2
+                score += 0.1
 
         return min(score, 1.0)
 
