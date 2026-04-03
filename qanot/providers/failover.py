@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from qanot.providers.base import LLMProvider, ProviderResponse, StreamEvent
 from qanot.providers.errors import (
     classify_error,
+    ERROR_OVERLOADED,
+    ERROR_RATE_LIMIT,
     PERMANENT_FAILURES,
     TRANSIENT_FAILURES,
 )
@@ -19,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Cooldown period for failed providers (seconds)
 COOLDOWN_SECONDS = 120
+
+# Switch provider after this many consecutive overload/rate-limit errors
+MAX_CONSECUTIVE_OVERLOADS = 3
+
+# Aggressive cooldown when consecutive overload limit is hit (seconds)
+OVERLOAD_COOLDOWN_SECONDS = 300
 
 # Thinking-level downgrade ladder: when a provider keeps failing, reduce thinking cost
 _THINKING_DOWNGRADE: dict[str, str] = {
@@ -46,6 +54,7 @@ class ProviderProfile:
     _cooldown_until: float = field(default=0.0, repr=False)
     _failure_count: int = field(default=0, repr=False)
     _last_error_type: str = field(default="", repr=False)
+    _consecutive_overloads: int = field(default=0, repr=False)
 
     @property
     def is_available(self) -> bool:
@@ -58,9 +67,23 @@ class ProviderProfile:
         """Mark this profile as failed with cooldown."""
         self._failure_count += 1
         self._last_error_type = error_type
+
+        # Track consecutive overload/rate-limit errors
+        if error_type in (ERROR_OVERLOADED, ERROR_RATE_LIMIT):
+            self._consecutive_overloads += 1
+        else:
+            self._consecutive_overloads = 0
+
         if error_type in PERMANENT_FAILURES:
             self._cooldown_until = float("inf")
             logger.warning("Provider %s permanently disabled: %s", self.name, error_type)
+        elif self._consecutive_overloads >= MAX_CONSECUTIVE_OVERLOADS:
+            # Aggressive cooldown after repeated overloads — force switch to next provider
+            self._cooldown_until = time.monotonic() + OVERLOAD_COOLDOWN_SECONDS
+            logger.warning(
+                "Provider %s hit %d consecutive overloads, cooldown %ds",
+                self.name, self._consecutive_overloads, OVERLOAD_COOLDOWN_SECONDS,
+            )
         else:
             cooldown = min(COOLDOWN_SECONDS * self._failure_count, 600)
             self._cooldown_until = time.monotonic() + cooldown
@@ -79,6 +102,7 @@ class ProviderProfile:
         self._failure_count = 0
         self._last_error_type = ""
         self._cooldown_until = 0.0
+        self._consecutive_overloads = 0
 
 
 def _create_single_provider(profile: ProviderProfile) -> LLMProvider:

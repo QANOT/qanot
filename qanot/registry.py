@@ -83,7 +83,14 @@ class ToolRegistry:
         """
         return self.get_definitions()
 
-    async def execute(self, name: str, input_data: dict, timeout: float = TOOL_TIMEOUT) -> str:
+    async def execute(
+        self,
+        name: str,
+        input_data: dict,
+        timeout: float = TOOL_TIMEOUT,
+        *,
+        workspace_dir: str = "",
+    ) -> str:
         """Execute a tool by name with parameter validation and timeout protection."""
         # Validate input types to prevent type confusion attacks
         if not isinstance(name, str) or not name.strip():
@@ -111,8 +118,10 @@ class ToolRegistry:
 
         try:
             result = await asyncio.wait_for(handler(input_data), timeout=timeout)
-            # Truncate oversized results
-            return truncate_tool_result(result)
+            # Truncate oversized results (persist to disk when workspace available)
+            return truncate_tool_result(
+                result, tool_name=name, workspace_dir=workspace_dir,
+            )
         except asyncio.TimeoutError:
             logger.error("Tool %s timed out after %ds", name, timeout)
             return json.dumps({"error": f"Tool timed out after {timeout}s"})

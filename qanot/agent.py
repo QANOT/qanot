@@ -308,6 +308,14 @@ class Agent:
 
         Returns (messages, system_prompt, tool_defs).
         """
+        # Tier 1: Snip old tool results (fast, no LLM)
+        if self.context.needs_snip() and not self.context.needs_compaction():
+            messages, freed = self.context.snip_messages(messages)
+            if freed > 0:
+                self._conv_manager.set_messages(user_id, messages)
+                logger.info("Snipped old tool results, freed ~%d tokens", freed)
+
+        # Tier 2: LLM summarization compaction
         if self.context.needs_compaction() and len(messages) > 6:
             # Memory flush: save durable memories BEFORE context is lost
             await memory_flush(
@@ -442,7 +450,10 @@ class Agent:
         for tc in tool_calls:
             logger.info("Executing tool: %s", tc.name)
             timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
-            result = await self.tools.execute(tc.name, tc.input, timeout=timeout)
+            result = await self.tools.execute(
+                tc.name, tc.input, timeout=timeout,
+                workspace_dir=self.config.workspace_dir,
+            )
 
             # Strip verbose detail fields from JSON results to save context
             result = strip_verbose_result(result)

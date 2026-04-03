@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from qanot.context import ContextTracker, truncate_tool_result
+from qanot.context import (
+    ContextTracker,
+    PERSIST_PREVIEW_CHARS,
+    _MAX_TOOL_RESULT_FILES,
+    persist_tool_result,
+    truncate_tool_result,
+)
 from qanot.providers.errors import (
     classify_error,
     is_context_overflow_error,
@@ -236,6 +242,71 @@ class TestTruncateToolResult:
         assert truncated.startswith("HEAD")
         assert "TAIL" in truncated  # tail portion preserved
 
+    def test_persists_to_disk_when_workspace_provided(self, tmp_path):
+        result = "A" * 10_000
+        output = truncate_tool_result(
+            result, tool_name="read_file", workspace_dir=str(tmp_path),
+        )
+        # Should contain preview + file path note
+        assert output.startswith("A" * PERSIST_PREVIEW_CHARS)
+        assert "[Full result (10000 chars) saved to:" in output
+        assert "read_file_" in output
+        assert "[Use read_file to access the full result if needed]" in output
+        # Verify the file was actually created
+        results_dir = tmp_path / ".tool-results"
+        assert results_dir.exists()
+        files = list(results_dir.iterdir())
+        assert len(files) == 1
+        assert files[0].read_text(encoding="utf-8") == result
+
+    def test_falls_back_to_truncation_without_workspace(self):
+        result = "B" * 10_000
+        output = truncate_tool_result(result, max_chars=1_000)
+        # No file path note — just truncated
+        assert "[Full result" not in output
+        assert "truncated" in output
+
+    def test_short_result_unchanged_with_workspace(self, tmp_path):
+        result = "short"
+        output = truncate_tool_result(
+            result, tool_name="test", workspace_dir=str(tmp_path),
+        )
+        assert output == "short"
+        # No directory created for short results
+        assert not (tmp_path / ".tool-results").exists()
+
+
+class TestPersistToolResult:
+    def test_creates_directory_and_file(self, tmp_path):
+        result = "X" * 5_000
+        output = persist_tool_result(result, "my_tool", str(tmp_path))
+        results_dir = tmp_path / ".tool-results"
+        assert results_dir.exists()
+        files = list(results_dir.iterdir())
+        assert len(files) == 1
+        assert files[0].name.startswith("my_tool_")
+        assert files[0].name.endswith(".txt")
+        assert files[0].read_text(encoding="utf-8") == result
+        assert output.startswith("X" * PERSIST_PREVIEW_CHARS)
+
+    def test_cleanup_old_files(self, tmp_path):
+        results_dir = tmp_path / ".tool-results"
+        results_dir.mkdir()
+        # Create more than the limit
+        for i in range(_MAX_TOOL_RESULT_FILES + 10):
+            (results_dir / f"old_{i:04d}.txt").write_text("data")
+        assert len(list(results_dir.iterdir())) == _MAX_TOOL_RESULT_FILES + 10
+        # Persist one more — should trigger cleanup
+        persist_tool_result("Y" * 5_000, "new_tool", str(tmp_path))
+        remaining = list(results_dir.iterdir())
+        assert len(remaining) <= _MAX_TOOL_RESULT_FILES
+
+    def test_empty_tool_name_defaults_to_unknown(self, tmp_path):
+        persist_tool_result("data", "", str(tmp_path))
+        files = list((tmp_path / ".tool-results").iterdir())
+        assert len(files) == 1
+        assert files[0].name.startswith("unknown_")
+
 
 class TestContextOverflowDetection:
     def test_anthropic_overflow(self):
@@ -265,3 +336,114 @@ class TestContextOverflowDetection:
     def test_classify_rate_limit_not_overflow(self):
         err = Exception("rate limit exceeded")
         assert classify_error(err) == ERROR_RATE_LIMIT
+
+
+class TestSnip:
+    """Tests for the snip compaction tier (strip old tool results, no LLM)."""
+
+    def test_needs_snip_below_threshold(self):
+        ct = ContextTracker(max_tokens=100_000)
+        ct.last_prompt_tokens = 30_000  # 30% — below 40%
+        assert ct.needs_snip() is False
+
+    def test_needs_snip_above_threshold(self):
+        ct = ContextTracker(max_tokens=100_000)
+        ct.last_prompt_tokens = 45_000  # 45% — above 40%
+        assert ct.needs_snip() is True
+
+    def test_needs_snip_zero_max(self):
+        ct = ContextTracker(max_tokens=0)
+        assert ct.needs_snip() is False
+
+    def test_snip_skips_recent_messages(self):
+        """Last SNIP_KEEP_RECENT messages should never be snipped."""
+        ct = ContextTracker(max_tokens=100_000)
+        long_result = "x" * 1000
+        messages = [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": long_result},
+            ]},
+        ]
+        # Only 1 message — fewer than SNIP_KEEP_RECENT (6)
+        result, freed = ct.snip_messages(messages)
+        assert freed == 0
+        assert result is messages  # returned as-is
+
+    def test_snip_strips_old_tool_results(self):
+        """Old verbose tool results should be replaced with a short note."""
+        ct = ContextTracker(max_tokens=100_000)
+        long_result = "x" * 2000
+        # Build 8 messages: first 2 have tool results, last 6 are recent
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "check this"},
+                {"type": "tool_result", "tool_use_id": "t1", "content": long_result},
+            ]},
+            {"role": "assistant", "content": "ok"},
+        ] + [
+            {"role": "user", "content": "msg"},
+            {"role": "assistant", "content": "reply"},
+        ] * 3  # 6 more messages → total 8
+
+        result, freed = ct.snip_messages(messages)
+        assert freed > 0
+        # The first message's tool_result should be snipped
+        snipped_block = result[0]["content"][1]
+        assert "snipped" in snipped_block["content"]
+        assert "2000 chars" in snipped_block["content"]
+        # Text block should be preserved
+        assert result[0]["content"][0]["text"] == "check this"
+
+    def test_snip_preserves_short_tool_results(self):
+        """Tool results <= 500 chars should not be snipped."""
+        ct = ContextTracker(max_tokens=100_000)
+        short_result = "x" * 200
+        messages = [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": short_result},
+            ]},
+        ] + [{"role": "user", "content": "msg"}] * 6  # pad to exceed SNIP_KEEP_RECENT
+
+        result, freed = ct.snip_messages(messages)
+        assert freed == 0
+        assert result[0]["content"][0]["content"] == short_result
+
+    def test_snip_does_not_mutate_original(self):
+        """Original messages list and dicts must not be modified."""
+        ct = ContextTracker(max_tokens=100_000)
+        long_result = "y" * 800
+        original_msg = {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": long_result},
+        ]}
+        messages = [original_msg] + [{"role": "user", "content": "msg"}] * 6
+
+        result, freed = ct.snip_messages(messages)
+        assert freed > 0
+        # Original must be untouched
+        assert original_msg["content"][0]["content"] == long_result
+
+    def test_snip_handles_nested_content_blocks(self):
+        """Tool results with list content (nested blocks) should be snipped."""
+        ct = ContextTracker(max_tokens=100_000)
+        nested_content = [{"type": "text", "text": "a" * 1000}]
+        messages = [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": nested_content},
+            ]},
+        ] + [{"role": "user", "content": "msg"}] * 6
+
+        result, freed = ct.snip_messages(messages)
+        assert freed > 0
+        assert "snipped" in result[0]["content"][0]["content"]
+
+    def test_snip_skips_assistant_messages(self):
+        """Only user messages with tool_result blocks should be snipped."""
+        ct = ContextTracker(max_tokens=100_000)
+        messages = [
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "x" * 2000},
+            ]},
+        ] + [{"role": "user", "content": "msg"}] * 6
+
+        result, freed = ct.snip_messages(messages)
+        assert freed == 0

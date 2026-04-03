@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,13 +20,86 @@ COMPACTION_THRESHOLD = 0.60
 COMPACTION_TARGET = 0.35
 # Working buffer activation threshold (early warning)
 BUFFER_THRESHOLD = 0.50
+# Snip tier: strip old tool results at this threshold (before LLM compaction)
+SNIP_THRESHOLD = 0.40
+# Don't snip the last N messages (keep recent context intact)
+SNIP_KEEP_RECENT = 6
 # Max chars to keep per tool result
 MAX_TOOL_RESULT_CHARS = 8_000
+# Preview chars when persisting large tool results to disk
+PERSIST_PREVIEW_CHARS = 2_000
+# Max files to keep in .tool-results/ before cleanup
+_MAX_TOOL_RESULT_FILES = 50
 MAX_RECOVERY_FILE_CHARS = 20_000
 
 
-def truncate_tool_result(result: str, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
-    """Truncate oversized tool results to prevent context bloat."""
+def persist_tool_result(result: str, tool_name: str, workspace_dir: str) -> str:
+    """Save a large tool result to disk and return a preview with file path.
+
+    Creates {workspace_dir}/.tool-results/{tool_name}_{timestamp}.txt with the
+    full result, then returns the first PERSIST_PREVIEW_CHARS chars plus a note
+    pointing the model to the saved file.
+    """
+    results_dir = Path(workspace_dir) / ".tool-results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = int(time.time())
+    safe_name = tool_name or "unknown"
+    filename = f"{safe_name}_{timestamp}.txt"
+    filepath = results_dir / filename
+
+    try:
+        filepath.write_text(result, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to persist tool result to %s: %s", filepath, exc)
+        from qanot.utils import truncate_with_marker
+        return truncate_with_marker(result, MAX_TOOL_RESULT_CHARS)
+
+    _cleanup_old_results(results_dir)
+
+    preview = result[:PERSIST_PREVIEW_CHARS]
+    return (
+        f"{preview}\n\n"
+        f"[Full result ({len(result)} chars) saved to: .tool-results/{filename}]\n"
+        f"[Use read_file to access the full result if needed]"
+    )
+
+
+def _cleanup_old_results(results_dir: Path) -> None:
+    """Delete oldest files when .tool-results/ exceeds the file limit."""
+    try:
+        files = sorted(results_dir.iterdir(), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return
+    excess = len(files) - _MAX_TOOL_RESULT_FILES
+    if excess <= 0:
+        return
+    for f in files[:excess]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
+def truncate_tool_result(
+    result: str,
+    max_chars: int = MAX_TOOL_RESULT_CHARS,
+    *,
+    tool_name: str = "",
+    workspace_dir: str = "",
+) -> str:
+    """Truncate oversized tool results to prevent context bloat.
+
+    When workspace_dir is provided and the result exceeds max_chars, persists
+    the full result to disk and returns a short preview with the file path.
+    When workspace_dir is empty, falls back to in-memory truncation.
+    """
+    if len(result) <= max_chars:
+        return result
+
+    if workspace_dir:
+        return persist_tool_result(result, tool_name, workspace_dir)
+
     from qanot.utils import truncate_with_marker
     return truncate_with_marker(result, max_chars)
 
@@ -84,6 +159,78 @@ class ContextTracker:
         avg_output = self.total_output / max(self.turn_count, 1)
         # Apply safety margin for estimation error
         return ((self.last_prompt_tokens + avg_output) * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
+
+    def needs_snip(self) -> bool:
+        """Check if context needs snipping (strip old tool results)."""
+        if self.max_tokens == 0:
+            return False
+        return (self.last_prompt_tokens / self.max_tokens) > SNIP_THRESHOLD
+
+    def snip_messages(self, messages: list[dict]) -> tuple[list[dict], int]:
+        """Strip verbose tool results from old messages to free context.
+
+        Returns (snipped_messages, tokens_freed_estimate).
+        This is a fast, no-LLM operation — the first tier of compaction.
+        Does not mutate the original messages.
+        """
+        if len(messages) <= SNIP_KEEP_RECENT:
+            return messages, 0
+
+        cutoff = len(messages) - SNIP_KEEP_RECENT
+        chars_freed = 0
+        result: list[dict] = []
+
+        for i, msg in enumerate(messages):
+            if i >= cutoff:
+                # Recent messages — keep as-is
+                result.append(msg)
+                continue
+
+            content = msg.get("content")
+            if msg.get("role") != "user" or not isinstance(content, list):
+                result.append(msg)
+                continue
+
+            # Scan content blocks for tool_result entries worth snipping
+            new_blocks: list[dict] | None = None
+            for j, block in enumerate(content):
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+
+                inner = block.get("content", "")
+                # Handle nested content blocks inside tool_result
+                if isinstance(inner, list):
+                    text_parts = [
+                        b.get("text", "")
+                        for b in inner
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    inner_text = "\n".join(text_parts)
+                else:
+                    inner_text = str(inner)
+
+                if len(inner_text) <= 500:
+                    continue
+
+                # Worth snipping — lazily copy blocks list
+                if new_blocks is None:
+                    new_blocks = list(content)
+                original_len = len(inner_text)
+                chars_freed += original_len
+                snipped_content = f"[tool result snipped — {original_len} chars]"
+                new_block = dict(block)
+                new_block["content"] = snipped_content
+                new_blocks[j] = new_block
+
+            if new_blocks is not None:
+                new_msg = dict(msg)
+                new_msg["content"] = new_blocks
+                result.append(new_msg)
+            else:
+                result.append(msg)
+
+        tokens_freed = chars_freed // 4
+        return result, tokens_freed
 
     def compact_messages(self, messages: list[dict], summary_text: str | None = None) -> list[dict]:
         """Compact conversation history to reduce context usage.

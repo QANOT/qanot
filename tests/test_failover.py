@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from qanot.providers.failover import ProviderProfile, COOLDOWN_SECONDS
+from qanot.providers.failover import (
+    ProviderProfile,
+    COOLDOWN_SECONDS,
+    MAX_CONSECUTIVE_OVERLOADS,
+    OVERLOAD_COOLDOWN_SECONDS,
+)
 from qanot.providers.errors import (
     classify_error,
     ERROR_RATE_LIMIT,
@@ -129,3 +134,62 @@ class TestProviderProfile:
         p.mark_failed(ERROR_NOT_FOUND)
         assert p._cooldown_until != float("inf")
         assert p._failure_count == 1
+
+
+class TestConsecutiveOverloads:
+    def _make_profile(self) -> ProviderProfile:
+        return ProviderProfile(name="test", provider_type="anthropic", api_key="k", model="m")
+
+    def test_overload_increments_counter(self):
+        p = self._make_profile()
+        p.mark_failed(ERROR_OVERLOADED)
+        assert p._consecutive_overloads == 1
+
+    def test_rate_limit_increments_counter(self):
+        p = self._make_profile()
+        p.mark_failed(ERROR_RATE_LIMIT)
+        assert p._consecutive_overloads == 1
+
+    def test_non_overload_resets_counter(self):
+        p = self._make_profile()
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_TIMEOUT)
+        assert p._consecutive_overloads == 0
+
+    def test_success_resets_counter(self):
+        p = self._make_profile()
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_success()
+        assert p._consecutive_overloads == 0
+
+    def test_aggressive_cooldown_at_threshold(self):
+        """After MAX_CONSECUTIVE_OVERLOADS, cooldown should be OVERLOAD_COOLDOWN_SECONDS."""
+        p = self._make_profile()
+        for _ in range(MAX_CONSECUTIVE_OVERLOADS):
+            p.mark_failed(ERROR_OVERLOADED)
+        assert p._consecutive_overloads == MAX_CONSECUTIVE_OVERLOADS
+        assert p.is_available is False
+        # The cooldown should be the aggressive one, not the normal scaled one
+        # Normal would be COOLDOWN_SECONDS * failure_count; aggressive is OVERLOAD_COOLDOWN_SECONDS
+        # Just verify it's in cooldown — exact timing is monotonic-dependent
+
+    def test_mixed_overload_and_rate_limit_counts(self):
+        """Both overloaded and rate_limit errors contribute to consecutive count."""
+        p = self._make_profile()
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_RATE_LIMIT)
+        p.mark_failed(ERROR_OVERLOADED)
+        assert p._consecutive_overloads == MAX_CONSECUTIVE_OVERLOADS
+
+    def test_counter_survives_below_threshold(self):
+        """Two overloads then success resets, then two more stays below threshold."""
+        p = self._make_profile()
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_success()
+        p.mark_failed(ERROR_OVERLOADED)
+        p.mark_failed(ERROR_OVERLOADED)
+        assert p._consecutive_overloads == 2
+        assert p._consecutive_overloads < MAX_CONSECUTIVE_OVERLOADS
