@@ -167,7 +167,7 @@ class CloudReporterPlugin(Plugin):
         """Record incoming message."""
         self._counter.messages_in += 1
 
-    async def on_post_turn(self, user_id: str, user_message: str, response: str) -> None:
+    async def on_post_turn(self, user_id: str, message: str, response: str) -> None:
         """Record outgoing message."""
         self._counter.messages_out += 1
 
