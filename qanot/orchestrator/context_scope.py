@@ -64,11 +64,15 @@ def build_scoped_prompt(
     parts.append("2. Complete the task — your final message will be reported to the parent agent")
     parts.append("3. Be concise but informative in your output")
     parts.append("4. Don't initiate side tasks or proactive actions")
+    parts.append("5. Use tools directly — call web_search, read_file, etc. yourself")
 
     if can_spawn:
-        parts.append("5. Trust push-based completion — child results auto-announce back to you; do not poll")
-        parts.append("6. After spawning children, do NOT call list_agents or sleep. Wait for results.")
-        parts.append("7. Track expected children and only send your final answer after ALL complete")
+        parts.append("6. You CAN spawn sub-agents for parallel workstreams only")
+        parts.append("7. Trust push-based completion — child results auto-announce; do not poll")
+        parts.append("8. After spawning children, do NOT call list_agents or sleep. Wait for results.")
+        parts.append("9. Track expected children and only send your final answer after ALL complete")
+    else:
+        parts.append("6. You are a leaf worker — do NOT spawn sub-agents. Execute directly with your tools.")
 
     # Context from parent
     if parent_context:

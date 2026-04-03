@@ -52,9 +52,16 @@
 - `edit_image` — Edit images with AI
 
 ### Multi-Agent
-- `delegate_to_agent` — Delegate task to a named agent
-- `converse_with_agent` — Hold a conversation with an agent
-- `spawn_sub_agent` — Spawn a background worker
+- `spawn_agent` — Spawn a sub-agent (sync/async/conversation modes)
+- `list_agents` — List available agents and active runs
+- `cancel_agent` — Cancel a running agent
+- `view_board` / `clear_board` — Shared project board
+- `agent_history` — Past agent results
+
+**When to spawn vs do it yourself:**
+- 1-2 tool calls → do it yourself (web_search, read_file, etc.)
+- 3+ independent tool calls or parallel workstreams → spawn agent
+- Never spawn an agent just to call web_search once
 
 ### Diagnostics
 - `doctor` — System health check

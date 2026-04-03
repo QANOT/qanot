@@ -139,7 +139,11 @@ def _register_spawn_agent(
         })
 
     description = (
-        "Spawn a sub-agent to handle a task. "
+        "Spawn a sub-agent for complex MULTI-STEP tasks that need parallel or independent work. "
+        "When NOT to use: if you can accomplish the task with 1-2 direct tool calls, "
+        "do it yourself. Use web_search directly for searches, read_file for reading, "
+        "write_file for writing. Only spawn agents for tasks requiring 3+ tool calls "
+        "or parallel independent workstreams. "
         "Modes: sync (wait for result), async (fire and deliver to chat), "
         "conversation (multi-turn dialogue with agent)."
     )
