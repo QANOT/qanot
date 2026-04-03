@@ -43,7 +43,7 @@ print(\"core OK\")
 
     echo "[5/5] Health check..."
     sleep 8
-    ssh "$SERVER" 'for name in $(docker ps --filter "name=qanot-bot-" --format "{{.Names}}" 2>/dev/null); do
+    ssh "$SERVER" 'for name in $(docker ps --filter "name=qanot-" --format "{{.Names}}" 2>/dev/null); do
         status=$(docker inspect "$name" --format "{{.State.Status}}" 2>/dev/null)
         echo "   $name: $status"
     done'

@@ -14,7 +14,7 @@ SKIP_ENV = {
 
 def main():
     result = subprocess.run(
-        ["docker", "ps", "-a", "--filter", "name=qanot-bot-", "--format", "{{.Names}}"],
+        ["docker", "ps", "-a", "--filter", "name=qanot-", "--format", "{{.Names}}"],
         capture_output=True, text=True,
     )
     names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
