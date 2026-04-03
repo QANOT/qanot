@@ -126,7 +126,8 @@ class AnnouncePayload:
             parts.append(f"tokens {_fmt_tokens(total)} (in {_fmt_tokens(self.token_input)} / out {_fmt_tokens(self.token_output)})")
         if self.cost > 0:
             parts.append(f"cost ${self.cost:.4f}")
-        return f"Stats: {' \u2022 '.join(parts)}"
+        sep = " \u2022 "
+        return f"Stats: {sep.join(parts)}"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
