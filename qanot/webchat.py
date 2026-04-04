@@ -173,5 +173,9 @@ class WebChatAdapter:
         for sid in stale:
             session = self._sessions.pop(sid, None)
             if session and not session.ws.closed:
-                asyncio.create_task(session.ws.close())
+                task = asyncio.create_task(session.ws.close())
+                task.add_done_callback(
+                    lambda t: logger.debug("WebSocket close failed: %s", t.exception())
+                    if not t.cancelled() and t.exception() else None
+                )
             logger.debug("Evicted stale WebChat session: %s", sid)

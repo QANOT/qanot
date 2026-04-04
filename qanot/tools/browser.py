@@ -17,52 +17,60 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Shared browser instance (reused across tool calls within a session)
+# Shared browser instance (reused across tool calls within a session).
+# Protected by _browser_lock to prevent concurrent initialization races.
 _browser = None
 _context = None
 _page = None
+_browser_lock = asyncio.Lock()
 
 
 async def _ensure_browser():
-    """Lazy-init a shared browser instance."""
+    """Lazy-init a shared browser instance (lock-protected)."""
     global _browser, _context, _page
     if _page is not None:
         return _page
 
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Browser tools require playwright. Install with: "
-            "pip install playwright && playwright install chromium"
-        )
+    async with _browser_lock:
+        # Double-check after acquiring lock (another coroutine may have initialized)
+        if _page is not None:
+            return _page
 
-    pw = await async_playwright().start()
-    _browser = await pw.chromium.launch(headless=True)
-    _context = await _browser.new_context(
-        viewport={"width": 1280, "height": 720},
-        user_agent=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-    )
-    _page = await _context.new_page()
-    logger.info("Browser initialized (headless Chromium)")
-    return _page
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise RuntimeError(
+                "Browser tools require playwright. Install with: "
+                "pip install playwright && playwright install chromium"
+            )
+
+        pw = await async_playwright().start()
+        _browser = await pw.chromium.launch(headless=True)
+        _context = await _browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
+        _page = await _context.new_page()
+        logger.info("Browser initialized (headless Chromium)")
+        return _page
 
 
 async def _close_browser():
-    """Close the shared browser instance."""
+    """Close the shared browser instance (lock-protected)."""
     global _browser, _context, _page
-    if _browser:
-        try:
-            await _browser.close()
-        except Exception:
-            pass
-    _browser = None
-    _context = None
-    _page = None
+    async with _browser_lock:
+        if _browser:
+            try:
+                await _browser.close()
+            except Exception:
+                pass
+        _browser = None
+        _context = None
+        _page = None
 
 
 def register_browser_tools(registry, workspace_dir: str) -> None:

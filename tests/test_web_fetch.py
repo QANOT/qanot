@@ -490,22 +490,26 @@ class TestToolRegistration:
 
 
 class TestCache:
-    def test_cache_set_and_get(self):
-        _cache_set("key1", "value1")
-        assert _cache_get("key1") == "value1"
+    @pytest.mark.asyncio
+    async def test_cache_set_and_get(self):
+        await _cache_set("key1", "value1")
+        assert await _cache_get("key1") == "value1"
 
-    def test_cache_miss(self):
-        assert _cache_get("nonexistent") is None
+    @pytest.mark.asyncio
+    async def test_cache_miss(self):
+        assert await _cache_get("nonexistent") is None
 
-    def test_cache_expiry(self):
-        _cache_set("key2", "value2")
-        # Manually expire entry
-        ts, val = _cache["key2"]
-        _cache["key2"] = (ts - CACHE_TTL - 1, val)
-        assert _cache_get("key2") is None
+    @pytest.mark.asyncio
+    async def test_cache_expiry(self):
+        await _cache_set("key2", "value2")
+        # Manually expire entry in internal data dict
+        ts, val = _cache._data["key2"]
+        _cache._data["key2"] = (ts - CACHE_TTL - 1, val)
+        assert await _cache_get("key2") is None
 
-    def test_cache_eviction(self):
+    @pytest.mark.asyncio
+    async def test_cache_eviction(self):
         from qanot.tools.web import CACHE_MAX
         for i in range(CACHE_MAX + 5):
-            _cache_set(f"key_{i}", f"value_{i}")
-        assert len(_cache) <= CACHE_MAX
+            await _cache_set(f"key_{i}", f"value_{i}")
+        assert len(_cache._data) <= CACHE_MAX

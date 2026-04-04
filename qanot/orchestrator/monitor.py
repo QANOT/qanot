@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Cache Bot instances by token to avoid recreating them
+# Cache Bot instances by token to avoid recreating them.
+# Uses setdefault for race-safe lazy init.
 _group_bot_cache: dict[str, object] = {}
 
 
@@ -45,10 +46,11 @@ def _get_agent_name(config: Config, agent_id: str) -> str:
 async def _get_group_bot(config: Config, agent_id: str):
     """Get or create an aiogram Bot for posting to group as a specific agent."""
     bot_token = _get_agent_bot_token(config, agent_id)
-    if bot_token not in _group_bot_cache:
+    bot = _group_bot_cache.get(bot_token)
+    if bot is None:
         from aiogram import Bot
-        _group_bot_cache[bot_token] = Bot(token=bot_token)
-    return _group_bot_cache[bot_token]
+        bot = _group_bot_cache.setdefault(bot_token, Bot(token=bot_token))
+    return bot
 
 
 async def send_typing_to_group(config: Config, agent_id: str) -> None:

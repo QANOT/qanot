@@ -26,8 +26,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Runtime registry of active agent bots (for hot-launch/stop)
+# Runtime registry of active agent bots (for hot-launch/stop).
+# Protected by _bots_lock for concurrent create/delete safety.
 _active_agent_bots: dict[str, "AgentBot"] = {}  # agent_id → AgentBot
+_agent_bot_tasks: dict[str, asyncio.Task] = {}  # agent_id → running Task
+_bots_lock = asyncio.Lock()
 
 
 _RE_AGENT_ID_INVALID = re.compile(r"[^a-z0-9\-]")
@@ -86,42 +89,54 @@ async def _hot_launch_agent_bot(
     provider: "LLMProvider",
     parent_registry: ToolRegistry,
 ) -> None:
-    """Hot-launch a new agent bot without restart."""
+    """Hot-launch a new agent bot without restart (lock-protected)."""
     if not agent_def.bot_token:
         return
 
     from qanot.agent_bot import AgentBot
 
-    # Stop existing bot if running
-    await _stop_agent_bot(agent_def.id)
+    async with _bots_lock:
+        # Stop existing bot if running
+        await _stop_agent_bot_unlocked(agent_def.id)
 
-    agent_bot = AgentBot(
-        agent_def=agent_def,
-        config=config,
-        provider=provider,
-        parent_registry=parent_registry,
-    )
-    _active_agent_bots[agent_def.id] = agent_bot
+        agent_bot = AgentBot(
+            agent_def=agent_def,
+            config=config,
+            provider=provider,
+            parent_registry=parent_registry,
+        )
+        _active_agent_bots[agent_def.id] = agent_bot
 
-    _task = asyncio.create_task(
-        agent_bot.start(),
-        name=f"agent_bot_{agent_def.id}",
-    )
-    _task.add_done_callback(
-        lambda t: logger.warning("Agent bot '%s' task failed: %s", agent_def.id, t.exception())
-        if not t.cancelled() and t.exception() else None
-    )
-    logger.info("Hot-launched agent bot: %s (%s)", agent_def.id, agent_def.name or agent_def.id)
+        task = asyncio.create_task(
+            agent_bot.start(),
+            name=f"agent_bot_{agent_def.id}",
+        )
+        task.add_done_callback(
+            lambda t: logger.warning("Agent bot '%s' task failed: %s", agent_def.id, t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
+        _agent_bot_tasks[agent_def.id] = task
+        logger.info("Hot-launched agent bot: %s (%s)", agent_def.id, agent_def.name or agent_def.id)
 
 
 async def _stop_agent_bot(agent_id: str) -> bool:
-    """Stop a running agent bot. Returns True if was running."""
-    if bot := _active_agent_bots.get(agent_id):
+    """Stop a running agent bot (acquires lock). Returns True if was running."""
+    async with _bots_lock:
+        return await _stop_agent_bot_unlocked(agent_id)
+
+
+async def _stop_agent_bot_unlocked(agent_id: str) -> bool:
+    """Stop a running agent bot (caller must hold _bots_lock)."""
+    # Cancel the task first
+    task = _agent_bot_tasks.pop(agent_id, None)
+    if task and not task.done():
+        task.cancel()
+    # Then stop the bot
+    if bot := _active_agent_bots.pop(agent_id, None):
         try:
             await bot.stop()
         except Exception as e:
             logger.warning("Error stopping agent bot '%s': %s", agent_id, e)
-        _active_agent_bots.pop(agent_id, None)
         return True
     return False
 

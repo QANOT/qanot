@@ -658,8 +658,8 @@ class SubagentManager:
             run.token_input = stats.get("input_tokens", 0)
             run.token_output = stats.get("output_tokens", 0)
             run.cost = stats.get("total_cost", 0.0)
-        except Exception:
-            pass  # Stats are best-effort
+        except Exception as e:
+            logger.debug("Failed to collect sub-agent cost stats: %s", e)
 
     @staticmethod
     def _task_done_callback(task: asyncio.Task) -> None:

@@ -293,12 +293,12 @@ async def send_voice_reply(bot: "Bot", chat_id: int, user_id: str, agent: "Agent
                 if dl_path.endswith(".wav"):
                     voice_path = await convert_wav_to_ogg(dl_path)
                 else:
+                    from qanot.voice import _run_ffmpeg
                     ogg_path = dl_path.rsplit(".", 1)[0] + ".ogg"
-                    proc = await asyncio.create_subprocess_exec(
-                        "ffmpeg", "-i", dl_path, "-codec:a", "libopus", "-b:a", "32k", ogg_path, "-y",
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                    await _run_ffmpeg(
+                        ["-i", dl_path, "-codec:a", "libopus", "-b:a", "32k", ogg_path, "-y"],
+                        "ffmpeg audio→OGG",
                     )
-                    await proc.communicate()
                     voice_path = ogg_path
                 cleanup_paths.append(voice_path)
 

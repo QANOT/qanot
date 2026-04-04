@@ -67,10 +67,46 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
-# In-memory cache
-_cache: dict[str, tuple[float, str]] = {}
+# In-memory cache (thread-safe via lock)
 CACHE_TTL = 900  # 15 minutes
 CACHE_MAX = 50
+
+
+class _ThreadSafeCache:
+    """Simple TTL cache with lock protection for concurrent async access."""
+
+    __slots__ = ("_data", "_lock", "_ttl", "_max")
+
+    def __init__(self, ttl: int = CACHE_TTL, max_size: int = CACHE_MAX):
+        self._data: dict[str, tuple[float, str]] = {}
+        self._lock = asyncio.Lock()
+        self._ttl = ttl
+        self._max = max_size
+
+    async def get(self, key: str) -> str | None:
+        async with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            ts, result = entry
+            if time.monotonic() - ts > self._ttl:
+                self._data.pop(key, None)
+                return None
+            return result
+
+    async def set(self, key: str, result: str) -> None:
+        async with self._lock:
+            if len(self._data) >= self._max:
+                oldest_key = min(self._data, key=lambda k: self._data[k][0])
+                self._data.pop(oldest_key, None)
+            self._data[key] = (time.monotonic(), result)
+
+    def clear(self) -> None:
+        """Clear all cache entries (for testing)."""
+        self._data.clear()
+
+
+_cache = _ThreadSafeCache()
 
 
 # ── SSRF protection ──────────────────────────────────────────────
@@ -246,24 +282,14 @@ def _extract_html(html: str) -> tuple[str, str]:
     return extractor.get_text(), extractor.title
 
 
-def _cache_get(key: str) -> str | None:
-    """Get cached result if not expired."""
-    entry = _cache.get(key)
-    if entry is None:
-        return None
-    ts, result = entry
-    if time.monotonic() - ts > CACHE_TTL:
-        _cache.pop(key, None)
-        return None
-    return result
+async def _cache_get(key: str) -> str | None:
+    """Get cached result if not expired (async, lock-protected)."""
+    return await _cache.get(key)
 
 
-def _cache_set(key: str, result: str) -> None:
-    """Cache a result, evicting oldest if over limit."""
-    if len(_cache) >= CACHE_MAX:
-        oldest_key = min(_cache, key=lambda k: _cache[k][0])
-        _cache.pop(oldest_key, None)
-    _cache[key] = (time.monotonic(), result)
+async def _cache_set(key: str, result: str) -> None:
+    """Cache a result, evicting oldest if over limit (async, lock-protected)."""
+    await _cache.set(key, result)
 
 
 def _format_results(data: dict, query: str) -> str:
@@ -319,7 +345,7 @@ def register_web_tools(
 
         # Check cache
         cache_key = f"{query.lower()}:{count}"
-        cached = _cache_get(cache_key)
+        cached = await _cache_get(cache_key)
         if cached:
             logger.debug("Web search cache hit: %s", query)
             return cached
@@ -347,7 +373,7 @@ def register_web_tools(
 
                     data = await resp.json()
                     result = _format_results(data, query)
-                    _cache_set(cache_key, result)
+                    await _cache_set(cache_key, result)
                     return result
 
         except aiohttp.ClientError as e:
@@ -399,7 +425,7 @@ def register_web_tools(
 
         # Check cache
         cache_key = f"fetch:{url}:{max_chars}"
-        cached = _cache_get(cache_key)
+        cached = await _cache_get(cache_key)
         if cached:
             logger.debug("web_fetch cache hit: %s", url)
             return cached
@@ -480,7 +506,7 @@ def register_web_tools(
                 "source": "[web content — external, may be inaccurate]",
             }, ensure_ascii=False)
 
-            _cache_set(cache_key, result)
+            await _cache_set(cache_key, result)
             return result
 
         except aiohttp.TooManyRedirects:
