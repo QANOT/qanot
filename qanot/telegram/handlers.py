@@ -18,6 +18,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 7-level thinking granularity: level → (label, description, budget_tokens)
+# "off" disables thinking entirely. Higher levels = more reasoning = more cost.
+THINKING_LEVELS: dict[str, dict] = {
+    "off":      {"label": "Off",      "desc": "Fikrlashsiz",                "budget": 0},
+    "minimal":  {"label": "Minimal",  "desc": "Eng kam (1K token)",         "budget": 1024},
+    "low":      {"label": "Low",      "desc": "Kam fikrlash (4K)",          "budget": 4096},
+    "medium":   {"label": "Medium",   "desc": "O'rtacha (10K)",             "budget": 10000},
+    "high":     {"label": "High",     "desc": "Chuqur (25K)",               "budget": 25000},
+    "extended": {"label": "Extended", "desc": "Kengaytirilgan (50K)",       "budget": 50000},
+    "max":      {"label": "Max",      "desc": "Maksimal chuqurlik (100K)",  "budget": 100000},
+}
+
 
 class HandlersMixin:
     """Mixin providing command handler methods for TelegramAdapter."""
@@ -26,6 +38,161 @@ class HandlersMixin:
     agent: "Agent"
     config: "Config"
     _pending_approvals: dict[str, dict]
+
+    # ── Config persistence helper ─────────────────────────
+
+    # ── /start ────────────────────────────────────────────
+
+    async def _handle_start(self, message: "Message") -> None:
+        """Handle /start — interactive onboarding wizard."""
+        if not message.from_user:
+            return
+
+        user = message.from_user
+        user_name = user.first_name or user.full_name or "do'st"
+        bot_name = self.config.bot_name or "Qanot AI"
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="\U0001f1fa\U0001f1ff O'zbekcha",
+                callback_data="onboard_lang:uz",
+            )],
+            [InlineKeyboardButton(
+                text="\U0001f1f7\U0001f1fa Русский",
+                callback_data="onboard_lang:ru",
+            )],
+            [InlineKeyboardButton(
+                text="\U0001f1ec\U0001f1e7 English",
+                callback_data="onboard_lang:en",
+            )],
+        ])
+
+        welcome = (
+            f"Salom, **{user_name}**! \U0001f44b\n\n"
+            f"Men **{bot_name}** — shaxsiy AI yordamchingizman.\n\n"
+            f"\U0001f9e0 Fikrlash, yozish, kod yozish, rasm yaratish\n"
+            f"\U0001f50d Web qidirish va tahlil\n"
+            f"\U0001f4c1 Fayllar bilan ishlash\n"
+            f"\U0001f399 Ovozli xabarlarni tushunish\n"
+            f"\U0001f310 MCP orqali tashqi xizmatlar\n\n"
+            f"Tilni tanlang:"
+        )
+
+        await message.reply(welcome, reply_markup=keyboard, parse_mode="Markdown")
+
+    async def _cb_onboard_lang(self, callback: "CallbackQuery", lang: str) -> None:
+        """Handle onboarding language selection → show use case picker."""
+        lang_names = {"uz": "O'zbekcha", "ru": "Русский", "en": "English"}
+        lang_name = lang_names.get(lang, lang)
+
+        # Save voice language preference
+        self.config.voice_language = lang
+        self._save_config_field("voice_language", lang)
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="\U0001f4bb Dasturlash (coding)",
+                callback_data="onboard_role:developer",
+            )],
+            [InlineKeyboardButton(
+                text="\U0001f4bc Biznes va marketing",
+                callback_data="onboard_role:business",
+            )],
+            [InlineKeyboardButton(
+                text="\U0001f393 O'rganish va tadqiqot",
+                callback_data="onboard_role:student",
+            )],
+            [InlineKeyboardButton(
+                text="\U0001f3a8 Ijodiy ishlar (yozish, rasm)",
+                callback_data="onboard_role:creative",
+            )],
+            [InlineKeyboardButton(
+                text="\u2699\ufe0f Umumiy yordamchi",
+                callback_data="onboard_role:general",
+            )],
+        ])
+
+        await callback.answer(f"\u2705 {lang_name}")
+        try:
+            await callback.message.edit_text(
+                f"\u2705 Til: **{lang_name}**\n\n"
+                f"Asosiy ishlatish maqsadingiz nima?",
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug("Failed to edit onboarding message: %s", e)
+
+    async def _cb_onboard_role(self, callback: "CallbackQuery", role: str) -> None:
+        """Handle onboarding role selection → complete setup."""
+        role_names = {
+            "developer": "\U0001f4bb Dasturchi",
+            "business": "\U0001f4bc Biznes",
+            "student": "\U0001f393 O'rganuvchi",
+            "creative": "\U0001f3a8 Ijodkor",
+            "general": "\u2699\ufe0f Umumiy",
+        }
+        role_name = role_names.get(role, role)
+        bot_name = self.config.bot_name or "Qanot AI"
+
+        await callback.answer(f"\u2705 {role_name}")
+
+        # Build final welcome with relevant commands
+        tips = {
+            "developer": (
+                "**Foydali buyruqlar:**\n"
+                "- Kod yozing: \"Python da API yoz\"\n"
+                "- Xato toping: faylni yuboring va \"xato top\" deng\n"
+                "- /code \u2014 sandbox rejimini yoqish\n"
+                "- /think high \u2014 murakkab masalalar uchun"
+            ),
+            "business": (
+                "**Foydali buyruqlar:**\n"
+                "- Tahlil: \"Bu bozorni tahlil qil\"\n"
+                "- Hujjat: \"Shartnoma yoz\"\n"
+                "- Web: \"Bu kompaniya haqida ma'lumot top\"\n"
+                "- /voice always \u2014 ovozli javoblar"
+            ),
+            "student": (
+                "**Foydali buyruqlar:**\n"
+                "- Tushuntiring: \"Kvant fizikasini sodda tushuntir\"\n"
+                "- Tarjima: \"Bu matnni inglizchaga tarjima qil\"\n"
+                "- Referat: \"AI haqida referat yoz\"\n"
+                "- /think medium \u2014 chuqur javoblar"
+            ),
+            "creative": (
+                "**Foydali buyruqlar:**\n"
+                "- Rasm: \"Rasm chiz: bahor manzarasi\"\n"
+                "- Yozish: \"Hikoya yoz: sarguzasht janrida\"\n"
+                "- She'r: \"Vatan haqida she'r yoz\"\n"
+                "- /voice always \u2014 ovozli suhbat"
+            ),
+            "general": (
+                "**Foydali buyruqlar:**\n"
+                "- Savol bering: istalgan mavzuda\n"
+                "- Rasm yuboring: tahlil uchun\n"
+                "- Fayl yuboring: o'qish uchun\n"
+                "- /help \u2014 barcha buyruqlar"
+            ),
+        }
+
+        tip = tips.get(role, tips["general"])
+
+        try:
+            await callback.message.edit_text(
+                f"\u2705 **{bot_name} tayyor!**\n\n"
+                f"Profil: {role_name}\n\n"
+                f"{tip}\n\n"
+                f"Xabar yozing yoki ovozli xabar yuboring \u2014 "
+                f"men har doim tayyorman! \U0001f680",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug("Failed to edit onboarding message: %s", e)
 
     # ── Config persistence helper ─────────────────────────
 
@@ -78,6 +245,40 @@ class HandlersMixin:
             "Suhbat tozalandi. Yangi suhbatni boshlashingiz mumkin.",
         )
         logger.info("Conversation reset: %s", conv_key)
+
+    # ── /resume ───────────────────────────────────────────
+
+    async def _handle_resume(self, message: "Message") -> None:
+        """Handle /resume — restore conversation from last session."""
+        access = self._check_command_access(message)
+        if not access:
+            return
+        _, conv_key = access
+
+        # Check if user already has an active conversation
+        existing = self.agent.get_conversation(conv_key)
+        if existing:
+            await self._send_final(
+                message.chat.id,
+                f"Suhbat allaqachon faol ({len(existing)} xabar). "
+                f"Tozalash uchun /reset yuboring.",
+            )
+            return
+
+        # Restore from JSONL session history
+        msg_count = self.agent.restore_user_session(str(conv_key))
+
+        if msg_count > 0:
+            await self._send_final(
+                message.chat.id,
+                f"Oldingi suhbat tiklandi ({msg_count} xabar). Davom etishingiz mumkin.",
+            )
+            logger.info("Session resumed for %s: %d messages", conv_key, msg_count)
+        else:
+            await self._send_final(
+                message.chat.id,
+                "Oldingi suhbat topilmadi. Yangi suhbatni boshlashingiz mumkin.",
+            )
 
     # ── /status ───────────────────────────────────────────
 
@@ -137,6 +338,7 @@ class HandlersMixin:
             "**Buyruqlar:**\n\n"
             "**Suhbat:**\n"
             "/reset \u2014 Suhbatni tozalash (+ model: /reset opus)\n"
+            "/resume \u2014 Oldingi suhbatni tiklash\n"
             "/compact \u2014 Kontekstni siqish\n"
             "/export \u2014 Sessiyani eksport qilish\n"
             "/stop \u2014 Joriy amalni to'xtatish\n\n"
@@ -149,6 +351,7 @@ class HandlersMixin:
             "/mode \u2014 Javob rejimi\n"
             "/routing \u2014 Model routing\n"
             "/group \u2014 Guruh rejimi\n"
+            "/topic \u2014 Topic-agent bog'lash\n"
             "/exec \u2014 Xavfsizlik darajasi\n"
             "/code \u2014 Code execution (sandbox)\n\n"
             "**Ma'lumot:**\n"
@@ -228,24 +431,20 @@ class HandlersMixin:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
         current = self.config.thinking_level
-        levels = [
-            ("off", "Off", "Fikrlashsiz"),
-            ("low", "Low", "Kam fikrlash"),
-            ("medium", "Medium", "O'rtacha"),
-            ("high", "High", "Chuqur fikrlash"),
-        ]
 
         buttons = []
-        for level_id, label, desc in levels:
+        for level_id, info in THINKING_LEVELS.items():
             check = "\u2705 " if level_id == current else ""
             buttons.append([InlineKeyboardButton(
-                text=f"{check}{label} \u2014 {desc}",
+                text=f"{check}{info['label']} \u2014 {info['desc']}",
                 callback_data=f"think:{level_id}",
             )])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        current_info = THINKING_LEVELS.get(current, {})
+        budget_text = f" ({current_info.get('budget', 0):,} token)" if current != "off" else ""
         await message.reply(
-            f"\U0001f9e0 **Joriy daraja:** `{current}`\n\nFikrlash darajasini tanlang:",
+            f"\U0001f9e0 **Joriy daraja:** `{current}`{budget_text}\n\nFikrlash darajasini tanlang:",
             reply_markup=keyboard,
             parse_mode="Markdown",
         )
@@ -443,6 +642,114 @@ class HandlersMixin:
             parse_mode="Markdown",
         )
 
+    # ── /topic ────────────────────────────────────────────
+
+    async def _handle_topic(self, message: "Message") -> None:
+        """Handle /topic — bind/unbind an agent to a forum topic.
+
+        Usage:
+            /topic                — show current binding for this topic
+            /topic <agent_id>    — bind agent to this topic
+            /topic unbind        — unbind agent from this topic
+            /topic list          — show all bindings
+        """
+        if not self._check_command_access(message):
+            return
+
+        thread_id = getattr(message, "message_thread_id", None)
+        chat_id = message.chat.id
+        text = (message.text or "").strip()
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        # /topic list — show all bindings
+        if arg == "list":
+            bindings = self.config.topic_bindings
+            if not bindings:
+                await self._send_final(chat_id, "Hech qanday topic-agent bog'lanishi yo'q.",
+                                       thread_id=thread_id)
+                return
+            lines = []
+            for key, agent_id in bindings.items():
+                agent_name = agent_id
+                for ad in self.config.agents:
+                    if ad.id == agent_id:
+                        agent_name = f"{ad.name or ad.id} ({ad.id})"
+                        break
+                lines.append(f"  {key} \u2192 {agent_name}")
+            await self._send_final(chat_id, "**Topic bindings:**\n" + "\n".join(lines),
+                                   thread_id=thread_id)
+            return
+
+        # All other operations need a topic
+        if not thread_id:
+            await self._send_final(
+                chat_id,
+                "Bu buyruqni faqat forum topic ichida ishlatish mumkin.\n"
+                "Guruhda Topics ni yoqing va topic ichidan /topic yuboring.",
+            )
+            return
+
+        binding_key = f"{chat_id}:{thread_id}"
+
+        # /topic unbind — remove binding
+        if arg == "unbind":
+            removed = self.config.topic_bindings.pop(binding_key, None)
+            if removed:
+                self._save_config_field("topic_bindings", self.config.topic_bindings)
+                await self._send_final(chat_id, f"Agent '{removed}' bu topicdan ajratildi.",
+                                       thread_id=thread_id)
+            else:
+                await self._send_final(chat_id, "Bu topicda bog'langan agent yo'q.",
+                                       thread_id=thread_id)
+            return
+
+        # /topic <agent_id> — bind agent
+        if arg:
+            target = next((ad for ad in self.config.agents if ad.id == arg), None)
+            if target is None:
+                agent_ids = ", ".join(ad.id for ad in self.config.agents) or "(agentlar yo'q)"
+                await self._send_final(
+                    chat_id,
+                    f"Agent '{arg}' topilmadi.\nMavjud agentlar: {agent_ids}",
+                    thread_id=thread_id,
+                )
+                return
+
+            self.config.topic_bindings[binding_key] = target.id
+            self._save_config_field("topic_bindings", self.config.topic_bindings)
+            await self._send_final(
+                chat_id,
+                f"\u2705 Bu topicga **{target.name or target.id}** agent bog'landi.\n"
+                f"Endi bu topicdagi barcha xabarlarga shu agent javob beradi.",
+                thread_id=thread_id,
+            )
+            return
+
+        # /topic (no arg) — show current binding
+        current = self.config.topic_bindings.get(binding_key)
+        if current:
+            agent_name = current
+            for ad in self.config.agents:
+                if ad.id == current:
+                    agent_name = ad.name or ad.id
+                    break
+            await self._send_final(
+                chat_id,
+                f"Bu topicga **{agent_name}** (`{current}`) bog'langan.\n"
+                f"O'zgartirish: `/topic <agent_id>`\nAjratish: `/topic unbind`",
+                thread_id=thread_id,
+            )
+        else:
+            agent_ids = ", ".join(ad.id for ad in self.config.agents) or "(agentlar yo'q)"
+            await self._send_final(
+                chat_id,
+                f"Bu topicda agent bog'lanmagan.\n"
+                f"Bog'lash: `/topic <agent_id>`\n"
+                f"Mavjud agentlar: {agent_ids}",
+                thread_id=thread_id,
+            )
+
     # ── /exec ─────────────────────────────────────────────
 
     async def _handle_exec(self, message: "Message") -> None:
@@ -607,7 +914,11 @@ class HandlersMixin:
     # ── /export ───────────────────────────────────────────
 
     async def _handle_export(self, message: "Message") -> None:
-        """Handle /export — export current session as JSON file."""
+        """Handle /export — export session as HTML (default) or JSON.
+
+        Usage: /export       → HTML file
+               /export json  → raw JSON file
+        """
         access = self._check_command_access(message)
         if not access:
             return
@@ -618,25 +929,46 @@ class HandlersMixin:
             await self._send_final(message.chat.id, "Suhbat tarixi bo'sh.")
             return
 
+        # Parse format arg
+        text = (message.text or "").strip()
+        parts = text.split(maxsplit=1)
+        fmt = parts[1].strip().lower() if len(parts) > 1 else "html"
+
         import tempfile
         from aiogram.types import FSInputFile
 
-        export_data = {
-            "conversation_key": conv_key,
-            "model": self.config.model,
-            "provider": self.config.provider,
-            "turns": len([m for m in conv if m.get("role") == "user"]),
-            "messages": conv,
-        }
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", prefix="qanot_export_", delete=False,
-        ) as f:
-            json.dump(export_data, f, indent=2, ensure_ascii=False)
-            tmp_path = f.name
+        if fmt == "json":
+            export_data = {
+                "conversation_key": conv_key,
+                "model": self.config.model,
+                "provider": self.config.provider,
+                "turns": len([m for m in conv if m.get("role") == "user"]),
+                "messages": conv,
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", prefix="qanot_export_", delete=False,
+            ) as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+                tmp_path = f.name
+            filename = f"session_{conv_key}.json"
+        else:
+            # HTML export
+            from qanot.export_html import render_session_html
+            html = render_session_html(
+                messages=conv,
+                bot_name=self.config.bot_name or "Qanot AI",
+                model=self.config.model,
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".html", prefix="qanot_export_", delete=False,
+                encoding="utf-8",
+            ) as f:
+                f.write(html)
+                tmp_path = f.name
+            filename = f"session_{conv_key}.html"
 
         try:
-            doc = FSInputFile(tmp_path, filename=f"session_{conv_key}.json")
+            doc = FSInputFile(tmp_path, filename=filename)
             await self.bot.send_document(message.chat.id, doc)
         except Exception as e:
             logger.error("Export failed: %s", e)
@@ -877,6 +1209,8 @@ class HandlersMixin:
             "code": self._cb_code,
             "plg_on": self._cb_plugin_enable,
             "plg_off": self._cb_plugin_disable,
+            "onboard_lang": self._cb_onboard_lang,
+            "onboard_role": self._cb_onboard_role,
         }
 
         prefix = data.split(":", 1)[0] if ":" in data else ""
@@ -932,11 +1266,42 @@ class HandlersMixin:
 
     # ── Callback: think ───────────────────────────────────
 
+    def _sync_thinking_to_provider(self, level: str, budget: int) -> None:
+        """Propagate thinking level change to the actual LLM provider."""
+        provider = self.agent.provider
+        # FailoverProvider wraps inner providers
+        if hasattr(provider, "profiles"):
+            for profile in provider.profiles:
+                profile.thinking_level = level
+                profile.thinking_budget = budget
+            # Update already-initialized providers
+            for p in getattr(provider, "_providers", {}).values():
+                if hasattr(p, "set_thinking"):
+                    p.set_thinking(level, budget)
+        elif hasattr(provider, "set_thinking"):
+            provider.set_thinking(level, budget)
+        # Routing provider wraps an inner _provider
+        if hasattr(provider, "_provider"):
+            inner = provider._provider
+            if hasattr(inner, "set_thinking"):
+                inner.set_thinking(level, budget)
+            if hasattr(inner, "profiles"):
+                for profile in inner.profiles:
+                    profile.thinking_level = level
+                    profile.thinking_budget = budget
+                for p in getattr(inner, "_providers", {}).values():
+                    if hasattr(p, "set_thinking"):
+                        p.set_thinking(level, budget)
+
     async def _cb_think(self, callback: "CallbackQuery", level: str) -> None:
+        # Map level to budget
+        budget = THINKING_LEVELS.get(level, {}).get("budget", self.config.thinking_budget)
         self.config.thinking_level = level
+        self.config.thinking_budget = budget
         self._save_config_field("thinking_level", level)
-        labels = {"off": "Off", "low": "Low", "medium": "Medium", "high": "High"}
-        name = labels.get(level, level)
+        self._save_config_field("thinking_budget", budget)
+        self._sync_thinking_to_provider(level, budget)
+        name = THINKING_LEVELS.get(level, {}).get("label", level)
         await callback.answer(f"\u2705 Thinking: {name}")
         try:
             await callback.message.edit_text(

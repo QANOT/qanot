@@ -64,9 +64,17 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._rate_limiter = RateLimiter()
 
     def _setup_handlers(self) -> None:
+        @self.dp.message(F.text == "/start")
+        async def handle_start(message: Message) -> None:
+            await self._handle_start(message)
+
         @self.dp.message(F.text.startswith("/reset"))
         async def handle_reset(message: Message) -> None:
             await self._handle_reset(message)
+
+        @self.dp.message(F.text.startswith("/resume"))
+        async def handle_resume(message: Message) -> None:
+            await self._handle_resume(message)
 
         @self.dp.message(F.text.startswith("/status"))
         async def handle_status(message: Message) -> None:
@@ -107,6 +115,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         @self.dp.message(F.text.startswith("/group"))
         async def handle_group(message: Message) -> None:
             await self._handle_group(message)
+
+        @self.dp.message(F.text.startswith("/topic"))
+        async def handle_topic(message: Message) -> None:
+            await self._handle_topic(message)
 
         @self.dp.message(F.text.startswith("/exec"))
         async def handle_exec(message: Message) -> None:
@@ -234,7 +246,13 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         return text.replace(f"@{bot_username}", "").strip()
 
     def _conv_key(self, message: Message) -> str:
-        return f"group_{message.chat.id}" if self._is_group_chat(message) else str(message.from_user.id)
+        if not self._is_group_chat(message):
+            return str(message.from_user.id)
+        # Forum topics: isolate conversations per topic thread
+        topic_id = getattr(message, "message_thread_id", None)
+        if topic_id:
+            return f"group_{message.chat.id}_topic_{topic_id}"
+        return f"group_{message.chat.id}"
 
     def _check_command_access(self, message: Message) -> tuple[int, str] | None:
         if not message.from_user:
@@ -260,7 +278,13 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
 
         is_group = self._is_group_chat(message)
         if is_group:
-            if not await self._should_respond_in_group(message):
+            # Always respond in bound topics (regardless of group_mode)
+            thread_id = getattr(message, "message_thread_id", None)
+            has_binding = bool(
+                thread_id
+                and self.config.topic_bindings.get(f"{message.chat.id}:{thread_id}")
+            )
+            if not has_binding and not await self._should_respond_in_group(message):
                 return
 
         text = message.text or message.caption or ""
@@ -391,7 +415,18 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
 
             coalesced = len(batch) > 1
             async with self._concurrent:
-                await self._process_turn(msg, coalesce_key, text, images, voice_req, coalesced=coalesced)
+                await self._process_turn(msg, coalesce_key, text, images, voice_req, coalesced=coalesced,
+                                         thread_id=getattr(msg, "message_thread_id", None))
+
+    def _resolve_topic_binding(self, chat_id: int, thread_id: int | None):
+        """Resolve topic-agent binding. Returns AgentDefinition or None."""
+        if not thread_id or not self.config.topic_bindings:
+            return None
+        binding_key = f"{chat_id}:{thread_id}"
+        agent_id = self.config.topic_bindings.get(binding_key)
+        if not agent_id:
+            return None
+        return next((ad for ad in self.config.agents if ad.id == agent_id), None)
 
     async def _process_turn(
         self,
@@ -402,8 +437,16 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         voice_request: bool,
         *,
         coalesced: bool = False,
+        thread_id: int | None = None,
     ) -> None:
         """Process a single (possibly coalesced) turn for a conversation."""
+        # Topic-agent binding: override system prompt for bound topics
+        bound_agent = self._resolve_topic_binding(message.chat.id, thread_id)
+        old_prompt_override = self.agent._system_prompt_override
+        if bound_agent and bound_agent.prompt:
+            self.agent._system_prompt_override = bound_agent.prompt
+            logger.info("Topic binding active: %s → agent %s", conv_key, bound_agent.id)
+
         mode = self.config.response_mode
         rm = self.config.reply_mode
         if rm == "always":
@@ -414,14 +457,14 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             reply_to = None
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
+                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
+                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
             else:
-                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to)
+                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
 
-            await send_pending_images(self.bot, message.chat.id, conv_key, self.agent)
-            await send_pending_files(self.bot, message.chat.id, conv_key, self.agent)
+            await send_pending_images(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
+            await send_pending_files(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
 
             should_tts = (
                 self.config.voice_mode == "always"
@@ -446,6 +489,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                     message.chat.id,
                     "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
                 )
+        finally:
+            # Restore system prompt override after topic-bound turn
+            if bound_agent:
+                self.agent._system_prompt_override = old_prompt_override
 
     # ── Proactive & lifecycle ────────────────────────────────
 

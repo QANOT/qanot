@@ -173,6 +173,12 @@ class AnthropicProvider(LLMProvider):
             "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
         }
 
+    def set_thinking(self, level: str, budget: int | None = None) -> None:
+        """Update thinking level and budget at runtime (called by /think handler)."""
+        self._thinking_level = level
+        if budget is not None:
+            self._thinking_budget = budget
+
     @property
     def _thinking_enabled(self) -> bool:
         return self._thinking_level != "off"

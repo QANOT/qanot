@@ -1,11 +1,13 @@
-"""Per-user conversation management with history and locking."""
+"""Per-user conversation management with history, locking, and snapshot persistence."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class Conversation:
     messages: list[dict] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_active: float = field(default_factory=time.monotonic)
+    restored: bool = False  # True if conversation was restored from session/snapshot
 
 
 class ConversationManager:
@@ -114,4 +117,96 @@ class ConversationManager:
         max_msgs = self._history_limit
         restored = messages[-max_msgs:]
         self.set_messages(user_id, restored)
+        if restored:
+            self._conversations[user_id].restored = True
         return self._conversations[user_id].messages
+
+    def is_restored(self, user_id: str | None) -> bool:
+        """Check if a user's conversation was restored from session/snapshot."""
+        conv = self._conversations.get(user_id)
+        return conv.restored if conv else False
+
+    def clear_restored_flag(self, user_id: str | None) -> None:
+        """Clear the restored flag after the first turn acknowledges it."""
+        conv = self._conversations.get(user_id)
+        if conv:
+            conv.restored = False
+
+    # ── Snapshot persistence ──────────────────────────────
+
+    def save_snapshot(self, snapshot_dir: str) -> int:
+        """Save all active conversations to a JSON snapshot file.
+
+        Called on graceful shutdown to preserve conversation state.
+        Returns the number of conversations saved.
+        """
+        if not self._conversations:
+            return 0
+
+        snapshot_path = Path(snapshot_dir) / "conversations_snapshot.json"
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+        data: dict[str, list[dict]] = {}
+        for uid, conv in self._conversations.items():
+            if uid is None or not conv.messages:
+                continue
+            # Only save last history_limit messages
+            data[str(uid)] = conv.messages[-self._history_limit:]
+
+        if not data:
+            return 0
+
+        try:
+            # Atomic write via temp file
+            tmp_path = snapshot_path.with_suffix(".tmp")
+            tmp_path.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            tmp_path.replace(snapshot_path)
+            logger.info("Saved conversation snapshot: %d users", len(data))
+            return len(data)
+        except Exception as e:
+            logger.error("Failed to save conversation snapshot: %s", e)
+            return 0
+
+    def load_snapshot(self, snapshot_dir: str) -> int:
+        """Load conversations from a snapshot file (called on startup).
+
+        Returns the number of conversations restored.
+        Snapshot file is deleted after successful load to prevent stale restores.
+        """
+        snapshot_path = Path(snapshot_dir) / "conversations_snapshot.json"
+        if not snapshot_path.exists():
+            return 0
+
+        try:
+            raw = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read conversation snapshot: %s", e)
+            return 0
+
+        if not isinstance(raw, dict):
+            logger.warning("Invalid snapshot format (expected dict)")
+            return 0
+
+        count = 0
+        for uid, messages in raw.items():
+            if not isinstance(messages, list) or not messages:
+                continue
+            # Sanitize: keep only last history_limit messages
+            trimmed = messages[-self._history_limit:]
+            self.set_messages(uid, trimmed)
+            self._conversations[uid].restored = True
+            count += 1
+
+        if count:
+            logger.info("Restored %d conversations from snapshot", count)
+
+        # Delete snapshot after load — it's a one-time restore
+        try:
+            snapshot_path.unlink()
+        except OSError:
+            pass
+
+        return count

@@ -110,11 +110,17 @@ class Config:
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
     # Web search
     brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
+    # Cost budget (0 = unlimited)
+    daily_budget_usd: float = 0.0  # Max daily spend in USD per user (0 = no limit)
+    budget_warning_pct: int = 80  # Warn user when reaching this % of daily budget
     # UX
     reactions_enabled: bool = False  # Send emoji reactions (👀, ✅, ❌) on messages
     reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"
     # Group chat
     group_mode: str = "mention"  # "off" | "mention" | "all"
+    # Topic-agent bindings: "chat_id:topic_id" → agent_id
+    # Allows binding specific agents to specific forum topics in groups
+    topic_bindings: dict[str, str] = field(default_factory=dict)
     # Self-healing / heartbeat
     heartbeat_enabled: bool = True  # Enable/disable heartbeat cron
     heartbeat_interval: str = "0 */4 * * *"  # Cron expression for heartbeat schedule
@@ -126,8 +132,8 @@ class Config:
     # Session history replay
     history_limit: int = 50  # Max user turns to restore from session history on restart
     # Extended thinking (Claude reasoning mode)
-    thinking_level: str = "off"  # "off" | "low" | "medium" | "high"
-    thinking_budget: int = 10000  # max thinking tokens
+    thinking_level: str = "off"  # "off" | "minimal" | "low" | "medium" | "high" | "extended" | "max"
+    thinking_budget: int = 10000  # max thinking tokens (auto-set by level)
     # Anthropic server-side code execution (free with web search)
     code_execution: bool = False  # Enable Claude's sandboxed code execution
     # Anthropic memory tool (persistent /memories directory)

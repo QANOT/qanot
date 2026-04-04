@@ -311,6 +311,11 @@ async def main() -> None:
 
     _agent_ref.append(agent)
 
+    # Restore conversations from shutdown snapshot (if available)
+    restored = agent.load_snapshot()
+    if restored:
+        logger.info("Restored %d conversations from previous session", restored)
+
     # Load skills from workspace
     agent.load_skills(config.workspace_dir)
 
@@ -429,6 +434,13 @@ async def main() -> None:
     try:
         await telegram.start()
     finally:
+        # Save conversation snapshots before shutdown
+        try:
+            saved = agent.save_snapshot()
+            if saved:
+                logger.info("Saved %d conversation snapshots for next startup", saved)
+        except Exception as e:
+            logger.warning("Failed to save conversation snapshots: %s", e)
         # Fire shutdown hooks
         await agent_hooks.fire("on_shutdown")
         # Cancel all running sub-agents gracefully

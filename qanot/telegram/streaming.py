@@ -34,7 +34,7 @@ class StreamingMixin:
         self._draft_counter += 1
         return self._draft_counter
 
-    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
+    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Stream response via sendMessageDraft → sendMessage."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         draft_id = self._next_draft_id()
@@ -76,9 +76,9 @@ class StreamingMixin:
         # Use accumulated stream text, fall back to done response content, then error message
         done_content = (done_response.content if done_response and done_response.content else "")
         final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
-        await self._send_final(chat_id, final_text, reply_to=reply_to)
+        await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
 
-    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
+    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         accumulated = ""
@@ -98,6 +98,8 @@ class StreamingMixin:
                                 send_kwargs: dict = {"chat_id": chat_id, "text": accumulated[:MAX_MSG_LEN]}
                                 if reply_to:
                                     send_kwargs["reply_to_message_id"] = reply_to
+                                if thread_id:
+                                    send_kwargs["message_thread_id"] = thread_id
                                 sent_msg_id = (await self.bot.send_message(**send_kwargs)).message_id
                             except Exception as e:
                                 logger.warning("Partial send failed: %s", e)
@@ -131,18 +133,18 @@ class StreamingMixin:
                 logger.debug("Final partial edit failed: %s", e)
             if len(html) > MAX_MSG_LEN:
                 for chunk in _split_text(html[MAX_MSG_LEN:]):
-                    await self._send_final_chunk(chat_id, chunk)
+                    await self._send_final_chunk(chat_id, chunk, thread_id=thread_id)
         else:
-            await self._send_final(chat_id, final_text, reply_to=reply_to)
+            await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
 
-    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None) -> None:
+    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
             response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id)
         finally:
             typing_task.cancel()
-        await self._send_final(chat_id, response or "(No response)", reply_to=reply_to)
+        await self._send_final(chat_id, response or "(No response)", reply_to=reply_to, thread_id=thread_id)
 
     # ── Low-level send methods ───────────────────────────────
 
@@ -157,7 +159,7 @@ class StreamingMixin:
         except Exception as e:
             logger.debug("sendMessageDraft failed: %s", e)
 
-    async def _send_final(self, chat_id: int, text: str, *, reply_to: int | None = None) -> None:
+    async def _send_final(self, chat_id: int, text: str, *, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Send the final formatted message, splitting if needed."""
         if not text:
             return
@@ -165,14 +167,16 @@ class StreamingMixin:
         html = _md_to_html(text)
         chunks = _split_text(html)
         for i, chunk in enumerate(chunks):
-            await self._send_final_chunk(chat_id, chunk, reply_to=reply_to if i == 0 else None)
+            await self._send_final_chunk(chat_id, chunk, reply_to=reply_to if i == 0 else None, thread_id=thread_id)
             await asyncio.sleep(0.1)
 
-    async def _send_final_chunk(self, chat_id: int, html_chunk: str, *, reply_to: int | None = None) -> None:
+    async def _send_final_chunk(self, chat_id: int, html_chunk: str, *, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Send a single chunk with HTML fallback to plain text."""
         kwargs: dict = {"chat_id": chat_id, "text": html_chunk}
         if reply_to:
             kwargs["reply_to_message_id"] = reply_to
+        if thread_id:
+            kwargs["message_thread_id"] = thread_id
         try:
             await self.bot.send_message(**kwargs, parse_mode=ParseMode.HTML)
         except Exception as e:
@@ -227,6 +231,7 @@ class StreamingMixin:
             BotCommand(command="mode", description="Javob rejimi"),
             BotCommand(command="routing", description="Model routing on/off"),
             BotCommand(command="group", description="Guruh rejimi"),
+            BotCommand(command="topic", description="Topic-agent bog'lash"),
             BotCommand(command="exec", description="Xavfsizlik darajasi"),
             BotCommand(command="code", description="Code execution (sandbox)"),
             BotCommand(command="mcp", description="MCP serverlar"),
@@ -236,6 +241,7 @@ class StreamingMixin:
             BotCommand(command="context", description="Kontekst tafsilotlari"),
             BotCommand(command="config", description="Barcha sozlamalar"),
             BotCommand(command="reset", description="Suhbatni tozalash"),
+            BotCommand(command="resume", description="Oldingi suhbatni tiklash"),
             BotCommand(command="compact", description="Kontekstni siqish"),
             BotCommand(command="export", description="Sessiyani eksport"),
             BotCommand(command="stop", description="Amalni to'xtatish"),

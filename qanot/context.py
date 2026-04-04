@@ -529,8 +529,18 @@ class CostTracker:
                 "total_cost": 0.0,
                 "api_calls": 0,
                 "turns": 0,
+                "daily_cost": 0.0,
+                "daily_date": "",
             }
         return self._users[user_id]
+
+    def _reset_daily_if_needed(self, user: dict) -> None:
+        """Reset daily cost if the date has changed."""
+        from datetime import date
+        today = date.today().isoformat()
+        if user.get("daily_date") != today:
+            user["daily_cost"] = 0.0
+            user["daily_date"] = today
 
     def add_usage(
         self,
@@ -549,6 +559,36 @@ class CostTracker:
         u["cache_write_tokens"] += cache_write
         u["total_cost"] += cost
         u["api_calls"] += 1
+        # Daily tracking
+        self._reset_daily_if_needed(u)
+        u["daily_cost"] = u.get("daily_cost", 0.0) + cost
+
+    def check_budget(self, user_id: str, daily_budget: float) -> tuple[bool, float, float]:
+        """Check if user is within daily budget.
+
+        Returns (allowed, daily_spent, daily_budget).
+        If daily_budget <= 0, always allowed (unlimited).
+        """
+        if daily_budget <= 0:
+            return True, 0.0, 0.0
+        u = self._ensure_user(user_id)
+        self._reset_daily_if_needed(u)
+        spent = u.get("daily_cost", 0.0)
+        return spent < daily_budget, spent, daily_budget
+
+    def get_budget_warning(self, user_id: str, daily_budget: float, warning_pct: int = 80) -> str | None:
+        """Return a warning message if user is near budget limit. None if OK."""
+        if daily_budget <= 0:
+            return None
+        u = self._ensure_user(user_id)
+        self._reset_daily_if_needed(u)
+        spent = u.get("daily_cost", 0.0)
+        pct = (spent / daily_budget) * 100 if daily_budget > 0 else 0
+        if pct >= 100:
+            return f"Kunlik budget tugadi (${spent:.4f} / ${daily_budget:.2f}). Ertaga qayta urinib ko'ring."
+        if pct >= warning_pct:
+            return f"Kunlik budgetning {pct:.0f}% ishlatildi (${spent:.4f} / ${daily_budget:.2f})."
+        return None
 
     def add_turn(self, user_id: str) -> None:
         """Increment turn count for a user."""

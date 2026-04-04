@@ -30,8 +30,12 @@ OVERLOAD_COOLDOWN_SECONDS = 300
 
 # Thinking-level downgrade ladder: when a provider keeps failing, reduce thinking cost
 _THINKING_DOWNGRADE: dict[str, str] = {
+    "max": "high",
+    "extended": "high",
     "high": "low",
+    "medium": "low",
     "low": "off",
+    "minimal": "off",
 }
 
 

@@ -284,6 +284,18 @@ class Agent:
                 user_message = f"{user_message}\n\n---\n\n[COMPACTION RECOVERY]\n{recovery}"
                 logger.info("Compaction recovery injected")
 
+        # Session resume context: notify LLM that this is a resumed conversation
+        if self._conv_manager.is_restored(self._current_user_id):
+            n_msgs = len(messages)
+            if n_msgs > 0:
+                user_message = (
+                    f"{user_message}\n\n---\n"
+                    f"[SESSION RESUMED — {n_msgs} previous messages restored from last session. "
+                    f"Continue the conversation naturally without mentioning the restore.]"
+                )
+                logger.info("Session resume context injected (%d messages)", n_msgs)
+            self._conv_manager.clear_restored_flag(self._current_user_id)
+
         # Add user message to conversation (with images if present)
         if images:
             content: list[dict] = [{"type": "text", "text": user_message}]
@@ -489,11 +501,24 @@ class Agent:
         user_message: str,
         messages: list[dict],
         usage: Usage,
-    ) -> None:
-        """Shared end-turn handling: append message, log, buffer, daily note."""
+    ) -> str:
+        """Shared end-turn handling: append message, log, buffer, daily note.
+
+        Returns final_text (possibly with budget warning appended).
+        """
         messages.append({"role": "assistant", "content": final_text})
         # Persist per-user cost data
         self.cost_tracker.save()
+
+        # Budget warning check
+        if self._current_user_id and self.config.daily_budget_usd > 0:
+            warning = self.cost_tracker.get_budget_warning(
+                self._current_user_id,
+                self.config.daily_budget_usd,
+                self.config.budget_warning_pct,
+            )
+            if warning:
+                final_text = f"{final_text}\n\n---\n\u26a0\ufe0f {warning}"
 
         self.session.log_assistant_message(
             text=final_text,
@@ -512,6 +537,7 @@ class Agent:
             self.config.workspace_dir,
             user_id=str(self._current_user_id),
         )
+        return final_text
 
     async def _call_provider_with_retry(
         self,
@@ -580,6 +606,16 @@ class Agent:
         """
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
+            # Budget enforcement: reject if daily limit exceeded
+            if user_id and self.config.daily_budget_usd > 0:
+                allowed, spent, budget = self.cost_tracker.check_budget(
+                    str(user_id), self.config.daily_budget_usd,
+                )
+                if not allowed:
+                    return (
+                        f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
+                        f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+                    )
             return await self._run_turn_impl(user_message, user_id, images=images)
 
     async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None) -> str:
@@ -685,7 +721,7 @@ class Agent:
 
             elif response.stop_reason == "end_turn":
                 final_text = response.content
-                self._handle_end_turn(final_text, user_message, messages, response.usage)
+                final_text = self._handle_end_turn(final_text, user_message, messages, response.usage)
                 break
             else:
                 final_text = response.content or "(No response)"
@@ -719,6 +755,18 @@ class Agent:
         """
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
+            # Budget enforcement: reject if daily limit exceeded
+            if user_id and self.config.daily_budget_usd > 0:
+                allowed, spent, budget = self.cost_tracker.check_budget(
+                    str(user_id), self.config.daily_budget_usd,
+                )
+                if not allowed:
+                    msg = (
+                        f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
+                        f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+                    )
+                    yield StreamEvent(type="done", response=ProviderResponse(content=msg))
+                    return
             async for event in self._run_turn_stream_impl(user_message, user_id, images=images):
                 yield event
 
@@ -883,7 +931,7 @@ class Agent:
             elif stop_reason == "end_turn":
                 final_text = response.content if response else "".join(text_parts)
                 usage = response.usage if response else Usage()
-                self._handle_end_turn(final_text, user_message, messages, usage)
+                final_text = self._handle_end_turn(final_text, user_message, messages, usage)
 
                 # Lifecycle hooks: post-turn
                 modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
@@ -911,6 +959,34 @@ class Agent:
             self._remove_user_state(user_id)
         else:
             self._conv_manager.clear_all()
+
+    # ── Snapshot persistence ──────────────────────────────
+
+    def save_snapshot(self) -> int:
+        """Save all active conversations to disk (call on shutdown).
+
+        Returns number of conversations saved.
+        """
+        return self._conv_manager.save_snapshot(self.config.sessions_dir)
+
+    def load_snapshot(self) -> int:
+        """Load conversations from shutdown snapshot (call on startup).
+
+        Returns number of conversations restored.
+        """
+        return self._conv_manager.load_snapshot(self.config.sessions_dir)
+
+    def restore_user_session(self, user_id: str) -> int:
+        """Explicitly restore a user's session from JSONL history.
+
+        Returns the number of messages restored.
+        Used by /resume command.
+        """
+        # Clear existing conversation first
+        self._conv_manager.remove(user_id)
+        # Force restore from JSONL
+        messages = self._get_messages(user_id)
+        return len(messages)
 
 
 async def spawn_isolated_agent(
