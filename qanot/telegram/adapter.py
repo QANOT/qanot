@@ -62,6 +62,7 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._pending_approvals: dict[str, dict] = {}
         from qanot.ratelimit import RateLimiter
         self._rate_limiter = RateLimiter()
+        self.voicecall_manager = None  # Set by main.py if voicecall_enabled
 
     def _setup_handlers(self) -> None:
         @self.dp.message(F.text == "/start")
@@ -147,6 +148,18 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         @self.dp.message(F.text.startswith("/id"))
         async def handle_id(message: Message) -> None:
             await self._handle_id(message)
+
+        @self.dp.message(F.text.startswith("/joincall"))
+        async def handle_joincall(message: Message) -> None:
+            await self._handle_joincall(message)
+
+        @self.dp.message(F.text.startswith("/leavecall"))
+        async def handle_leavecall(message: Message) -> None:
+            await self._handle_leavecall(message)
+
+        @self.dp.message(F.text.startswith("/callstatus"))
+        async def handle_callstatus(message: Message) -> None:
+            await self._handle_callstatus(message)
 
         @self.dp.message(F.text.startswith("/stop"))
         async def handle_stop(message: Message) -> None:

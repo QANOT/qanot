@@ -341,6 +341,9 @@ class HandlersMixin:
             "/resume \u2014 Oldingi suhbatni tiklash\n"
             "/compact \u2014 Kontekstni siqish\n"
             "/export \u2014 Sessiyani eksport qilish\n"
+            "/joincall \u2014 Ovozli suhbatga qo'shilish\n"
+            "/leavecall \u2014 Ovozli suhbatdan chiqish\n"
+            "/callstatus \u2014 Qo'ng'iroq holati\n"
             "/stop \u2014 Joriy amalni to'xtatish\n\n"
             "**Sozlamalar:**\n"
             "/model \u2014 Model tanlash\n"
@@ -749,6 +752,72 @@ class HandlersMixin:
                 f"Mavjud agentlar: {agent_ids}",
                 thread_id=thread_id,
             )
+
+    # ── /joincall ─────────────────────────────────────────
+
+    async def _handle_joincall(self, message: "Message") -> None:
+        """Handle /joincall — join the group's voice chat as AI participant."""
+        access = self._check_command_access(message)
+        if not access:
+            return
+        user_id, conv_key = access
+
+        vcm = getattr(self, "voicecall_manager", None)
+        if not vcm:
+            await self._send_final(
+                message.chat.id,
+                "Voice call o'chirilgan. Config'da `voicecall_enabled: true` qiling.",
+            )
+            return
+
+        if not self._is_group_chat(message):
+            await self._send_final(message.chat.id, "Bu buyruq faqat guruhlarda ishlaydi.")
+            return
+
+        status = await vcm.join_call(message.chat.id, user_id)
+        await self._send_final(message.chat.id, status)
+
+    # ── /leavecall ────────────────────────────────────────
+
+    async def _handle_leavecall(self, message: "Message") -> None:
+        """Handle /leavecall — leave the voice chat."""
+        if not self._check_command_access(message):
+            return
+
+        vcm = getattr(self, "voicecall_manager", None)
+        if not vcm:
+            await self._send_final(message.chat.id, "Voice call o'chirilgan.")
+            return
+
+        status = await vcm.leave_call(message.chat.id)
+        await self._send_final(message.chat.id, status)
+
+    # ── /callstatus ───────────────────────────────────────
+
+    async def _handle_callstatus(self, message: "Message") -> None:
+        """Handle /callstatus — show active voice call info."""
+        if not self._check_command_access(message):
+            return
+
+        vcm = getattr(self, "voicecall_manager", None)
+        if not vcm:
+            await self._send_final(message.chat.id, "Voice call o'chirilgan.")
+            return
+
+        active = vcm._active_calls
+        if not active:
+            await self._send_final(message.chat.id, "Hozir faol qo'ng'iroqlar yo'q.")
+            return
+
+        import time as _time
+        lines = ["**Faol qo'ng'iroqlar:**"]
+        for cid, session in active.items():
+            elapsed = int(_time.monotonic() - session.started_at)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            speaking = " (gapirmoqda)" if session.is_speaking else ""
+            lines.append(f"  Chat `{cid}`: {minutes}:{seconds:02d}{speaking}")
+        await self._send_final(message.chat.id, "\n".join(lines))
 
     # ── /exec ─────────────────────────────────────────────
 

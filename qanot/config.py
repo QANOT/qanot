@@ -174,6 +174,17 @@ class Config:
     webchat_token: str = ""
     webchat_origins: list[str] = field(default_factory=list)
     webchat_max_sessions: int = 50
+    # Voice Call (Telegram voice chat via py-tgcalls, requires userbot)
+    voicecall_enabled: bool = False  # Master switch (disabled by default)
+    voicecall_api_id: int = 0  # Telegram API ID (from my.telegram.org)
+    voicecall_api_hash: str = ""  # Telegram API hash
+    voicecall_session: str = ""  # Pyrogram session string (base64, from initial auth)
+    voicecall_vad_threshold: float = 0.5  # Silero VAD speech probability threshold
+    voicecall_silence_ms: int = 400  # Silence duration (ms) to end speech segment
+    voicecall_min_speech_ms: int = 250  # Min speech duration (ms) to process (filters coughs)
+    voicecall_max_calls: int = 3  # Max simultaneous voice calls
+    voicecall_auto_leave_minutes: int = 30  # Auto-leave after N minutes of no speech
+    voicecall_barge_in: bool = True  # Allow user to interrupt bot speech
 
     def get_voice_api_key(self, provider: str | None = None) -> str:
         """Get API key for the given voice provider, with fallback to default."""
@@ -280,6 +291,7 @@ def load_config(path: str | None = None) -> Config:
         'image_api_key', 'webhook_url', 'base_url',
         'soul_path', 'tools_path', 'workspace_dir', 'sessions_dir',
         'cron_dir', 'plugins_dir',
+        'voicecall_api_hash', 'voicecall_session',
     }
     for key, value in simple.items():
         if isinstance(value, str) and key in _SENSITIVE_FIELDS:

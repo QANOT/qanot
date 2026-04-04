@@ -428,12 +428,35 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Dashboard failed to start: %s", e)
 
+    # Start voice call manager (Pyrogram + py-tgcalls userbot)
+    voicecall_manager = None
+    if config.voicecall_enabled:
+        try:
+            from qanot.voicecall import VoiceCallManager
+            voicecall_manager = VoiceCallManager(config=config, agent=agent)
+            await voicecall_manager.start()
+            telegram.voicecall_manager = voicecall_manager
+            logger.info("Voice call manager started (py-tgcalls)")
+        except ImportError:
+            logger.warning(
+                "Voice call dependencies not installed. "
+                "Install with: pip install qanot[voicecall]"
+            )
+        except Exception as e:
+            logger.warning("Voice call manager failed to start: %s", e)
+
     # Fire startup hooks
     await agent_hooks.fire("on_startup")
 
     try:
         await telegram.start()
     finally:
+        # Stop voice call manager
+        if voicecall_manager:
+            try:
+                await voicecall_manager.stop()
+            except Exception as e:
+                logger.warning("Error stopping voice call manager: %s", e)
         # Save conversation snapshots before shutdown
         try:
             saved = agent.save_snapshot()
