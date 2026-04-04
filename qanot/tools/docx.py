@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
-
 from qanot.registry import ToolRegistry
+from qanot.tools.doc_helpers import resolve_doc_path, resolve_doc_path_existing
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +82,14 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
                                 run.bold = True
 
         # Save
-        filepath = Path(workspace_dir) / filename
-        doc.save(str(filepath))
+        path, error = resolve_doc_path({"file": filename}, workspace_dir)
+        if error:
+            return error
+        doc.save(str(path))
 
         return json.dumps({
             "status": "ok",
-            "file": str(filepath),
+            "file": str(path),
             "filename": filename,
             "message": f"{filename} yaratildi",
         })
@@ -101,13 +102,9 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "python-docx kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         doc = Document(str(path))
         content = []
@@ -149,13 +146,9 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "python-docx kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         doc = Document(str(path))
         action = params.get("action", "append")  # append, replace, add_table
@@ -207,9 +200,9 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="create_docx",
         description=(
-            "Word (.docx) hujjat yaratish. Shartnoma, hisobot, taklifnoma va boshqa hujjatlar uchun. "
-            "Markdown formatda content yozing: # sarlavha, ## kichik sarlavha, **qalin**, - ro'yxat. "
-            "Jadval uchun rows parametrini ishlating."
+            "Create a Word (.docx) document. For contracts, reports, proposals, etc. "
+            "Write content in Markdown format: # heading, ## subheading, **bold**, - list. "
+            "Use rows parameter for tables."
         ),
         parameters={
             "type": "object",
@@ -230,7 +223,7 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
 
     registry.register(
         name="read_docx",
-        description="Word (.docx) hujjatni o'qish. Matn, sarlavhalar, jadvallarni qaytaradi.",
+        description="Read a Word (.docx) document. Returns text, headings, and tables.",
         parameters={
             "type": "object",
             "required": ["file"],
@@ -244,8 +237,8 @@ def register_docx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="edit_docx",
         description=(
-            "Word (.docx) hujjatni tahrirlash. Matn qo'shish (append), "
-            "almashtirish (replace), jadval qo'shish (add_table)."
+            "Edit a Word (.docx) document. Append text (append), "
+            "replace text (replace), or add a table (add_table)."
         ),
         parameters={
             "type": "object",

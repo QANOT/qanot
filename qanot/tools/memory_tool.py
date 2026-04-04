@@ -14,6 +14,7 @@ trained behavior — they can still use it when the agent decides to.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -179,7 +180,7 @@ def register_memory_tool(
         elif command == "rename":
             return _handle_rename(memories_dir, params)
         else:
-            return f"Unknown memory command: {command}"
+            return json.dumps({"error": f"Unknown memory command: {command}"})
 
     registry.register(
         name=MEMORY_TOOL_NAME,
@@ -250,16 +251,18 @@ def _handle_view(memories_dir: Path, params: dict) -> str:
     path_str = params.get("path", "/memories")
     target = _resolve_safe(memories_dir, path_str)
     if target is None:
-        return f"The path {path_str} does not exist. Please provide a valid path."
+        return json.dumps({"error": f"The path {path_str} does not exist. Please provide a valid path."})
 
     if not target.exists():
-        return f"The path {path_str} does not exist. Please provide a valid path."
+        return json.dumps({"error": f"The path {path_str} does not exist. Please provide a valid path."})
 
     if target.is_dir():
-        return _format_dir_listing(target, memories_dir)
+        listing = _format_dir_listing(target, memories_dir)
+        return json.dumps({"success": True, "action": "view", "path": path_str, "content": listing})
     else:
         view_range = params.get("view_range")
-        return _format_file_content(target, view_range)
+        content = _format_file_content(target, view_range)
+        return json.dumps({"success": True, "action": "view", "path": path_str, "content": content})
 
 
 def _handle_create(memories_dir: Path, params: dict) -> str:
@@ -267,18 +270,18 @@ def _handle_create(memories_dir: Path, params: dict) -> str:
     file_text = params.get("file_text", "")
 
     if not path_str:
-        return "Error: path is required for create command"
+        return json.dumps({"error": "path is required for create command"})
 
     target = _resolve_safe(memories_dir, path_str)
     if target is None:
-        return f"Error: invalid path {path_str}"
+        return json.dumps({"error": f"Invalid path {path_str}"})
 
     if target.exists():
-        return f"Error: File {path_str} already exists"
+        return json.dumps({"error": f"File {path_str} already exists"})
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(file_text, encoding="utf-8")
-    return f"File created successfully at: {path_str}"
+    return json.dumps({"success": True, "action": "created", "path": path_str, "message": f"File created successfully at: {path_str}"})
 
 
 def _handle_str_replace(memories_dir: Path, params: dict) -> str:
@@ -288,25 +291,22 @@ def _handle_str_replace(memories_dir: Path, params: dict) -> str:
 
     target = _resolve_safe(memories_dir, path_str)
     if target is None or not target.exists() or target.is_dir():
-        return f"Error: The path {path_str} does not exist. Please provide a valid path."
+        return json.dumps({"error": f"The path {path_str} does not exist. Please provide a valid path."})
 
     content = target.read_text(encoding="utf-8")
     count = content.count(old_str)
 
     if count == 0:
-        return f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {path_str}."
+        return json.dumps({"error": f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {path_str}."})
 
     if count > 1:
         lines = content.splitlines()
         line_nums = [i + 1 for i, line in enumerate(lines) if old_str in line]
-        return (
-            f"No replacement was performed. Multiple occurrences of old_str "
-            f"`{old_str}` in lines: {line_nums}. Please ensure it is unique"
-        )
+        return json.dumps({"error": f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines: {line_nums}. Please ensure it is unique"})
 
     new_content = content.replace(old_str, new_str, 1)
     target.write_text(new_content, encoding="utf-8")
-    return "The memory file has been edited."
+    return json.dumps({"success": True, "action": "edited", "path": path_str, "message": "The memory file has been edited."})
 
 
 def _handle_insert(memories_dir: Path, params: dict) -> str:
@@ -316,16 +316,13 @@ def _handle_insert(memories_dir: Path, params: dict) -> str:
 
     target = _resolve_safe(memories_dir, path_str)
     if target is None or not target.exists() or target.is_dir():
-        return f"Error: The path {path_str} does not exist"
+        return json.dumps({"error": f"The path {path_str} does not exist"})
 
     lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
     n_lines = len(lines)
 
     if insert_line < 0 or insert_line > n_lines:
-        return (
-            f"Error: Invalid `insert_line` parameter: {insert_line}. "
-            f"It should be within the range of lines of the file: [0, {n_lines}]"
-        )
+        return json.dumps({"error": f"Invalid `insert_line` parameter: {insert_line}. It should be within the range of lines of the file: [0, {n_lines}]"})
 
     # Insert at the specified line
     insert_lines = insert_text.splitlines(keepends=True)
@@ -334,7 +331,7 @@ def _handle_insert(memories_dir: Path, params: dict) -> str:
 
     new_lines = lines[:insert_line] + insert_lines + lines[insert_line:]
     target.write_text("".join(new_lines), encoding="utf-8")
-    return f"The file {path_str} has been edited."
+    return json.dumps({"success": True, "action": "edited", "path": path_str, "message": f"The file {path_str} has been edited."})
 
 
 def _handle_delete(memories_dir: Path, params: dict) -> str:
@@ -342,10 +339,10 @@ def _handle_delete(memories_dir: Path, params: dict) -> str:
 
     target = _resolve_safe(memories_dir, path_str)
     if target is None or not target.exists():
-        return f"Error: The path {path_str} does not exist"
+        return json.dumps({"error": f"The path {path_str} does not exist"})
 
     if target == memories_dir.resolve():
-        return "Error: Cannot delete the memories root directory"
+        return json.dumps({"error": "Cannot delete the memories root directory"})
 
     if target.is_dir():
         import shutil
@@ -353,7 +350,7 @@ def _handle_delete(memories_dir: Path, params: dict) -> str:
     else:
         target.unlink()
 
-    return f"Successfully deleted {path_str}"
+    return json.dumps({"success": True, "action": "deleted", "path": path_str, "message": f"Successfully deleted {path_str}"})
 
 
 def _handle_rename(memories_dir: Path, params: dict) -> str:
@@ -364,14 +361,14 @@ def _handle_rename(memories_dir: Path, params: dict) -> str:
     new_target = _resolve_safe(memories_dir, new_path_str)
 
     if old_target is None or not old_target.exists():
-        return f"Error: The path {old_path_str} does not exist"
+        return json.dumps({"error": f"The path {old_path_str} does not exist"})
 
     if new_target is None:
-        return f"Error: Invalid destination path {new_path_str}"
+        return json.dumps({"error": f"Invalid destination path {new_path_str}"})
 
     if new_target.exists():
-        return f"Error: The destination {new_path_str} already exists"
+        return json.dumps({"error": f"The destination {new_path_str} already exists"})
 
     new_target.parent.mkdir(parents=True, exist_ok=True)
     old_target.rename(new_target)
-    return f"Successfully renamed {old_path_str} to {new_path_str}"
+    return json.dumps({"success": True, "action": "renamed", "old_path": old_path_str, "new_path": new_path_str, "message": f"Successfully renamed {old_path_str} to {new_path_str}"})

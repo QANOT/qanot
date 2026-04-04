@@ -95,7 +95,7 @@ _OVERFLOW_PATTERNS = [
     "prompt is too long",
     "exceeds model context window",
     "too many tokens",
-    "max_tokens",
+    "max_tokens` exceed",
     "token limit",
     "content would exceed",
 ]

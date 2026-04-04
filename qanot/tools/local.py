@@ -64,7 +64,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="currency_rate",
-        description="Bugungi valyuta kurslari (CBU rasmiy). Dollar, yevro, rubl va boshqa valyutalar.",
+        description="Get today's official currency exchange rates from CBU (Central Bank of Uzbekistan). USD, EUR, RUB, and more.",
         parameters={
             "type": "object",
             "properties": {
@@ -113,7 +113,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="ikpu_search",
-        description="IKPU (MXIK) tovar klassifikator kodini qidirish. Tovar nomi bo'yicha 17 raqamli IKPU kod topadi.",
+        description="Search IKPU (MXIK) product classification codes. Finds 17-digit IKPU codes by product name.",
         parameters={
             "type": "object",
             "required": ["query"],
@@ -183,7 +183,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="payment_link",
-        description="Click yoki Payme to'lov havolasi yaratish. Mijozga yuborish uchun to'lov link.",
+        description="Generate a Click or Payme payment link to send to customers.",
         parameters={
             "type": "object",
             "required": ["amount"],
@@ -299,7 +299,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="tax_calculator",
-        description="Soliq va biznes kalkulyator: QQS (12%), aylanma soliq (4%), ustama (markup), nasiya (bo'lib to'lash).",
+        description="Tax and business calculator: VAT (12%), turnover tax (4%), markup, installment payments.",
         parameters={
             "type": "object",
             "required": ["amount"],
@@ -597,7 +597,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="generate_document",
-        description="Rasmiy biznes hujjat yaratish (20 tur). Shartnomalar: shartnoma, oldi_sotdi, yetkazib_berish, ijara, mehnat, pudrat, xizmat, nda. Hujjatlar: faktura, dalolatnoma, qabul_topshirish, solishtirma, ishonchnoma, talabnoma, tijorat_taklifi. HR: buyruq_t1, buyruq_t6, buyruq_t8, ariza, tushuntirish_xati. O'zR qonunchiligiga mos.",
+        description="Generate official business documents (20 types). Contracts: shartnoma, oldi_sotdi, yetkazib_berish, ijara, mehnat, pudrat, xizmat, nda. Documents: faktura, dalolatnoma, qabul_topshirish, solishtirma, ishonchnoma, talabnoma, tijorat_taklifi. HR: buyruq_t1, buyruq_t6, buyruq_t8, ariza, tushuntirish_xati. Compliant with Uzbekistan law.",
         parameters={
             "type": "object",
             "required": ["type", "company", "counterparty"],
@@ -755,7 +755,7 @@ def register_local_tools(registry: ToolRegistry) -> None:
 
     registry.register(
         name="weather",
-        description="Ob-havo ma'lumoti — bugungi va ertangi havo, harorat, shamol, namlik.",
+        description="Weather information — today's and tomorrow's forecast, temperature, wind, humidity.",
         parameters={
             "type": "object",
             "properties": {

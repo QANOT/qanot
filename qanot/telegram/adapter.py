@@ -191,16 +191,12 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         return user_id in self.config.allowed_users
 
     def _save_owner(self, user_id: int) -> None:
-        """Persist the auto-owner to config.json."""
+        """Persist the auto-owner to config.json (atomic)."""
         try:
-            config_path = Path(os.environ.get("QANOT_CONFIG", "config.json"))
-            if config_path.exists():
-                raw = json.loads(config_path.read_text(encoding="utf-8"))
-                raw["allowed_users"] = [user_id]
-                config_path.write_text(
-                    json.dumps(raw, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+            from qanot.config import read_config_json, write_config_json
+            raw = read_config_json()
+            raw["allowed_users"] = [user_id]
+            write_config_json(raw)
         except Exception as e:
             logger.warning("Failed to save auto-owner: %s", e)
 

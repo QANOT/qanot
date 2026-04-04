@@ -108,7 +108,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="browse_url",
-        description="Brauzerda URL ochish va sahifa mazmunini olish. Dinamik saytlar uchun (JS rendering kerak bo'lganda).",
+        description="Open a URL in a headless browser and return page content. For dynamic sites requiring JS rendering.",
         parameters={
             "type": "object",
             "required": ["url"],
@@ -157,7 +157,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="click_element",
-        description="Sahifadagi elementni bosish (link, tugma). CSS selector yoki matn orqali.",
+        description="Click an element on the current page by CSS selector or visible text.",
         parameters={
             "type": "object",
             "properties": {
@@ -205,7 +205,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="fill_form",
-        description="Formani to'ldirish. Har bir maydon uchun CSS selector va qiymat bering.",
+        description="Fill form fields on the current page. Provide CSS selector and value for each field.",
         parameters={
             "type": "object",
             "required": ["fields"],
@@ -264,7 +264,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="screenshot",
-        description="Joriy sahifaning screenshot olish. Foydalanuvchiga send_file orqali yuborish mumkin.",
+        description="Take a screenshot of the current page. Can be sent to user via send_file.",
         parameters={
             "type": "object",
             "properties": {
@@ -314,7 +314,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="extract_data",
-        description="Sahifadan ma'lumot ajratib olish. CSS selector bilan element mazmuni yoki atributini olish.",
+        description="Extract data from the current page. Get element text content or attributes by CSS selector.",
         parameters={
             "type": "object",
             "properties": {
@@ -341,7 +341,7 @@ def register_browser_tools(registry, workspace_dir: str) -> None:
 
     registry.register(
         name="browser_back",
-        description="Brauzerda orqaga qaytish.",
+        description="Go back in browser history.",
         parameters={"type": "object", "properties": {}},
         handler=browser_back,
         category="browser",

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-
 from qanot.registry import ToolRegistry
+from qanot.tools.doc_helpers import resolve_doc_path, resolve_doc_path_existing
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +103,14 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
             ws.title = title or "Sheet1"
             _fill_sheet(ws, headers or [], rows or [], title)
 
-        filepath = Path(workspace_dir) / filename
-        wb.save(str(filepath))
+        path, error = resolve_doc_path({"file": filename}, workspace_dir)
+        if error:
+            return error
+        wb.save(str(path))
 
         return json.dumps({
             "status": "ok",
-            "file": str(filepath),
+            "file": str(path),
             "filename": filename,
             "message": f"{filename} yaratildi",
         })
@@ -122,13 +123,9 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "openpyxl kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         wb = load_workbook(str(path), read_only=True, data_only=True)
         sheet_name = params.get("sheet")  # None = active sheet
@@ -158,13 +155,9 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "openpyxl kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         wb = load_workbook(str(path))
         sheet_name = params.get("sheet")
@@ -199,9 +192,9 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="create_xlsx",
         description=(
-            "Excel (.xlsx) jadval yaratish. Hisobot, ro'yxat, statistika uchun. "
-            "headers va rows bering — chiroyli formatlanadi. "
-            "Ko'p sahifali Excel uchun sheets parametrini ishlating."
+            "Create an Excel (.xlsx) spreadsheet. For reports, lists, statistics. "
+            "Provide headers and rows — auto-formatted with styling. "
+            "Use sheets parameter for multi-sheet workbooks."
         ),
         parameters={
             "type": "object",
@@ -231,7 +224,7 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
 
     registry.register(
         name="read_xlsx",
-        description="Excel (.xlsx) fayldan ma'lumot o'qish. Barcha qatorlar va ustunlarni qaytaradi.",
+        description="Read data from an Excel (.xlsx) file. Returns all rows and columns.",
         parameters={
             "type": "object",
             "required": ["file"],
@@ -246,8 +239,8 @@ def register_xlsx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="edit_xlsx",
         description=(
-            "Excel (.xlsx) faylni tahrirlash. Qator qo'shish (append_rows), "
-            "katak yangilash (update_cell), yangi sahifa (add_sheet)."
+            "Edit an Excel (.xlsx) file. Append rows (append_rows), "
+            "update a cell (update_cell), or add a new sheet (add_sheet)."
         ),
         parameters={
             "type": "object",

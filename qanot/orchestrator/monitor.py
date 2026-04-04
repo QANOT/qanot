@@ -130,16 +130,13 @@ async def handle_set_monitor_group(config: Config, params: dict) -> str:
 
     config.monitor_group_id = group_id_int
 
-    # Persist to config.json
-    config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
-    p = Path(config_path)
+    # Persist to config.json (atomic, best-effort)
     try:
-        if p.exists():
-            raw = json.loads(p.read_text(encoding="utf-8"))
+        from qanot.config import get_config_path, read_config_json, write_config_json
+        if Path(get_config_path()).exists():
+            raw = read_config_json()
             raw["monitor_group_id"] = config.monitor_group_id
-            tmp_path = p.with_suffix(".tmp")
-            tmp_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
-            tmp_path.replace(p)
+            write_config_json(raw)
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to persist monitor_group_id to config: %s", e)
         return json.dumps({

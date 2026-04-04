@@ -30,16 +30,12 @@ class HandlersMixin:
     # ── Config persistence helper ─────────────────────────
 
     def _save_config_field(self, field: str, value) -> None:
-        """Persist a single config field change to config.json."""
+        """Persist a single config field change to config.json (atomic)."""
         try:
-            config_path = Path(os.environ.get("QANOT_CONFIG", "config.json"))
-            if config_path.exists():
-                raw = json.loads(config_path.read_text(encoding="utf-8"))
-                raw[field] = value
-                config_path.write_text(
-                    json.dumps(raw, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+            from qanot.config import read_config_json, write_config_json
+            raw = read_config_json()
+            raw[field] = value
+            write_config_json(raw)
         except Exception as e:
             logger.warning("Failed to save config field %s: %s", field, e)
 

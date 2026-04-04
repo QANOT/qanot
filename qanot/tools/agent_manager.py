@@ -54,16 +54,14 @@ _DEFAULT_FIELDS: dict[str, int] = {"max_iterations": 15, "timeout": 120}
 
 
 def _save_agents_to_config(config: "Config") -> None:
-    """Persist current agents list to config.json."""
-    config_path = os.environ.get("QANOT_CONFIG", "/data/config.json")
-    p = Path(config_path)
-    if not p.exists():
-        logger.warning("Config file not found at %s, cannot persist agents", config_path)
+    """Persist current agents list to config.json (atomic)."""
+    from qanot.config import read_config_json, write_config_json
+
+    try:
+        raw = read_config_json()
+    except FileNotFoundError:
+        logger.warning("Config file not found, cannot persist agents")
         return
-
-    raw = json.loads(p.read_text(encoding="utf-8"))
-
-    # Serialize agents
 
     agents_data = []
     for ad in config.agents:
@@ -79,7 +77,7 @@ def _save_agents_to_config(config: "Config") -> None:
         agents_data.append(agent_dict)
 
     raw["agents"] = agents_data
-    p.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_config_json(raw)
     logger.info("Saved %d agents to config.json", len(agents_data))
 
 
@@ -377,10 +375,10 @@ def register_agent_manager_tools(
     registry.register(
         name="create_agent",
         description=(
-            "Yangi agent yaratish — o'z Telegram boti, modeli, shaxsiyati bilan. "
-            "Cheklov yo'q — xohlagancha agent yarating. "
-            "bot_token bersangiz, alohida Telegram bot sifatida ishlaydi. "
-            "Bermasangiz, ichki agent sifatida delegate_to_agent orqali ishlaydi."
+            "Create a new agent with its own Telegram bot, model, and personality. "
+            "No limits — create as many agents as needed. "
+            "With bot_token: runs as a separate Telegram bot. "
+            "Without bot_token: runs as an internal agent via delegate_to_agent."
         ),
         parameters={
             "type": "object",
@@ -433,8 +431,8 @@ def register_agent_manager_tools(
     registry.register(
         name="update_agent",
         description=(
-            "Mavjud agentni yangilash — nomi, prompti, modeli, bot tokeni va boshqalarni o'zgartirish. "
-            "Faqat o'zgartirmoqchi bo'lgan maydonlarni bering."
+            "Update an existing agent — change name, prompt, model, bot token, etc. "
+            "Only provide the fields you want to change."
         ),
         parameters={
             "type": "object",
@@ -466,7 +464,7 @@ def register_agent_manager_tools(
 
     registry.register(
         name="delete_agent",
-        description="Agentni o'chirish. Agar Telegram boti bo'lsa, to'xtatiladi.",
+        description="Delete an agent. If it has a running Telegram bot, the bot will be stopped.",
         parameters={
             "type": "object",
             "required": ["id"],
@@ -484,9 +482,9 @@ def register_agent_manager_tools(
     registry.register(
         name="restart_self",
         description=(
-            "Botni qayta ishga tushirish (self-restart). "
-            "Yangi agentlar, konfiguratsiya o'zgarishlari yoki xatoliklardan keyin ishlatiladi. "
-            "Bot 2 soniyada qayta boshlanadi — systemd avtomatik qayta tiklaydi."
+            "Restart the bot process (self-restart). "
+            "Use after new agents, config changes, or errors. "
+            "Bot restarts in 2 seconds — systemd/daemon auto-respawns."
         ),
         parameters={
             "type": "object",

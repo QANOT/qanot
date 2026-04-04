@@ -132,7 +132,7 @@ def register_cron_tools(
 
     registry.register(
         name="cron_list",
-        description="Barcha rejali ishlar ro'yxati.",
+        description="List all scheduled jobs and reminders.",
         parameters={"type": "object", "properties": {}},
         handler=cron_list,
         category="cron",
@@ -157,7 +157,7 @@ def register_cron_tools(
 
     registry.register(
         name="cron_delete",
-        description="Rejali ishni o'chirish.",
+        description="Delete a scheduled job by name.",
         parameters={
             "type": "object",
             "required": ["name"],
@@ -213,7 +213,7 @@ def register_cron_tools(
 
     registry.register(
         name="cron_update",
-        description="Rejali ishni yangilash.",
+        description="Update an existing scheduled job (schedule, mode, prompt, enabled).",
         parameters={
             "type": "object",
             "required": ["name"],

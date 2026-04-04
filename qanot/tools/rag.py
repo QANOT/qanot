@@ -116,7 +116,7 @@ def register_rag_tools(
 
     registry.register(
         name="rag_index",
-        description="Faylni RAG indeksiga qo'shish. Workspace ichidagi .txt, .md, .csv, .pdf fayllarni qo'llab-quvvatlaydi.",
+        description="Index a file into the RAG knowledge base. Supports .txt, .md, .csv, .pdf files within workspace.",
         parameters={
             "type": "object",
             "required": ["path"],
@@ -164,7 +164,7 @@ def register_rag_tools(
 
     registry.register(
         name="rag_search",
-        description="Indekslangan hujjatlardan qidirish (semantik + kalit so'z).",
+        description="Search indexed documents using semantic + keyword hybrid search.",
         parameters={
             "type": "object",
             "required": ["query"],
@@ -186,7 +186,7 @@ def register_rag_tools(
 
     registry.register(
         name="rag_list",
-        description="Indekslangan hujjatlar ro'yxati.",
+        description="List all indexed documents in the RAG knowledge base.",
         parameters={"type": "object", "properties": {}},
         handler=rag_list,
         category="rag",
@@ -212,7 +212,7 @@ def register_rag_tools(
 
     registry.register(
         name="rag_forget",
-        description="Hujjatni RAG indeksidan o'chirish.",
+        description="Remove a document from the RAG index.",
         parameters={
             "type": "object",
             "required": ["source"],

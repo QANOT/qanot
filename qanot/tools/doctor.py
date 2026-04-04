@@ -373,8 +373,8 @@ def register_doctor_tool(
     registry.register(
         name="doctor",
         description=(
-            "Tizim diagnostikasi — config, memory, context, provider, RAG, "
-            "sessions, disk holatini tekshiradi. Muammolarni aniqlaydi."
+            "System diagnostics — checks config, memory, context, provider, RAG, "
+            "sessions, and disk health. Identifies problems and warnings."
         ),
         parameters={"type": "object", "properties": {}},
         handler=doctor,

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-
 from qanot.registry import ToolRegistry
+from qanot.tools.doc_helpers import resolve_doc_path, resolve_doc_path_existing
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +105,14 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
                     pdf.cell(col_width, 7, str(cell), border=1)
                 pdf.ln()
 
-        filepath = Path(workspace_dir) / filename
-        pdf.output(str(filepath))
+        path, error = resolve_doc_path({"file": filename}, workspace_dir)
+        if error:
+            return error
+        pdf.output(str(path))
 
         return json.dumps({
             "status": "ok",
-            "file": str(filepath),
+            "file": str(path),
             "filename": filename,
             "message": f"{filename} yaratildi",
         })
@@ -124,13 +125,9 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "PyMuPDF kutubxonasi o'rnatilmagan. pip install PyMuPDF"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         doc = fitz.open(str(path))
         total_pages = len(doc)
@@ -168,10 +165,9 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "PyMuPDF kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         action = params.get("action", "add_page")
         doc = fitz.open(str(path))
@@ -214,11 +210,12 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
                 return json.dumps({"error": f"Sahifa {page_num + 1} topilmadi"})
 
         elif action == "merge":
-            merge_file = params.get("merge_file", "")
-            merge_path = Path(merge_file) if Path(merge_file).is_absolute() else Path(workspace_dir) / merge_file
-            if not merge_path.exists():
+            merge_path, merge_error = resolve_doc_path_existing(
+                params, workspace_dir, key="merge_file",
+            )
+            if merge_error:
                 doc.close()
-                return json.dumps({"error": f"Fayl topilmadi: {merge_file}"})
+                return merge_error
             doc2 = fitz.open(str(merge_path))
             doc.insert_pdf(doc2)
             doc2.close()
@@ -242,9 +239,9 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="create_pdf",
         description=(
-            "PDF hujjat yaratish. Shartnoma, hisobot, faktura uchun. "
-            "Markdown format qo'llanadi: # sarlavha, ## kichik sarlavha, - ro'yxat. "
-            "Jadval uchun rows parametrini ishlating."
+            "Create a PDF document. For contracts, reports, invoices. "
+            "Markdown format supported: # heading, ## subheading, - list. "
+            "Use rows parameter for tables."
         ),
         parameters={
             "type": "object",
@@ -265,7 +262,7 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
 
     registry.register(
         name="read_pdf",
-        description="PDF faylni o'qish. Barcha yoki tanlangan sahifalar matnini qaytaradi.",
+        description="Read a PDF file. Returns text content of all or selected pages.",
         parameters={
             "type": "object",
             "required": ["file"],
@@ -283,8 +280,8 @@ def register_pdf_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="edit_pdf",
         description=(
-            "PDF faylni tahrirlash. Sahifa qo'shish (add_page), matn yozish (insert_text), "
-            "sahifa o'chirish (delete_page), PDF birlashtirish (merge)."
+            "Edit a PDF file. Add page (add_page), insert text (insert_text), "
+            "delete page (delete_page), or merge PDFs (merge)."
         ),
         parameters={
             "type": "object",

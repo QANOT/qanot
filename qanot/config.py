@@ -8,7 +8,27 @@ import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import os
+
 _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+
+def get_config_path() -> str:
+    """Get config file path from QANOT_CONFIG env or default."""
+    return os.environ.get("QANOT_CONFIG", "/data/config.json")
+
+
+def read_config_json(config_path: str | Path | None = None) -> dict:
+    """Read config JSON from disk. Uses QANOT_CONFIG env default."""
+    p = Path(config_path or get_config_path())
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def write_config_json(data: dict, config_path: str | Path | None = None) -> None:
+    """Write config JSON atomically. Uses QANOT_CONFIG env default."""
+    from qanot.utils import atomic_write
+    p = Path(config_path or get_config_path())
+    atomic_write(p, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 @dataclass
@@ -170,8 +190,7 @@ def load_config(path: str | None = None) -> Config:
         ValueError: If required fields are missing or values are invalid.
     """
     if path is None:
-        import os
-        path = os.environ.get("QANOT_CONFIG", "/data/config.json")
+        path = get_config_path()
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Config file not found: {path}")

@@ -91,9 +91,9 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
     registry.register(
         name="create_skill",
         description=(
-            "Yangi skill yaratish. Skill — takroriy vazifalar uchun qayta ishlatiladigan "
-            "ko'rsatmalar to'plami. SKILL.md va ixtiyoriy script yaratadi. "
-            "Agent keyingi safar shu vazifani avtomatik bajaradi."
+            "Create a new skill — a reusable set of instructions for repetitive tasks. "
+            "Creates SKILL.md and optional scripts. The agent will automatically use "
+            "this skill for matching tasks in the future."
         ),
         parameters={
             "type": "object",
@@ -175,7 +175,7 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
 
     registry.register(
         name="list_skills",
-        description="O'rnatilgan skilllar ro'yxati. Har bir skill nomi, tavsifi va scriptlari ko'rsatiladi.",
+        description="List all installed skills with their names, descriptions, and scripts.",
         parameters={"type": "object", "properties": {}},
         handler=list_skills,
         category="core",
@@ -239,7 +239,7 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
 
     registry.register(
         name="run_skill_script",
-        description="Skill ichidagi scriptni bajarish. Python yoki Bash script.",
+        description="Run a script from a skill's scripts/ directory. Supports Python and Bash.",
         parameters={
             "type": "object",
             "required": ["skill", "script"],
@@ -289,7 +289,7 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
 
     registry.register(
         name="delete_skill",
-        description="Skillni o'chirish. Barcha fayllar (SKILL.md, scripts/) o'chiriladi.",
+        description="Delete a skill and all its files (SKILL.md, scripts/).",
         parameters={
             "type": "object",
             "required": ["name"],

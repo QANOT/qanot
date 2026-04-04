@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-
 from qanot.registry import ToolRegistry
+from qanot.tools.doc_helpers import resolve_doc_path, resolve_doc_path_existing
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +66,14 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
                         if line.startswith(("- ", "* ", "\u2022 ")):
                             p.level = 1
 
-        filepath = Path(workspace_dir) / filename
-        prs.save(str(filepath))
+        path, error = resolve_doc_path({"file": filename}, workspace_dir)
+        if error:
+            return error
+        prs.save(str(path))
 
         return json.dumps({
             "status": "ok",
-            "file": str(filepath),
+            "file": str(path),
             "filename": filename,
             "slides_count": len(prs.slides),
             "message": f"{filename} yaratildi ({len(prs.slides)} slayd)",
@@ -86,13 +87,9 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "python-pptx kutubxonasi o'rnatilmagan. pip install python-pptx"})
 
-        filepath = params.get("file", "")
-        if not filepath:
-            return json.dumps({"error": "file parametri kerak"})
-
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         prs = Presentation(str(path))
         slides_data = []
@@ -122,10 +119,9 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
         except ImportError:
             return json.dumps({"error": "python-pptx kutubxonasi o'rnatilmagan"})
 
-        filepath = params.get("file", "")
-        path = Path(filepath) if Path(filepath).is_absolute() else Path(workspace_dir) / filepath
-        if not path.exists():
-            return json.dumps({"error": f"Fayl topilmadi: {filepath}"})
+        path, error = resolve_doc_path_existing(params, workspace_dir)
+        if error:
+            return error
 
         prs = Presentation(str(path))
         action = params.get("action", "add_slide")
@@ -186,8 +182,8 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="create_pptx",
         description=(
-            "PowerPoint (.pptx) prezentatsiya yaratish. Sarlavha va slaydlar bering. "
-            "Har bir slayd title va content dan iborat."
+            "Create a PowerPoint (.pptx) presentation. Provide title and slides. "
+            "Each slide has a title and content."
         ),
         parameters={
             "type": "object",
@@ -214,7 +210,7 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
 
     registry.register(
         name="read_pptx",
-        description="PowerPoint (.pptx) prezentatsiyani o'qish. Barcha slaydlar matnini qaytaradi.",
+        description="Read a PowerPoint (.pptx) presentation. Returns text content of all slides.",
         parameters={
             "type": "object",
             "required": ["file"],
@@ -228,8 +224,8 @@ def register_pptx_tools(registry: ToolRegistry, workspace_dir: str) -> None:
     registry.register(
         name="edit_pptx",
         description=(
-            "PowerPoint (.pptx) prezentatsiyani tahrirlash. Slayd qo'shish (add_slide), "
-            "matn almashtirish (replace), slayd o'chirish (delete_slide)."
+            "Edit a PowerPoint (.pptx) presentation. Add slide (add_slide), "
+            "replace text (replace), or delete slide (delete_slide)."
         ),
         parameters={
             "type": "object",

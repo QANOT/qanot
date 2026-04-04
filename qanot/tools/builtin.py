@@ -186,7 +186,7 @@ def register_builtin_tools(
 
     registry.register(
         name="read_file",
-        description="Faylni o'qish. Istalgan yo'ldan (absolyut yoki workspace ichida).",
+        description="Read a file from any path (absolute or within workspace).",
         parameters={
             "type": "object",
             "required": ["path"],
@@ -221,7 +221,7 @@ def register_builtin_tools(
 
     registry.register(
         name="write_file",
-        description="Faylga yozish yoki yangi fayl yaratish. Istalgan yo'lga.",
+        description="Write content to a file or create a new file at any path.",
         parameters={
             "type": "object",
             "required": ["path", "content"],
@@ -258,7 +258,7 @@ def register_builtin_tools(
 
     registry.register(
         name="list_files",
-        description="Papka ichidagi fayllar ro'yxati. Istalgan yo'ldan.",
+        description="List files and directories in a folder. Any path supported.",
         parameters={
             "type": "object",
             "properties": {
@@ -353,7 +353,7 @@ def register_builtin_tools(
 
     registry.register(
         name="run_command",
-        description="Shell buyruq bajarish. Pipe, redirect ruxsat. Xavfli buyruqlar bloklangan. Ba'zi buyruqlar (pip install, curl, sudo, h.k.) foydalanuvchi ruxsatini talab qiladi — agar needs_approval qaytsa, foydalanuvchidan so'ra va approved=true bilan qayta chaqir.",
+        description="Execute a shell command. Pipes, redirects allowed. Dangerous commands are blocked. Some commands (pip install, curl, sudo, etc.) require user approval — if needs_approval is returned, ask the user and call again with approved=true.",
         parameters={
             "type": "object",
             "required": ["command"],
@@ -394,7 +394,7 @@ def register_builtin_tools(
 
     registry.register(
         name="memory_search",
-        description="Xotira fayllaridan qidirish (daily notes, MEMORY.md, SESSION-STATE.md).",
+        description="Search memory files (daily notes, MEMORY.md, SESSION-STATE.md).",
         parameters={
             "type": "object",
             "required": ["query"],
@@ -420,7 +420,7 @@ def register_builtin_tools(
 
     registry.register(
         name="session_status",
-        description="Joriy sessiya holati — context %, token soni, xarajat.",
+        description="Current session status — context %, token count, cost.",
         parameters={"type": "object", "properties": {}},
         handler=session_status,
     )
@@ -442,7 +442,7 @@ def register_builtin_tools(
 
     registry.register(
         name="cost_status",
-        description="Token va xarajat statistikasi — har bir foydalanuvchi uchun alohida.",
+        description="Token and cost statistics — per-user breakdown.",
         parameters={
             "type": "object",
             "properties": {
@@ -493,7 +493,7 @@ def register_builtin_tools(
 
     registry.register(
         name="send_file",
-        description="Foydalanuvchiga fayl yuborish (Telegram orqali). Workspace yoki absolyut yo'l.",
+        description="Send a file to the user via Telegram. Workspace or absolute path.",
         parameters={
             "type": "object",
             "required": ["path"],
