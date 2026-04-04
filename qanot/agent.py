@@ -693,6 +693,7 @@ class Agent:
                 break
         else:
             final_text = "(Agent reached maximum iterations)"
+            messages.append({"role": "assistant", "content": final_text})
             logger.warning("Agent hit max iterations (%d)", self._max_iterations)
 
         # Lifecycle hooks: post-turn
@@ -897,9 +898,11 @@ class Agent:
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return
 
+        max_iter_msg = "(Agent reached maximum iterations)"
+        messages.append({"role": "assistant", "content": max_iter_msg})
         yield StreamEvent(
             type="done",
-            response=ProviderResponse(content="(Agent reached maximum iterations)"),
+            response=ProviderResponse(content=max_iter_msg),
         )
 
     def reset(self, user_id: str | None = None) -> None:

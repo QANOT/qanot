@@ -210,7 +210,7 @@ def register_image_tools(
             # Convert bytes → PIL Image (Gemini SDK accepts PIL images)
             pil_image = Image.open(BytesIO(source_bytes))
 
-            response = client.models.generate_content(
+            response = await client.aio.models.generate_content(
                 model=img_model,
                 contents=[prompt, pil_image],
                 config=types.GenerateContentConfig(

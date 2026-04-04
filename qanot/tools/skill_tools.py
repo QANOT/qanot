@@ -196,7 +196,9 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
 
         # Security: resolve and check path is within skills dir
         resolved = script_path.resolve()
-        if not str(resolved).startswith(str(skills_dir.resolve())):
+        try:
+            resolved.relative_to(skills_dir.resolve())
+        except ValueError:
             return json.dumps({"error": "Path traversal blocked"})
 
         # Determine interpreter
@@ -267,7 +269,9 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
 
         # Security check
         resolved = skill_path.resolve()
-        if not str(resolved).startswith(str(skills_dir.resolve())):
+        try:
+            resolved.relative_to(skills_dir.resolve())
+        except ValueError:
             return json.dumps({"error": "Path traversal blocked"})
 
         import shutil

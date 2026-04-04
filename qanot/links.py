@@ -144,17 +144,17 @@ async def fetch_url_preview(
     Returns a LinkPreview dict or None on any error.
     Reuses SSRF validation and caching from web.py.
     """
-    # Check cache first
+    # Check cache first (async — _cache_get is a coroutine)
     cache_key = f"link_preview:{url}"
-    cached = _cache_get(cache_key)
+    cached = await _cache_get(cache_key)
     if cached is not None:
         # cached is a string — we stored "title\x00preview"
         parts = cached.split("\x00", 1)
         if len(parts) == 2:
             return LinkPreview(url=url, title=parts[0], preview=parts[1])
 
-    # SSRF validation
-    ssrf_error = _validate_url(url)
+    # SSRF validation (run in thread — DNS resolution is blocking I/O)
+    ssrf_error = await asyncio.to_thread(_validate_url, url)
     if ssrf_error:
         logger.debug("Link preview SSRF blocked: %s — %s", url, ssrf_error)
         return None
@@ -173,7 +173,7 @@ async def fetch_url_preview(
                 # Validate final URL after redirects
                 final_url = str(resp.url)
                 if final_url != url:
-                    redirect_error = _validate_url(final_url)
+                    redirect_error = await asyncio.to_thread(_validate_url, final_url)
                     if redirect_error:
                         logger.debug("Link preview redirect SSRF blocked: %s", final_url)
                         return None
@@ -226,8 +226,8 @@ async def fetch_url_preview(
 
         result = LinkPreview(url=url, title=title, preview=preview)
 
-        # Cache the result
-        _cache_set(cache_key, f"{title}\x00{preview}")
+        # Cache the result (async)
+        await _cache_set(cache_key, f"{title}\x00{preview}")
         logger.info("Link preview fetched: %s (%s)", url, title or "no title")
 
         return result
