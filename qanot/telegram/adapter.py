@@ -60,6 +60,11 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._user_locks: dict[str, asyncio.Lock] = {}
         self._pending_messages: dict[str, list[tuple]] = {}
         self._pending_approvals: dict[str, dict] = {}
+        # MCP install/remove proposals awaiting user approval (10-min TTL, in-memory only)
+        self._pending_mcp_proposals: dict[str, dict] = {}
+        self._pending_mcp_removals: dict[str, dict] = {}
+        # Config secret-set proposals awaiting user approval (10-min TTL, in-memory only)
+        self._pending_config_proposals: dict[str, dict] = {}
         from qanot.ratelimit import RateLimiter
         self._rate_limiter = RateLimiter()
         self.voicecall_manager = None  # Set by main.py if voicecall_enabled
@@ -470,11 +475,11 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             reply_to = None
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
+                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
+                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
             else:
-                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id)
+                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
 
             await send_pending_images(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
             await send_pending_files(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)

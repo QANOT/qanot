@@ -370,6 +370,34 @@ async def main() -> None:
     if mcp_manager:
         telegram._mcp_manager = mcp_manager
 
+    # Register agent-initiated MCP management tools (mcp_test/propose/list/remove).
+    # Register even when no servers are currently connected — the agent must be
+    # able to propose the very first one. The tools themselves return a helpful
+    # error if the `mcp` package is not installed.
+    from qanot.tools.mcp_manage import register_mcp_tools
+    register_mcp_tools(
+        tool_registry,
+        config,
+        mcp_manager,
+        telegram,
+        get_user_id=lambda: agent.current_user_id or "",
+        get_chat_id=lambda: agent.current_chat_id,
+    )
+
+    # Register config-secret management tools (delete_message, config_set_secret).
+    # Agent-initiated: proposes change → user approves via Telegram button →
+    # atomic write to /data/secrets.env + SecretRef in config.json → restart.
+    from qanot.tools.config_manage import register_config_tools
+    register_config_tools(
+        tool_registry,
+        config,
+        telegram,
+        get_user_id=lambda: agent.current_user_id or "",
+        get_chat_id=lambda: agent.current_chat_id,
+        get_message_id=lambda: agent.current_message_id,
+        get_bot=lambda: telegram.bot,
+    )
+
     # Register orchestrator tools (unified delegation + sub-agents)
     # Only when explicitly enabled — prevents model from over-delegating simple tasks
     subagent_manager = None

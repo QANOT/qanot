@@ -1264,6 +1264,47 @@ class HandlersMixin:
             await self._cb_approval(callback, data, user_id)
             return
 
+        # ── MCP install proposals: mcp_approve / mcp_deny / mcp_approve_trust ──
+        if (
+            data.startswith("mcp_approve:")
+            or data.startswith("mcp_deny:")
+            or data.startswith("mcp_approve_trust:")
+        ):
+            from qanot.tools.mcp_manage import handle_mcp_approve_callback
+            prefix, proposal_id = data.split(":", 1)
+            action_map = {
+                "mcp_approve": "approve",
+                "mcp_deny": "deny",
+                "mcp_approve_trust": "approve_trust",
+            }
+            await handle_mcp_approve_callback(
+                self, self.config, callback, action_map[prefix], proposal_id,
+            )
+            return
+
+        # ── MCP removal proposals: mcp_remove_approve / mcp_remove_deny ──
+        if data.startswith("mcp_remove_approve:") or data.startswith("mcp_remove_deny:"):
+            from qanot.tools.mcp_manage import handle_mcp_remove_callback
+            prefix, proposal_id = data.split(":", 1)
+            action = "approve" if prefix == "mcp_remove_approve" else "deny"
+            await handle_mcp_remove_callback(
+                self, self.config, callback, action, proposal_id,
+            )
+            return
+
+        # ── Config secret proposals: cfg_approve / cfg_deny ──
+        if data.startswith("cfg_approve:") or data.startswith("cfg_deny:"):
+            from qanot.tools.config_manage import (
+                handle_config_approve_callback,
+                handle_config_deny_callback,
+            )
+            prefix, proposal_id = data.split(":", 1)
+            if prefix == "cfg_approve":
+                await handle_config_approve_callback(self, self.config, callback, proposal_id)
+            else:
+                await handle_config_deny_callback(self, self.config, callback, proposal_id)
+            return
+
         # ── Settings callbacks: <type>:<value> ──
         handlers = {
             "model": self._cb_model,

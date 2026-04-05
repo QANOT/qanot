@@ -90,6 +90,7 @@ class Agent:
         self._system_prompt_override = system_prompt_override
         self._current_user_id: str = ""
         self._current_chat_id: int | None = None
+        self._current_message_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
         self.cost_tracker = CostTracker(config.workspace_dir)
         self._max_iterations = max_iterations
@@ -155,6 +156,11 @@ class Agent:
     def current_chat_id(self) -> int | None:
         """Current Telegram chat ID being processed (for sub-agent delivery)."""
         return self._current_chat_id
+
+    @property
+    def current_message_id(self) -> int | None:
+        """Current Telegram message_id being processed (for message scrubbing tools)."""
+        return self._current_message_id
 
     def get_conversation(self, user_id: str | None) -> list[dict]:
         """Get conversation history for a user (read-only view)."""
@@ -593,6 +599,7 @@ class Agent:
         user_id: str | None = None,
         images: list[dict] | None = None,
         chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> str:
         """Process a user message through the agent loop.
 
@@ -606,6 +613,7 @@ class Agent:
         """
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
+            self._current_message_id = message_id
             # Budget enforcement: reject if daily limit exceeded
             if user_id and self.config.daily_budget_usd > 0:
                 allowed, spent, budget = self.cost_tracker.check_budget(
@@ -745,6 +753,7 @@ class Agent:
         user_id: str | None = None,
         images: list[dict] | None = None,
         chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Process a user message with streaming.
 
@@ -755,6 +764,7 @@ class Agent:
         """
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
+            self._current_message_id = message_id
             # Budget enforcement: reject if daily limit exceeded
             if user_id and self.config.daily_budget_usd > 0:
                 allowed, spent, budget = self.cost_tracker.check_budget(

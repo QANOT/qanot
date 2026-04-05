@@ -110,6 +110,10 @@ class Config:
     voice_language: str = ""  # Force STT language (uz/ru/en), auto-detect if empty
     # Web search
     brave_api_key: str = ""  # Brave Search API key (free tier: 2000/month)
+    # Secrets env file — where config_set_secret writes KEY=value pairs.
+    # The file is chmod 0600 on first write. Operators must source it from
+    # their systemd/launchd unit so child processes inherit the vars.
+    secrets_env_path: str = "/data/secrets.env"
     # Cost budget (0 = unlimited)
     daily_budget_usd: float = 0.0  # Max daily spend in USD per user (0 = no limit)
     budget_warning_pct: int = 80  # Warn user when reaching this % of daily budget
@@ -164,6 +168,14 @@ class Config:
     agents_enabled: bool = False
     # MCP (Model Context Protocol) servers
     mcp_servers: list[dict] = field(default_factory=list)
+    # Allowlist of stdio commands that the agent is permitted to propose as MCP servers.
+    # Rejection happens at proposal time, before the user ever sees an approval card.
+    mcp_command_allowlist: list[str] = field(default_factory=lambda: [
+        "npx", "uvx", "python", "python3", "node", "deno", "bunx",
+    ])
+    # Sources the user has already "trusted" via the 'approve_trust' button.
+    # Future proposals from the same source still require approval but the UI marks them trusted.
+    mcp_trusted_sources: list[str] = field(default_factory=list)
     # Browser control (Playwright)
     browser_enabled: bool = False
     # Webhook endpoint

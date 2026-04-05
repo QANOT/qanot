@@ -34,7 +34,7 @@ class StreamingMixin:
         self._draft_counter += 1
         return self._draft_counter
 
-    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
+    async def _respond_stream(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None) -> None:
         """Stream response via sendMessageDraft → sendMessage."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         draft_id = self._next_draft_id()
@@ -46,7 +46,7 @@ class StreamingMixin:
 
         done_response = None
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id):
                 if event.type == "text_delta":
                     accumulated += event.text
                     if drafting_paused:
@@ -78,7 +78,7 @@ class StreamingMixin:
         final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
         await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
 
-    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
+    async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         accumulated = ""
@@ -88,7 +88,7 @@ class StreamingMixin:
 
         done_response = None
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id):
                 if event.type == "text_delta":
                     accumulated += event.text
                     now = asyncio.get_running_loop().time()
@@ -137,11 +137,11 @@ class StreamingMixin:
         else:
             await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
 
-    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None) -> None:
+    async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None) -> None:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
-            response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id)
+            response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id)
         finally:
             typing_task.cancel()
         await self._send_final(chat_id, response or "(No response)", reply_to=reply_to, thread_id=thread_id)
