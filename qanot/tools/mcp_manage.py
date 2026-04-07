@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Pending proposals live in memory only. Bot crash between propose & approve
 # means the user must re-propose — no persistence layer by design.
-PROPOSAL_TTL_SECONDS = 600  # 10 minutes
+from qanot.tools._approval_base import PROPOSAL_TTL_SECONDS, now as _now, append_audit as _base_append_audit
 
 # Marker written into every auto-installed MCP server entry.
 AGENT_SOURCE_MARKER = "agent_proposal"
@@ -70,22 +70,9 @@ def _mask_env(env: dict | None) -> dict:
     return {str(k): "***" for k in env}
 
 
-def _now() -> float:
-    return time.time()
-
-
 def _append_audit(workspace_dir: str, user_id: str, event: str, details: dict) -> None:
     """Append an MCP audit event to the daily note."""
-    try:
-        from qanot.memory import write_daily_note
-        payload = json.dumps(details, ensure_ascii=False, sort_keys=True)
-        write_daily_note(
-            content=f"**[mcp:{event}]** {payload}",
-            workspace_dir=workspace_dir,
-            user_id=user_id,
-        )
-    except Exception as e:  # daily note is best-effort; never break the flow
-        logger.warning("Failed to write MCP audit entry: %s", e)
+    _base_append_audit(workspace_dir, user_id, event, details, tag="mcp")
 
 
 def _validate_cfg(cfg: dict, config: "Config") -> str | None:

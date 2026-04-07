@@ -71,28 +71,3 @@ def init_workspace(workspace_dir: str) -> None:
     logger.info("Workspace initialized at %s", workspace_dir)
 
 
-def update_session_state(key: str, value: str, workspace_dir: str = "/data/workspace") -> None:
-    """Write a structured key-value entry to SESSION-STATE.md."""
-    state_path = Path(workspace_dir) / "SESSION-STATE.md"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not state_path.exists():
-        state_path.write_text("# SESSION-STATE.md — Active Working Memory\n\n", encoding="utf-8")
-
-    # Read existing content
-    content = state_path.read_text(encoding="utf-8")
-
-    # Check if key already exists and update
-    lines = content.splitlines()
-    updated = False
-    for i, line in enumerate(lines):
-        if line.startswith(f"- **{key}:**"):
-            lines[i] = f"- **{key}:** {value}"
-            updated = True
-            break
-
-    if updated:
-        state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    else:
-        with state_path.open("a", encoding="utf-8") as f:
-            f.write(f"- **{key}:** {value}\n")

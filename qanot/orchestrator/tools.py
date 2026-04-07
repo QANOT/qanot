@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,8 +35,8 @@ def register_orchestrator_tools(
     config: Config,
     depth: int = 0,
     *,
-    get_user_id: callable = None,
-    get_chat_id: callable = None,
+    get_user_id: Callable[[], str | None] | None = None,
+    get_chat_id: Callable[[], int | None] | None = None,
     caller_agent_id: str = "",
 ) -> None:
     """Register orchestration tools on a tool registry.
@@ -76,8 +77,8 @@ def _register_spawn_agent(
     config: Config,
     depth: int,
     agent_ids: list[str],
-    get_user_id: callable,
-    get_chat_id: callable,
+    get_user_id: Callable[[], str | None] | None,
+    get_chat_id: Callable[[], int | None] | None,
     caller_agent_id: str,
 ) -> None:
     """Register the spawn_agent tool."""
@@ -87,8 +88,14 @@ def _register_spawn_agent(
         agent_id = params.get("agent_id", "researcher")
         mode = params.get("mode", MODE_SYNC)
         context = params.get("context", "")
-        max_turns = params.get("max_turns", 5)
-        timeout = params.get("timeout", 120)
+        try:
+            max_turns = int(params.get("max_turns", 5))
+        except (TypeError, ValueError):
+            max_turns = 5
+        try:
+            timeout = int(params.get("timeout", 120))
+        except (TypeError, ValueError):
+            timeout = 120
 
         # Validate mode
         if mode not in (MODE_SYNC, MODE_ASYNC, MODE_CONVERSATION):
@@ -204,7 +211,7 @@ def _register_spawn_agent(
 def _register_cancel_agent(
     registry: ToolRegistry,
     manager: SubagentManager,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None] | None,
 ) -> None:
     """Register the cancel_agent tool."""
 
@@ -241,7 +248,7 @@ def _register_list_agents(
     manager: SubagentManager,
     config: Config,
     depth: int,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None] | None,
 ) -> None:
     """Register the list_agents tool."""
 
@@ -298,7 +305,7 @@ def _register_list_agents(
 def _register_view_board(
     registry: ToolRegistry,
     manager: SubagentManager,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None] | None,
 ) -> None:
     """Register the view_board tool."""
 
@@ -346,7 +353,7 @@ def _register_view_board(
 def _register_clear_board(
     registry: ToolRegistry,
     manager: SubagentManager,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None] | None,
 ) -> None:
     """Register the clear_board tool."""
 
@@ -368,13 +375,16 @@ def _register_clear_board(
 def _register_agent_history(
     registry: ToolRegistry,
     manager: SubagentManager,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None] | None,
 ) -> None:
     """Register the agent_history tool."""
 
     async def handler(params: dict) -> str:
         user_id = (get_user_id() if get_user_id else None) or "default"
-        limit = min(params.get("limit", 10), 20)
+        try:
+            limit = min(int(params.get("limit", 10)), 20)
+        except (TypeError, ValueError):
+            limit = 10
         agent_filter = params.get("agent_id", "").strip()
 
         runs = manager.registry.get_recent_for_user(user_id, limit=limit * 2)

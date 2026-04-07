@@ -22,6 +22,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 FFMPEG_TIMEOUT = 30  # seconds — kill ffmpeg if it hangs
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=60)  # seconds — prevent hung API calls
 
 # ── Shared session management ───────────────────────────
 
@@ -32,7 +33,7 @@ async def _get_session() -> aiohttp.ClientSession:
     """Return a shared aiohttp session, creating one if needed."""
     global _session
     if _session is None or _session.closed:
-        _session = aiohttp.ClientSession()
+        _session = aiohttp.ClientSession(timeout=HTTP_TIMEOUT)
     return _session
 
 
@@ -654,11 +655,17 @@ async def download_audio(url: str) -> str:
     if parsed.hostname and not any(parsed.hostname.endswith(h) for h in _ALLOWED_AUDIO_HOSTS):
         raise ValueError(f"Audio download blocked: untrusted host {parsed.hostname}")
 
+    max_size = 50 * 1024 * 1024  # 50 MB safety limit
     session = await _get_session()
     async with session.get(url) as resp:
         if resp.status != 200:
             raise RuntimeError(f"Failed to download audio: HTTP {resp.status}")
-        data = await resp.read()
+        content_length = resp.content_length
+        if content_length and content_length > max_size:
+            raise RuntimeError(f"Audio too large: {content_length} bytes (limit {max_size})")
+        data = await resp.content.read(max_size + 1)
+        if len(data) > max_size:
+            raise RuntimeError(f"Audio too large: exceeded {max_size} byte limit")
 
     _, ext = os.path.splitext(parsed.path)
     suffix = ext.lower() if ext.lower() in (".wav", ".ogg", ".mp3") else ".mp3"

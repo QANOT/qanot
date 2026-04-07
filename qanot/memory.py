@@ -10,6 +10,7 @@ Memory architecture (OpenClaw-style):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Callable
@@ -18,7 +19,15 @@ from qanot.utils import redact_secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]  # Windows — file locking not available
+
 logger = logging.getLogger(__name__)
+
+# Per-workspace asyncio locks to prevent coroutine-level races on memory files
+_ws_locks: dict[str, asyncio.Lock] = {}
 
 # ── Write hooks for memory change notifications ──
 _write_hooks: list[Callable] = []
@@ -136,22 +145,6 @@ def wal_write(
 
     # Cap file size: truncate oldest entries when over 100KB
     _MAX_STATE_SIZE = 100_000
-    try:
-        if state_path.stat().st_size > _MAX_STATE_SIZE:
-            content = state_path.read_text(encoding="utf-8")
-            # Keep header + last 60% of content
-            header_end = content.find("\n\n")
-            if header_end > 0:
-                header = content[:header_end + 2]
-                body = content[header_end + 2:]
-                keep = body[len(body) * 2 // 5:]  # drop oldest 40%
-                state_path.write_text(
-                    header + "[... older entries truncated ...]\n\n" + keep,
-                    encoding="utf-8",
-                )
-                logger.info("Truncated SESSION-STATE.md: %d → %d bytes", len(content), len(header) + len(keep))
-    except OSError:
-        pass
 
     lines: list[str] = []
     uid_tag = _uid_tag(user_id)
@@ -159,8 +152,32 @@ def wal_write(
         detail = redact_secrets(entry.detail)
         lines.append(f"- [{entry.timestamp}]{uid_tag} **{entry.category}**: {detail}\n")
 
-    with open(state_path, "a", encoding="utf-8") as f:
-        f.writelines(lines)
+    # Atomic truncate-and-append under file lock to prevent concurrent data loss
+    with open(state_path, "r+", encoding="utf-8") as f:
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            content = f.read()
+            truncated = False
+            if len(content.encode("utf-8")) > _MAX_STATE_SIZE:
+                header_end = content.find("\n\n")
+                if header_end > 0:
+                    header = content[:header_end + 2]
+                    body = content[header_end + 2:]
+                    keep = body[len(body) * 2 // 5:]  # drop oldest 40%
+                    content = header + "[... older entries truncated ...]\n\n" + keep
+                    truncated = True
+                    logger.info("Truncated SESSION-STATE.md to %d bytes", len(content))
+            if truncated:
+                f.seek(0)
+                f.write(content)
+                f.truncate()
+            # Append new entries
+            f.seek(0, 2)  # seek to end
+            f.writelines(lines)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     logger.debug("WAL wrote %d entries to SESSION-STATE.md", len(entries))
 
@@ -177,48 +194,57 @@ def _append_to_memory(
     workspace_dir: str,
     user_id: str = "",
 ) -> None:
-    """Append durable facts to shared MEMORY.md, avoiding duplicates."""
+    """Append durable facts to shared MEMORY.md, avoiding duplicates.
+
+    Uses file locking to prevent concurrent writers from creating duplicates
+    or corrupting the file.
+    """
     ws = Path(workspace_dir)
     memory_path = ws / "MEMORY.md"
 
-    # Read existing content to check for duplicates
-    existing = ""
-    if memory_path.exists():
-        existing = memory_path.read_text(encoding="utf-8")
+    # Ensure file exists
+    if not memory_path.exists():
+        memory_path.write_text("# MEMORY.md - Long-Term Memory\n\n", encoding="utf-8")
 
-    new_lines: list[str] = []
-    existing_lines = [line.lower().strip() for line in existing.splitlines() if line.strip()]
-    uid_tag = _uid_tag(user_id)
-    for entry in entries:
-        # Dedup: skip if a sufficiently similar line already exists
-        detail_lower = entry.detail[:80].lower()
-        is_dup = any(
-            detail_lower in eline
-            and (len(detail_lower) >= 10 or len(detail_lower) >= len(eline) * 0.3)
-            for eline in existing_lines
-        )
-        if is_dup:
-            logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
-            continue
-        new_line = f"- **{entry.category}**:{uid_tag} {redact_secrets(entry.detail)}\n"
-        new_lines.append(new_line)
-        existing_lines.append(new_line.lower().strip())
+    # Read + dedup + append under file lock
+    with open(memory_path, "r+", encoding="utf-8") as f:
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            existing = f.read()
 
-    if not new_lines:
-        return
+            new_lines: list[str] = []
+            existing_lines = [line.lower().strip() for line in existing.splitlines() if line.strip()]
+            uid_tag = _uid_tag(user_id)
+            for entry in entries:
+                detail_lower = entry.detail[:80].lower()
+                is_dup = any(
+                    detail_lower in eline
+                    and (len(detail_lower) >= 10 or len(detail_lower) >= len(eline) * 0.3)
+                    for eline in existing_lines
+                )
+                if is_dup:
+                    logger.debug("Skipping duplicate memory: %s", entry.detail[:50])
+                    continue
+                new_line = f"- **{entry.category}**:{uid_tag} {redact_secrets(entry.detail)}\n"
+                new_lines.append(new_line)
+                existing_lines.append(new_line.lower().strip())
 
-    prefix_lines: list[str] = []
-    if not existing.strip():
-        prefix_lines.append("# MEMORY.md - Long-Term Memory\n\n")
+            if not new_lines:
+                return
 
-    section_header = "## Auto-captured\n"
-    if section_header not in existing:
-        prefix_lines.append(f"\n{section_header}\n")
+            prefix_lines: list[str] = []
+            section_header = "## Auto-captured\n"
+            if section_header not in existing:
+                prefix_lines.append(f"\n{section_header}\n")
 
-    with open(memory_path, "a", encoding="utf-8") as f:
-        if prefix_lines:
-            f.writelines(prefix_lines)
-        f.writelines(new_lines)
+            f.seek(0, 2)  # seek to end
+            if prefix_lines:
+                f.writelines(prefix_lines)
+            f.writelines(new_lines)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     logger.info("Saved %d durable facts to MEMORY.md", len(new_lines))
     _notify_hooks("".join(new_lines), "MEMORY.md")

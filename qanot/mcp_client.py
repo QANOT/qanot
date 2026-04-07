@@ -223,7 +223,10 @@ class MCPServerConnection:
             return json.dumps({"error": f"MCP server '{self.name}' not connected"})
 
         try:
-            result = await self._session.call_tool(tool_name, arguments=arguments)
+            result = await asyncio.wait_for(
+                self._session.call_tool(tool_name, arguments=arguments),
+                timeout=120,
+            )
 
             parts = []
             for content in result.content:
@@ -236,6 +239,9 @@ class MCPServerConnection:
 
             return "\n".join(parts) if parts else json.dumps({"result": "ok"})
 
+        except asyncio.TimeoutError:
+            logger.error("MCP tool '%s' on server '%s' timed out after 120s", tool_name, self.name)
+            return json.dumps({"error": f"MCP tool '{tool_name}' timed out after 120s"})
         except Exception as e:
             logger.error("MCP tool '%s' on server '%s' failed: %s", tool_name, self.name, e)
             return json.dumps({"error": str(e)})

@@ -284,15 +284,16 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         if not message.from_user:
             return
 
-        user_id = message.from_user.id
-        if not self._is_allowed(user_id):
+        user_id_int = message.from_user.id
+        if not self._is_allowed(user_id_int):
             return
 
-        allowed, reason = self._rate_limiter.check(str(user_id))
+        user_id = str(user_id_int)  # Convert once at Telegram boundary
+        allowed, reason = self._rate_limiter.check(user_id)
         if not allowed:
             await message.reply(reason)
             return
-        self._rate_limiter.record(str(user_id))
+        self._rate_limiter.record(user_id)
 
         is_group = self._is_group_chat(message)
         if is_group:
@@ -458,11 +459,11 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         thread_id: int | None = None,
     ) -> None:
         """Process a single (possibly coalesced) turn for a conversation."""
-        # Topic-agent binding: override system prompt for bound topics
+        # Topic-agent binding: per-turn system prompt override (thread-safe)
         bound_agent = self._resolve_topic_binding(message.chat.id, thread_id)
-        old_prompt_override = self.agent._system_prompt_override
+        system_prompt_override: str | None = None
         if bound_agent and bound_agent.prompt:
-            self.agent._system_prompt_override = bound_agent.prompt
+            system_prompt_override = bound_agent.prompt
             logger.info("Topic binding active: %s → agent %s", conv_key, bound_agent.id)
 
         mode = self.config.response_mode
@@ -475,11 +476,11 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             reply_to = None
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
+                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
+                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
             else:
-                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id)
+                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
 
             await send_pending_images(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
             await send_pending_files(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
@@ -507,10 +508,6 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                     message.chat.id,
                     "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
                 )
-        finally:
-            # Restore system prompt override after topic-bound turn
-            if bound_agent:
-                self.agent._system_prompt_override = old_prompt_override
 
     # ── Proactive & lifecycle ────────────────────────────────
 

@@ -61,20 +61,6 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def scan_secrets(text: str) -> list[tuple[str, str]]:
-    """Scan text for high-confidence credential patterns.
-
-    Returns list of (secret_type, masked_value) tuples.
-    Only fires on distinctive prefixes — zero false positives.
-    """
-    found: list[tuple[str, str]] = []
-    for pattern, secret_type in _SECRET_PATTERNS:
-        for m in pattern.finditer(text):
-            value = m.group(1)
-            masked = value[:8] + "..." + value[-4:] if len(value) > 16 else value[:4] + "..."
-            found.append((secret_type, masked))
-    return found
-
 
 def redact_secrets(text: str) -> str:
     """Replace detected credentials with [REDACTED] placeholders."""

@@ -416,7 +416,10 @@ def register_web_tools(
         if not url:
             return json.dumps({"error": "url is required"})
 
-        max_chars = int(params.get("max_chars", FETCH_DEFAULT_MAX_CHARS))
+        try:
+            max_chars = int(params.get("max_chars", FETCH_DEFAULT_MAX_CHARS))
+        except (TypeError, ValueError):
+            max_chars = FETCH_DEFAULT_MAX_CHARS
 
         # Validate URL scheme
         ssrf_error = await asyncio.to_thread(_validate_url, url)

@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -242,17 +242,21 @@ class SqliteVecStore(VectorStore):
         assert conn is not None
 
         result: dict[str, list[float]] = {}
-        # Query in batches of 400 (SQLite variable limit)
-        for i in range(0, len(hashes), 400):
-            batch = hashes[i : i + 400]
-            placeholders = ",".join("?" for _ in batch)
-            rows = conn.execute(
-                f"SELECT hash, embedding, dims FROM embedding_cache "
-                f"WHERE provider = ? AND model = ? AND hash IN ({placeholders})",
-                [provider, model, *batch],
-            ).fetchall()
-            for h, blob, dims in rows:
-                result[h] = list(struct.unpack(f"<{dims}f", blob))
+        try:
+            # Query in batches of 400 (SQLite variable limit)
+            for i in range(0, len(hashes), 400):
+                batch = hashes[i : i + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT hash, embedding, dims FROM embedding_cache "
+                    f"WHERE provider = ? AND model = ? AND hash IN ({placeholders})",
+                    [provider, model, *batch],
+                ).fetchall()
+                for h, blob, dims in rows:
+                    result[h] = list(struct.unpack(f"<{dims}f", blob))
+        except Exception as e:
+            logger.warning("Embedding cache read failed (non-fatal): %s", e)
+            return {}
 
         if result:
             logger.debug("Embedding cache: %d hits / %d queries", len(result), len(hashes))
@@ -272,21 +276,24 @@ class SqliteVecStore(VectorStore):
         assert conn is not None
 
         now = time.time()
-        with self._lock:
-            for h, embedding in items:
-                dims = len(embedding)
-                blob = struct.pack(f"<{dims}f", *embedding)
-                conn.execute(
-                    "INSERT INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(provider, model, hash) DO UPDATE SET "
-                    "embedding=excluded.embedding, dims=excluded.dims, updated_at=excluded.updated_at",
-                    (provider, model, h, blob, dims, now),
-                )
-            conn.commit()
+        try:
+            with self._lock:
+                for h, embedding in items:
+                    dims = len(embedding)
+                    blob = struct.pack(f"<{dims}f", *embedding)
+                    conn.execute(
+                        "INSERT INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(provider, model, hash) DO UPDATE SET "
+                        "embedding=excluded.embedding, dims=excluded.dims, updated_at=excluded.updated_at",
+                        (provider, model, h, blob, dims, now),
+                    )
+                conn.commit()
 
-            # LRU eviction (called under lock; _prune_cache must not re-acquire)
-            self._prune_cache()
+                # LRU eviction (called under lock; _prune_cache must not re-acquire)
+                self._prune_cache()
+        except Exception as e:
+            logger.warning("Embedding cache write failed (non-fatal): %s", e)
 
     def _prune_cache(self) -> None:
         """Evict oldest cache entries if over max_entries."""

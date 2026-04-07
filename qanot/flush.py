@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -61,8 +62,8 @@ async def memory_flush(
     messages: list[dict],
     provider: LLMProvider,
     tools: ToolRegistry,
-    build_system_prompt: callable,
-    build_assistant_tool_message: callable,
+    build_system_prompt: Callable[..., str],
+    build_assistant_tool_message: Callable[..., dict],
 ) -> None:
     """Run a hidden LLM turn to save durable memories before compaction.
 
@@ -229,8 +230,8 @@ async def handle_overflow(
     context: ContextTracker,
     conv_manager: ConversationManager,
     user_id: str | None,
-    build_system_prompt: callable,
-    build_assistant_tool_message: callable,
+    build_system_prompt: Callable[..., str],
+    build_assistant_tool_message: Callable[..., dict],
 ) -> list[dict]:
     """Handle context overflow by force-compacting the conversation.
 

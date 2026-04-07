@@ -12,7 +12,6 @@ Three execution modes:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Callable, Awaitable
@@ -22,7 +21,6 @@ from typing import Any, TYPE_CHECKING
 from qanot.orchestrator.types import (
     SubagentRun,
     SpawnParams,
-    AnnouncePayload,
     make_run_id,
     STATUS_PENDING,
     STATUS_RUNNING,
@@ -37,7 +35,6 @@ from qanot.orchestrator.types import (
 from qanot.orchestrator.registry import SubagentRegistry
 from qanot.orchestrator.announce import (
     build_announce_payload,
-    format_sync_result,
     deliver_async_result,
     post_to_board,
 )
@@ -54,7 +51,7 @@ from qanot.orchestrator.tool_policy import (
 from qanot.orchestrator.monitor import mirror_to_group, send_typing_to_group
 
 if TYPE_CHECKING:
-    from qanot.config import Config, AgentDefinition
+    from qanot.config import Config
     from qanot.providers.base import LLMProvider
     from qanot.registry import ToolRegistry
 

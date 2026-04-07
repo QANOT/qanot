@@ -39,18 +39,11 @@ def register_rag_tools(
 
     def _resolve_path(path: str) -> Path:
         """Resolve a path relative to workspace_dir, preventing traversal."""
-        p = Path(path)
-        if p.is_absolute():
-            resolved = p.resolve()
-        else:
-            resolved = (ws / p).resolve()
-        try:
-            resolved.relative_to(ws_resolved)
-        except ValueError:
-            raise ValueError(
-                f"Path '{path}' resolves outside workspace directory"
-            )
-        return resolved
+        from qanot.fs_safe import resolve_workspace_path
+        resolved, error = resolve_workspace_path(path, workspace_dir)
+        if error:
+            raise ValueError(error)
+        return Path(resolved)
 
     # ── rag_index ──
     async def rag_index(params: dict) -> str:

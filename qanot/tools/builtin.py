@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -143,13 +144,13 @@ def register_builtin_tools(
     workspace_dir: str,
     context: ContextTracker,
     rag_indexer: "MemoryIndexer | None" = None,
-    get_user_id: "callable | None" = None,
-    get_cost_tracker: "callable | None" = None,
+    get_user_id: Callable[[], str | None] | None = None,
+    get_cost_tracker: Callable | None = None,
     exec_security: str = "open",
     exec_allowlist: list[str] | None = None,
-    approval_callback: "callable | None" = None,
-    get_bot: "callable | None" = None,
-    get_chat_id: "callable | None" = None,
+    approval_callback: Callable | None = None,
+    get_bot: Callable | None = None,
+    get_chat_id: Callable[[], int | None] | None = None,
 ) -> None:
     """Register all built-in tools.
 
@@ -208,14 +209,11 @@ def register_builtin_tools(
             full = _resolve_path(path, workspace_dir)
         except ValueError as e:
             return json.dumps({"error": str(e)})
-        # Security: block writes to system directories
-        error = validate_write_path(full)
-        if error:
-            return json.dumps({"error": f"Write blocked: {error}", "path": full})
+        # Security + atomic write via safe_write_file
         try:
-            Path(full).parent.mkdir(parents=True, exist_ok=True)
-            Path(full).write_text(content, encoding="utf-8")
-            return json.dumps({"success": True, "path": full, "bytes": len(content.encode())})
+            from qanot.fs_safe import safe_write_file
+            written_path = safe_write_file(full, content, root=workspace_dir)
+            return json.dumps({"success": True, "path": written_path, "bytes": len(content.encode())})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -507,10 +505,8 @@ def register_builtin_tools(
 
 def _resolve_path(path: str, workspace_dir: str) -> str:
     """Resolve a path safely within workspace. Blocks escape attempts."""
-    resolved = Path(os.path.join(workspace_dir, path)).resolve()
-    ws_resolved = Path(workspace_dir).resolve()
-    try:
-        resolved.relative_to(ws_resolved)
-    except ValueError:
-        raise ValueError(f"Path '{path}' resolves outside workspace directory")
-    return str(resolved)
+    from qanot.fs_safe import resolve_workspace_path
+    resolved, error = resolve_workspace_path(path, workspace_dir)
+    if error:
+        raise ValueError(error)
+    return resolved

@@ -13,21 +13,40 @@ logger = logging.getLogger(__name__)
 MAX_FILE_CHARS = 20_000
 
 # ── Plugin registries ──
+# These are module-level singletons shared across all Agent instances.
+# Registrations must happen during startup (before the event loop processes messages).
+# Call freeze_plugin_registries() after startup to prevent further mutations.
 _plugin_prompt_sections: list[dict] = []  # [{"name": str, "content": str}]
 _plugin_template_vars: dict[str, str] = {}
+_plugin_registries_frozen = False
 
 
 def register_prompt_section(name: str, content: str) -> None:
-    """Register a plugin prompt section. Appended after core sections."""
+    """Register a plugin prompt section. Appended after core sections.
+
+    Must be called during startup before freeze_plugin_registries().
+    """
+    if _plugin_registries_frozen:
+        logger.warning("Ignoring register_prompt_section('%s') — registries frozen after startup", name)
+        return
     _plugin_prompt_sections.append({"name": name, "content": content})
 
 
 def register_template_var(key: str, value: str) -> None:
     """Register a custom template variable for prompt injection.
 
-    Occurrences of ``key`` in the assembled prompt are replaced with ``value``.
+    Must be called during startup before freeze_plugin_registries().
     """
+    if _plugin_registries_frozen:
+        logger.warning("Ignoring register_template_var('%s') — registries frozen after startup", key)
+        return
     _plugin_template_vars[key] = value
+
+
+def freeze_plugin_registries() -> None:
+    """Freeze plugin registries after startup. Prevents runtime mutations."""
+    global _plugin_registries_frozen
+    _plugin_registries_frozen = True
 
 
 def _truncate_content(content: str, max_chars: int) -> str:

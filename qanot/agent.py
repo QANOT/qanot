@@ -6,9 +6,7 @@ import asyncio
 import json
 import logging
 import random
-import time
 from collections.abc import AsyncIterator
-from typing import Any, Callable, Awaitable
 
 from qanot.circuit import (
     MAX_SAME_ACTION,
@@ -20,7 +18,7 @@ from qanot.circuit import (
     is_no_progress,
 )
 from qanot.config import Config
-from qanot.context import ContextTracker, CostTracker, truncate_tool_result
+from qanot.context import ContextTracker, CostTracker
 from qanot.conversation import ConversationManager
 from qanot.flush import memory_flush, summarize_for_compaction, handle_overflow
 from qanot.memory import wal_scan, wal_write, write_daily_note
@@ -31,14 +29,12 @@ from qanot.providers.errors import (
     classify_error,
     PERMANENT_FAILURES,
     TRANSIENT_FAILURES,
-    COMPACTION_FAILURES,
     ERROR_AUTH,
     ERROR_BILLING,
     ERROR_RATE_LIMIT,
     ERROR_CONTEXT_OVERFLOW,
     ERROR_UNKNOWN,
 )
-from qanot.plugins.base import validate_tool_params
 from qanot.hooks import HookRegistry
 from qanot.registry import ToolRegistry  # re-export for compat
 from qanot.session import SessionWriter
@@ -142,11 +138,6 @@ class Agent:
         from qanot.skills import discover_skills
         self._skills = discover_skills(workspace_dir)
 
-    def register_plugin_hooks(self, plugins: list) -> None:
-        """Register plugins that have lifecycle hooks."""
-        for p in plugins:
-            self.hooks.register_plugin(p)
-
     @property
     def current_user_id(self) -> str:
         """Current user ID being processed (for RAG user-scoped queries)."""
@@ -200,8 +191,10 @@ class Agent:
             return self._conv_manager.restore_from_session(user_id, restored)
         return self._conv_manager.ensure_messages(user_id)
 
-    def _build_system_prompt(self, active_skills_content: str = "") -> str:
+    def _build_system_prompt(self, active_skills_content: str = "", *, turn_prompt_override: str | None = None) -> str:
         """Build the system prompt from workspace files."""
+        if turn_prompt_override:
+            return turn_prompt_override
         if self._system_prompt_override:
             return self._system_prompt_override
 
@@ -321,6 +314,7 @@ class Agent:
         cached_system: str | None = None,
         cached_tool_defs: list[dict] | None = None,
         user_message: str = "",
+        turn_prompt_override: str | None = None,
     ) -> tuple[list[dict], str, list[dict]]:
         """Shared per-iteration prep: compaction, repair, build prompt/tools.
 
@@ -369,7 +363,7 @@ class Agent:
                 matched = match_skills(self._skills, user_message)
                 if matched:
                     active_skills_content = format_active_skills(matched)
-            system = self._build_system_prompt(active_skills_content=active_skills_content)
+            system = self._build_system_prompt(active_skills_content=active_skills_content, turn_prompt_override=turn_prompt_override)
         # Lazy tool loading: only send tools the user likely needs
         if cached_tool_defs is not None:
             tool_defs = cached_tool_defs
@@ -384,6 +378,58 @@ class Agent:
             self.config, self.context, self._conv_manager, user_id,
             self._build_system_prompt, self._build_assistant_tool_message,
         )
+
+    async def _init_turn(
+        self, user_message: str, user_id: str | None, *, images: list[dict] | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Shared pre-loop setup for both streaming and non-streaming turns.
+
+        Returns (possibly modified user_message, messages list).
+        """
+        self._current_user_id = user_id or ""
+        self.context.turn_count += 1
+        if user_id:
+            self.cost_tracker.add_turn(user_id)
+        messages = self._get_messages(user_id)
+        user_message = await self._prepare_turn(user_message, messages, images=images)
+
+        # Lifecycle hooks: pre-turn
+        modified = await self.hooks.fire("on_pre_turn", user_id=user_id or "", message=user_message)
+        if modified is not None:
+            user_message = modified
+
+        return user_message, messages
+
+    def _process_tool_use(
+        self,
+        tool_calls: list[ToolCall],
+        recent_fingerprints: list[str],
+        result_history: list[tuple[str, str]],
+        result_hash: str,
+    ) -> str | None:
+        """Check for loops and no-progress on tool calls.
+
+        Returns an error message string if the loop should break, or None to continue.
+        Updates recent_fingerprints and result_history in-place.
+        """
+        loop_msg = self._check_loop(tool_calls, recent_fingerprints)
+        if loop_msg:
+            return loop_msg
+
+        batch_fps = [tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
+        call_key = ":".join(sorted(batch_fps))
+        if is_no_progress(result_history, call_key, result_hash):
+            logger.warning("No-progress loop: same call producing same result")
+            self._log_error_lesson(
+                f"No-progress loop: {tool_calls[0].name}",
+                "Same call producing same result — need different approach",
+            )
+            return (
+                f"Kechirasiz, {tool_calls[0].name} "
+                "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
+            )
+        result_history.append((call_key, result_hash))
+        return None
 
     def _track_usage(self, response: ProviderResponse) -> None:
         """Track usage and check context threshold."""
@@ -600,6 +646,7 @@ class Agent:
         images: list[dict] | None = None,
         chat_id: int | None = None,
         message_id: int | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         """Process a user message through the agent loop.
 
@@ -608,6 +655,7 @@ class Agent:
             user_id: Unique user identifier for conversation isolation.
             images: Optional list of Anthropic-style image blocks.
             chat_id: Telegram chat ID (for sub-agent result delivery).
+            system_prompt_override: Per-turn system prompt override (thread-safe).
 
         Returns the final text response.
         """
@@ -624,25 +672,15 @@ class Agent:
                         f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
                         f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
                     )
-            return await self._run_turn_impl(user_message, user_id, images=images)
+            return await self._run_turn_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override)
 
-    async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None) -> str:
+    async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None) -> str:
         """Internal implementation of run_turn (called under lock)."""
-        self._current_user_id = user_id or ""
-        self.context.turn_count += 1
-        if user_id:
-            self.cost_tracker.add_turn(user_id)
-        messages = self._get_messages(user_id)
-        user_message = await self._prepare_turn(user_message, messages, images=images)
-
-        # Lifecycle hooks: pre-turn
-        modified = await self.hooks.fire("on_pre_turn", user_id=user_id or "", message=user_message)
-        if modified is not None:
-            user_message = modified
+        user_message, messages = await self._init_turn(user_message, user_id, images=images)
 
         final_text = ""
         recent_fingerprints: list[str] = []
-        result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
+        result_history: list[tuple[str, str]] = []
         overflow_retries = 0
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
@@ -652,6 +690,7 @@ class Agent:
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,
                 user_message=user_message,
+                turn_prompt_override=system_prompt_override,
             )
             # Cache after first iteration — prompt/tools don't change within a turn
             if cached_system is None:
@@ -691,12 +730,6 @@ class Agent:
             self._track_usage(response)
 
             if response.stop_reason == "tool_use" and response.tool_calls:
-                loop_msg = self._check_loop(response.tool_calls, recent_fingerprints)
-                if loop_msg:
-                    final_text = loop_msg
-                    messages.append({"role": "assistant", "content": final_text})
-                    break
-
                 messages.append(
                     self._build_assistant_tool_message(response.content, response.tool_calls)
                 )
@@ -704,26 +737,16 @@ class Agent:
 
                 tool_results, result_hash = await self._execute_tools(response.tool_calls)
 
-                # No-progress detection: same call + same result = stuck
-                batch_fps = [tool_call_fingerprint(tc.name, tc.input) for tc in response.tool_calls]
-                call_key = ":".join(sorted(batch_fps))
-                if is_no_progress(result_history, call_key, result_hash):
-                    logger.warning("No-progress loop: same call producing same result")
-                    self._log_error_lesson(
-                        f"No-progress loop: {response.tool_calls[0].name}",
-                        "Same call producing same result — need different approach",
-                    )
+                break_msg = self._process_tool_use(
+                    response.tool_calls, recent_fingerprints, result_history, result_hash,
+                )
+                if break_msg:
                     # Must append tool_results before the error message — Claude API
-                    # requires a tool_result for every tool_use block or the next
-                    # turn's API call will fail with a message validation error.
+                    # requires a tool_result for every tool_use block.
                     messages.append({"role": "user", "content": tool_results})
-                    final_text = (
-                        f"Kechirasiz, {response.tool_calls[0].name} "
-                        "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
-                    )
+                    final_text = break_msg
                     messages.append({"role": "assistant", "content": final_text})
                     break
-                result_history.append((call_key, result_hash))
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -754,6 +777,7 @@ class Agent:
         images: list[dict] | None = None,
         chat_id: int | None = None,
         message_id: int | None = None,
+        system_prompt_override: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Process a user message with streaming.
 
@@ -777,27 +801,17 @@ class Agent:
                     )
                     yield StreamEvent(type="done", response=ProviderResponse(content=msg))
                     return
-            async for event in self._run_turn_stream_impl(user_message, user_id, images=images):
+            async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):
                 yield event
 
     async def _run_turn_stream_impl(
-        self, user_message: str, user_id: str | None, *, images: list[dict] | None = None
+        self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None
     ) -> AsyncIterator[StreamEvent]:
         """Internal streaming implementation (called under lock)."""
-        self._current_user_id = user_id or ""
-        self.context.turn_count += 1
-        if user_id:
-            self.cost_tracker.add_turn(user_id)
-        messages = self._get_messages(user_id)
-        user_message = await self._prepare_turn(user_message, messages, images=images)
-
-        # Lifecycle hooks: pre-turn
-        modified = await self.hooks.fire("on_pre_turn", user_id=user_id or "", message=user_message)
-        if modified is not None:
-            user_message = modified
+        user_message, messages = await self._init_turn(user_message, user_id, images=images)
 
         recent_fingerprints: list[str] = []
-        result_history: list[tuple[str, str]] = []  # (call_hash, result_hash) for no-progress detection
+        result_history: list[tuple[str, str]] = []
         overflow_retries = 0
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
@@ -807,6 +821,7 @@ class Agent:
                 messages, user_id,
                 cached_system=cached_system, cached_tool_defs=cached_tool_defs,
                 user_message=user_message,
+                turn_prompt_override=system_prompt_override,
             )
             if cached_system is None:
                 cached_system = system
@@ -896,15 +911,6 @@ class Agent:
             stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
 
             if stop_reason == "tool_use" and tool_calls:
-                loop_msg = self._check_loop(tool_calls, recent_fingerprints)
-                if loop_msg:
-                    messages.append({"role": "assistant", "content": loop_msg})
-                    yield StreamEvent(
-                        type="done",
-                        response=ProviderResponse(content=loop_msg),
-                    )
-                    return
-
                 text = response.content if response else ""
                 usage = response.usage if response else Usage()
 
@@ -913,26 +919,19 @@ class Agent:
 
                 tool_results, result_hash = await self._execute_tools(tool_calls)
 
-                # No-progress detection: same call + same result = stuck
-                batch_fps = [tool_call_fingerprint(tc.name, tc.input) for tc in tool_calls]
-                call_key = ":".join(sorted(batch_fps))
-                if is_no_progress(result_history, call_key, result_hash):
-                    logger.warning("No-progress loop (stream): same call producing same result")
-                    no_progress_msg = (
-                        f"Kechirasiz, {tool_calls[0].name} "
-                        "bir xil natija qaytarmoqda. Boshqacha yondashuv kerak."
-                    )
+                break_msg = self._process_tool_use(
+                    tool_calls, recent_fingerprints, result_history, result_hash,
+                )
+                if break_msg:
                     # Must append tool_results before the error message — Claude API
-                    # requires a tool_result for every tool_use block or the next
-                    # turn's API call will fail with a message validation error.
+                    # requires a tool_result for every tool_use block.
                     messages.append({"role": "user", "content": tool_results})
-                    messages.append({"role": "assistant", "content": no_progress_msg})
+                    messages.append({"role": "assistant", "content": break_msg})
                     yield StreamEvent(
                         type="done",
-                        response=ProviderResponse(content=no_progress_msg),
+                        response=ProviderResponse(content=break_msg),
                     )
                     return
-                result_history.append((call_key, result_hash))
 
                 messages.append({"role": "user", "content": tool_results})
 

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import os
+
+logger = logging.getLogger(__name__)
 
 _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
@@ -223,8 +226,8 @@ def _load_secrets_env(secrets_path: str) -> None:
             value = value.strip()
             if key and key not in os.environ:
                 os.environ[key] = value
-    except Exception:
-        pass  # Best-effort; secrets.py will log warnings for missing vars
+    except Exception as e:
+        logger.warning("Failed to load secrets.env: %s", e)
 
 
 def load_config(path: str | None = None) -> Config:

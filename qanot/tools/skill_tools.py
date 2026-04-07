@@ -195,11 +195,11 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
             return json.dumps({"error": f"Script not found: {skill_name}/scripts/{script_name}"})
 
         # Security: resolve and check path is within skills dir
-        resolved = script_path.resolve()
-        try:
-            resolved.relative_to(skills_dir.resolve())
-        except ValueError:
+        from qanot.fs_safe import resolve_workspace_path
+        resolved_str, error = resolve_workspace_path(str(script_path), str(skills_dir))
+        if error:
             return json.dumps({"error": "Path traversal blocked"})
+        resolved = Path(resolved_str)
 
         # Determine interpreter
         if script_name.endswith(".py"):
@@ -268,10 +268,9 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
             return json.dumps({"error": f"Skill not found: {name}"})
 
         # Security check
-        resolved = skill_path.resolve()
-        try:
-            resolved.relative_to(skills_dir.resolve())
-        except ValueError:
+        from qanot.fs_safe import resolve_workspace_path
+        _, error = resolve_workspace_path(str(skill_path), str(skills_dir))
+        if error:
             return json.dumps({"error": "Path traversal blocked"})
 
         import shutil

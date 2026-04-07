@@ -7,6 +7,7 @@ simple interactions with zero quality loss.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -151,6 +152,7 @@ class RoutingProvider(LLMProvider):
         self.stats = RoutingStats()
         # Track which model was used in the previous turn
         self._last_model: str = ""
+        self._model_lock = asyncio.Lock()
 
     def _select_model(self, messages: list[dict]) -> str:
         """Pick model based on complexity + context continuity.
@@ -176,7 +178,7 @@ class RoutingProvider(LLMProvider):
                 break
 
         msg_score = classify_complexity(user_text)
-        ctx_score = self._assess_context(messages) if msg_score < 0.1 else 0.0
+        ctx_score = self._assess_context(messages) if msg_score < _GREETING_SCORE else 0.0
 
         self.stats.total += 1
 
@@ -188,19 +190,19 @@ class RoutingProvider(LLMProvider):
         # REGARDLESS of context. Context only matters for ambiguous messages.
         # "salom" is always simple. "ha" after tool use is continuation.
 
-        if msg_score < 0.1 and ctx_score < 0.5:
+        if msg_score < _GREETING_SCORE and ctx_score < _ACTIVE_CTX_SCORE:
             # Pure greeting in calm context → Haiku
             self.stats.routed_cheap += 1
             selected = self._cheap_model
             logger.info("Routing → %s (greeting: msg=%.2f)", selected, msg_score)
         else:
             self.stats.routed_primary += 1
-            if msg_score < 0.1:
+            if msg_score < _GREETING_SCORE:
                 # Short reply in active context ("ha", "yo'q" after tool use)
                 # → stay on previous model (continuation)
                 selected = self._last_model or self._mid_model
                 logger.info("Routing → %s (continuation: msg=%.2f, ctx=%.2f)", selected, msg_score, ctx_score)
-            elif msg_score < 0.4:
+            elif msg_score < _MODERATE_SCORE:
                 # Moderate message → Sonnet
                 selected = self._mid_model
                 logger.info("Routing → %s (moderate: msg=%.2f)", selected, msg_score)
@@ -269,11 +271,12 @@ class RoutingProvider(LLMProvider):
     ) -> ProviderResponse:
         """Route to appropriate model and call chat."""
         selected = self._select_model(messages)
-        prev = self._swap_model(selected)
-        try:
-            return await self._provider.chat(messages, tools, system)
-        finally:
-            self._swap_model(prev)
+        async with self._model_lock:
+            prev = self._swap_model(selected)
+            try:
+                return await self._provider.chat(messages, tools, system)
+            finally:
+                self._swap_model(prev)
 
     async def chat_stream(
         self,
@@ -283,12 +286,13 @@ class RoutingProvider(LLMProvider):
     ) -> AsyncIterator[StreamEvent]:
         """Route to appropriate model and stream."""
         selected = self._select_model(messages)
-        prev = self._swap_model(selected)
-        try:
-            async for event in self._provider.chat_stream(messages, tools, system):
-                yield event
-        finally:
-            self._swap_model(prev)
+        async with self._model_lock:
+            prev = self._swap_model(selected)
+            try:
+                async for event in self._provider.chat_stream(messages, tools, system):
+                    yield event
+            finally:
+                self._swap_model(prev)
 
     def status(self) -> dict:
         """Return routing statistics."""

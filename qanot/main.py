@@ -296,6 +296,10 @@ async def main() -> None:
         if agent_hooks.summary:
             logger.info("Plugin hooks registered: %s", agent_hooks.summary)
 
+    # Freeze plugin registries to prevent runtime mutations from sub-agents
+    from qanot.prompt import freeze_plugin_registries
+    freeze_plugin_registries()
+
     # Log registered tools
     logger.info("Tools registered: %s", ", ".join(tool_registry.tool_names))
 
@@ -495,10 +499,11 @@ async def main() -> None:
         # Fire shutdown hooks
         await agent_hooks.fire("on_shutdown")
         # Cancel all running sub-agents gracefully
-        try:
-            await subagent_manager.shutdown()
-        except Exception as e:
-            logger.warning("Error shutting down sub-agents: %s", e)
+        if subagent_manager:
+            try:
+                await subagent_manager.shutdown()
+            except Exception as e:
+                logger.warning("Error shutting down sub-agents: %s", e)
         # Stop agent bots
         for ab in agent_bots:
             try:

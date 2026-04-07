@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import time
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 
@@ -26,7 +27,7 @@ SUPPORTED_MODELS = {
 def _save_and_queue(
     image_data: bytes | str,
     images_dir: Path,
-    get_user_id: callable | None,
+    get_user_id: Callable[[], str | None] | None,
     prefix: str = "img",
 ) -> tuple[str, int]:
     """Save image bytes to disk and push to agent's pending images queue.
@@ -68,7 +69,7 @@ def _extract_image_from_response(response) -> tuple[bytes | None, str]:
     return image_data, response_text
 
 
-def _find_last_image_in_conversation(get_user_id: callable | None) -> bytes | None:
+def _find_last_image_in_conversation(get_user_id: Callable[[], str | None] | None) -> bytes | None:
     """Find the last user-sent image from the current conversation.
 
     Searches backwards through messages for an image content block,
@@ -105,7 +106,7 @@ def register_image_tools(
     workspace_dir: str,
     *,
     model: str = DEFAULT_IMAGE_MODEL,
-    get_user_id: callable = None,
+    get_user_id: Callable[[], str | None] | None = None,
 ) -> None:
     """Register image generation and editing tools."""
     _client = None

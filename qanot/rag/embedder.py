@@ -13,10 +13,38 @@ Fallback distinguishes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
+
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 1.0  # seconds
+
+
+async def _retry_embed(func, *, attempts: int = _RETRY_ATTEMPTS, base_delay: float = _RETRY_BASE_DELAY):
+    """Retry an async embedding call with exponential backoff.
+
+    Raises EmbedderHardError after exhausting retries.
+    Raises EmbedderSoftError for permanent failures (auth, invalid model).
+    """
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return await func()
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            # Permanent errors — don't retry
+            if any(k in err_str for k in ("invalid_api_key", "authentication", "401", "403", "model_not_found")):
+                raise EmbedderSoftError(f"Permanent embedder error: {e}") from e
+            # Transient errors — retry with backoff
+            if attempt < attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning("Embed attempt %d/%d failed: %s — retrying in %.1fs", attempt + 1, attempts, e, delay)
+                await asyncio.sleep(delay)
+    raise EmbedderHardError(f"Embedding failed after {attempts} attempts: {last_error}") from last_error
 
 
 class EmbedderSoftError(Exception):
@@ -103,25 +131,18 @@ class GeminiEmbedder(Embedder):
         all_embeddings: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
         for i in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[i : i + _EMBED_BATCH_SIZE]
-            response = await self.client.embeddings.create(
-                input=batch,
-                model=self.model,
+            response = await _retry_embed(
+                lambda b=batch: self.client.embeddings.create(input=b, model=self.model),
             )
             # Some providers return d.index=None — use enumerate as fallback
             for j, d in enumerate(response.data):
                 idx = d.index if d.index is not None else j
                 all_embeddings[i + idx] = d.embedding
             logger.debug("Gemini embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))
+        # Verify all slots filled
+        if any(e is None for e in all_embeddings):
+            raise EmbedderHardError("Gemini returned incomplete embeddings")
         return all_embeddings
-
-
-_EMBED_BATCH_SIZE = 100
-
-_OPENAI_MODEL_DIMS: dict[str, int] = {
-    "nomic-embed-text": 768,
-    "text-embedding-3-small": 1536,
-    "text-embedding-3-large": 3072,
-}
 
 
 class OpenAIEmbedder(Embedder):
@@ -146,9 +167,8 @@ class OpenAIEmbedder(Embedder):
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[i : i + _EMBED_BATCH_SIZE]
-            response = await self.client.embeddings.create(
-                input=batch,
-                model=self.model,
+            response = await _retry_embed(
+                lambda b=batch: self.client.embeddings.create(input=b, model=self.model),
             )
             all_embeddings.extend(d.embedding for d in response.data)
             logger.debug("OpenAI embedded batch %d-%d (%d texts)", i, i + len(batch), len(batch))

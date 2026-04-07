@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -145,7 +146,7 @@ def register_agent_manager_tools(
     provider: "LLMProvider",
     parent_registry: ToolRegistry,
     *,
-    get_user_id: callable,
+    get_user_id: Callable[[], str | None],
     subagent_manager=None,
 ) -> None:
     """Register dynamic agent creation/management tools."""

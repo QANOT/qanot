@@ -6,13 +6,14 @@ Inspired by OpenClaw's subagent-registry but much simpler.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
-from qanot.orchestrator.types import SubagentRun, TERMINAL_STATUSES
+from qanot.orchestrator.types import SubagentRun
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class SubagentRegistry:
         self._runs: dict[str, SubagentRun] = {}
         self._by_user: dict[str, list[str]] = {}  # user_id -> [run_ids]
         self._persist_path = Path(persist_path) if persist_path else None
+        self._lock = asyncio.Lock()
 
     def register(self, run: SubagentRun) -> None:
         """Register a new run."""
@@ -71,10 +73,13 @@ class SubagentRegistry:
         return len(self.get_active_for_user(user_id))
 
     def cleanup_stale(self, max_age: float = DEFAULT_MAX_AGE) -> int:
-        """Remove terminal runs older than max_age. Returns count removed."""
+        """Remove terminal runs older than max_age. Returns count removed.
+
+        Note: For concurrent-safe cleanup, use cleanup_stale_async() instead.
+        """
         now = time.time()
         to_remove: list[str] = []
-        for run_id, run in self._runs.items():
+        for run_id, run in list(self._runs.items()):
             if run.is_terminal and (now - run.created_at) > max_age:
                 to_remove.append(run_id)
 
@@ -89,6 +94,11 @@ class SubagentRegistry:
             self._persist()
             logger.debug("Cleaned up %d stale runs", len(to_remove))
         return len(to_remove)
+
+    async def cleanup_stale_async(self, max_age: float = DEFAULT_MAX_AGE) -> int:
+        """Thread-safe cleanup under asyncio.Lock."""
+        async with self._lock:
+            return self.cleanup_stale(max_age)
 
     def persist(self) -> None:
         """Force persist to disk (public API)."""

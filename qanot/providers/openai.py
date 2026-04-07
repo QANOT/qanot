@@ -174,10 +174,16 @@ class OpenAIProvider(LLMProvider):
         tc_list = []
         for i, tc in enumerate(tool_calls_raw):
             fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
             tc_list.append(ToolCall(
                 id=tc.get("id", f"call_{i}"),
                 name=fn.get("name", ""),
-                input=fn.get("arguments", {}),
+                input=args,
             ))
 
         inp = data.get("prompt_eval_count", 0)

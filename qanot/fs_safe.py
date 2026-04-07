@@ -48,6 +48,30 @@ def is_path_within_root(root: str, path: str) -> bool:
         return False
 
 
+def resolve_workspace_path(path: str, workspace_dir: str) -> tuple[str, str | None]:
+    """Resolve a path within a workspace directory, blocking traversal.
+
+    Handles both relative and absolute paths:
+    - Relative paths are resolved relative to workspace_dir
+    - Absolute paths are allowed if they resolve within workspace_dir
+
+    Returns:
+        (resolved_path, error) — error is None if path is valid.
+    """
+    from pathlib import Path as _Path
+    ws = _Path(workspace_dir).resolve()
+    p = _Path(path)
+    if p.is_absolute():
+        resolved = p.resolve()
+    else:
+        resolved = (ws / path).resolve()
+    try:
+        resolved.relative_to(ws)
+    except ValueError:
+        return str(resolved), "Path resolves outside workspace directory"
+    return str(resolved), None
+
+
 def validate_read_path(path: str) -> str | None:
     """Validate a file path for reading.
 

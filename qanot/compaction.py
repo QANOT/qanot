@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -163,7 +164,7 @@ def messages_to_text(messages: list[dict]) -> str:
 
 def _chunk_messages(
     messages: list[dict],
-    should_flush: "callable",
+    should_flush: Callable[[], bool],
     flush_oversized: bool = False,
     max_chunks: int | None = None,
 ) -> list[list[dict]]:
@@ -317,10 +318,13 @@ async def _generate_summary(
     if len(prompt) > 48_000:
         prompt = prompt[:48_000] + "\n\n[... truncated for summarization]"
 
-    response = await provider.chat(
-        messages=[{"role": "user", "content": prompt}],
-        tools=None,
-        system=SUMMARIZATION_SYSTEM,
+    response = await asyncio.wait_for(
+        provider.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=None,
+            system=SUMMARIZATION_SYSTEM,
+        ),
+        timeout=60,
     )
     return response.content.strip()
 

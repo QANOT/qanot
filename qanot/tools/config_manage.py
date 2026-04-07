@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────
 
-PROPOSAL_TTL_SECONDS = 600  # 10 minutes
+from qanot.tools._approval_base import PROPOSAL_TTL_SECONDS, now as _now, append_audit as _base_append_audit
 
 # Fields the agent may set via chat. Everything else is rejected at the tool
 # layer. Keep this list MINIMAL — system-critical secrets must require SSH.
@@ -78,8 +78,6 @@ _REGISTERED_REGISTRIES: set[int] = set()
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def _now() -> float:
-    return time.time()
 
 
 def _mask_value(v: str) -> str:
@@ -220,21 +218,8 @@ _MISSING = _Missing()
 
 
 def _append_audit(workspace_dir: str, user_id: str, event: str, details: dict) -> None:
-    """Append a config-secret audit event to the daily note.
-
-    The details dict must NEVER contain the raw secret value — only field
-    names, hash prefixes, and status strings.
-    """
-    try:
-        from qanot.memory import write_daily_note
-        payload = json.dumps(details, ensure_ascii=False, sort_keys=True)
-        write_daily_note(
-            content=f"**[secret:{event}]** {payload}",
-            workspace_dir=workspace_dir,
-            user_id=user_id,
-        )
-    except Exception as e:
-        logger.warning("Failed to write secret audit entry: %s", e)
+    """Append a config-secret audit event to the daily note."""
+    _base_append_audit(workspace_dir, user_id, event, details, tag="secret")
 
 
 def _trigger_restart(reason: str) -> None:
@@ -543,7 +528,115 @@ def register_config_tools(
         category="core",
     )
 
-    logger.info("Config management tools registered (delete_message, config_set_secret)")
+    # ── config_toggle ──
+    # Safe boolean fields the agent can toggle (no secrets, no critical paths)
+    _TOGGLEABLE_FIELDS: frozenset[str] = frozenset({
+        "voicecall_enabled",
+        "reactions_enabled",
+        "routing_enabled",
+        "code_execution",
+        "browser_enabled",
+        "dashboard_enabled",
+        "rag_enabled",
+        "memory_tool",
+        "backup_enabled",
+        "heartbeat_enabled",
+        "briefing_enabled",
+        "agents_enabled",
+    })
+
+    # Fields that require additional config to be present before enabling
+    _TOGGLE_PREREQUISITES: dict[str, list[str]] = {
+        "voicecall_enabled": ["voicecall_api_id", "voicecall_api_hash", "voicecall_session"],
+    }
+
+    async def config_toggle(params: dict) -> str:
+        """Toggle a boolean config field. Requires bot restart to take effect."""
+        field_name = (params.get("field") or "").strip()
+        value = params.get("value")  # True/False or "true"/"false"
+
+        if not field_name:
+            return json.dumps({"error": "field is required"})
+
+        if field_name not in _TOGGLEABLE_FIELDS:
+            return json.dumps({
+                "error": f"Field '{field_name}' is not toggleable. "
+                f"Allowed: {', '.join(sorted(_TOGGLEABLE_FIELDS))}",
+            })
+
+        # Normalize value
+        if isinstance(value, str):
+            value = value.lower() in ("true", "1", "on", "yes")
+        elif value is None:
+            # If no value given, toggle current
+            current = getattr(config, field_name, False)
+            value = not current
+
+        # Check prerequisites
+        prereqs = _TOGGLE_PREREQUISITES.get(field_name, [])
+        if value and prereqs:
+            missing = [p for p in prereqs if not getattr(config, p, None)]
+            if missing:
+                return json.dumps({
+                    "error": f"Cannot enable {field_name}: missing required config fields: {', '.join(missing)}. "
+                    f"Set them first with config_set_secret or qanot config set.",
+                })
+
+        # Apply
+        setattr(config, field_name, value)
+
+        # Persist to config.json
+        try:
+            from qanot.config import read_config_json, write_config_json
+            raw = read_config_json()
+            raw[field_name] = value
+            write_config_json(raw)
+        except Exception as e:
+            logger.warning("Failed to persist config toggle %s: %s", field_name, e)
+            return json.dumps({
+                "success": True,
+                "field": field_name,
+                "value": value,
+                "warning": "Changed in memory but failed to persist to disk. Will reset on restart.",
+            })
+
+        status = "enabled" if value else "disabled"
+        needs_restart = field_name in {"voicecall_enabled", "browser_enabled", "agents_enabled", "webhook_enabled", "webchat_enabled"}
+
+        result = {
+            "success": True,
+            "field": field_name,
+            "value": value,
+            "message": f"{field_name} {status}.",
+        }
+        if needs_restart:
+            result["note"] = "Restart required for this change to take effect. Use /stop then qanot start, or qanot restart."
+
+        return json.dumps(result)
+
+    registry.register(
+        name="config_toggle",
+        description="Toggle a boolean config field on/off. For features like voice calls, routing, code execution, reactions, browser, etc.",
+        parameters={
+            "type": "object",
+            "required": ["field"],
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "Config field to toggle",
+                    "enum": sorted(_TOGGLEABLE_FIELDS),
+                },
+                "value": {
+                    "type": "boolean",
+                    "description": "Set to true (enable) or false (disable). If omitted, toggles current value.",
+                },
+            },
+        },
+        handler=config_toggle,
+        category="core",
+    )
+
+    logger.info("Config management tools registered (delete_message, config_set_secret, config_toggle)")
 
 
 # ── Callback handlers ─────────────────────────────────────────────────
