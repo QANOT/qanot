@@ -57,6 +57,10 @@ MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
 BASE_DELAY = 1.0  # seconds, base for exponential backoff
 MAX_DELAY = 30.0  # seconds, backoff ceiling
 
+# Sentinel for iteration control flow
+_CONTINUE = "_CONTINUE"  # retry iteration (e.g. after overflow compaction)
+_FATAL = "_FATAL"  # unrecoverable error, abort loop
+
 
 class Agent:
     """Core agent that runs the tool_use loop."""
@@ -591,6 +595,223 @@ class Agent:
         )
         return final_text
 
+    async def _run_loop(
+        self,
+        user_message: str,
+        user_id: str | None,
+        messages: list[dict],
+        *,
+        system_prompt_override: str | None = None,
+        stream: bool = False,
+    ) -> AsyncIterator[StreamEvent]:
+        """Unified agent loop — yields StreamEvent objects.
+
+        Both streaming and non-streaming paths use this. The `stream` flag
+        controls whether the provider is called with chat_stream or chat.
+
+        Yields:
+            StreamEvent(type="text_delta") — incremental text (stream mode only)
+            StreamEvent(type="tool_use") — tool execution signal
+            StreamEvent(type="done") — final response (always the last event)
+        """
+        recent_fingerprints: list[str] = []
+        result_history: list[tuple[str, str]] = []
+        overflow_retries = 0
+        cached_system: str | None = None
+        cached_tool_defs: list[dict] | None = None
+
+        for iteration in range(self._max_iterations):
+            messages, system, tool_defs = await self._prepare_iteration(
+                messages, user_id,
+                cached_system=cached_system, cached_tool_defs=cached_tool_defs,
+                user_message=user_message,
+                turn_prompt_override=system_prompt_override,
+            )
+            if cached_system is None:
+                cached_system = system
+                cached_tool_defs = tool_defs
+
+            # ── Call provider (streaming or non-streaming) ──
+            response: ProviderResponse | None = None
+            tool_calls: list[ToolCall] = []
+            text_parts: list[str] = []
+
+            if stream:
+                try:
+                    async for event in self.provider.chat_stream(
+                        messages=messages,
+                        tools=tool_defs if tool_defs else None,
+                        system=system,
+                    ):
+                        if event.type == "text_delta":
+                            text_parts.append(event.text)
+                            yield event
+                        elif event.type == "tool_use" and event.tool_call:
+                            tool_calls.append(event.tool_call)
+                        elif event.type == "done":
+                            response = event.response
+                except Exception as e:
+                    result = await self._handle_provider_error_stream(
+                        e, messages, tool_defs, system, text_parts,
+                        overflow_retries, user_id,
+                    )
+                    if result == _CONTINUE:
+                        overflow_retries += 1
+                        messages = await self._handle_overflow(messages, user_id)
+                        continue
+                    if isinstance(result, tuple):
+                        # Fallback succeeded: (response, tool_calls, new_text_events)
+                        response, tool_calls = result[0], result[1]
+                        for ev in result[2]:
+                            yield ev
+                    else:
+                        # Fatal: yield done event and return
+                        yield StreamEvent(type="done", response=ProviderResponse(content=result))
+                        return
+            else:
+                try:
+                    response = await self._call_provider_with_retry(
+                        messages=messages,
+                        tools=tool_defs if tool_defs else None,
+                        system=system,
+                    )
+                except Exception as e:
+                    error_type = classify_error(e)
+                    logger.error("Provider failed after retries: %s [%s]", e, error_type)
+
+                    if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
+                        overflow_retries += 1
+                        logger.info("Overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
+                        messages = await self._handle_overflow(messages, user_id)
+                        continue
+
+                    self._log_error_lesson(f"Provider error [{error_type}]", str(e))
+                    error_msg = self._error_message_for_type(error_type)
+                    yield StreamEvent(type="done", response=ProviderResponse(content=error_msg))
+                    return
+
+            # ── No response from stream ──
+            if response is None and not tool_calls:
+                break
+
+            if response:
+                self._track_usage(response)
+
+            stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
+            content = response.content if response else ""
+            usage = response.usage if response else Usage()
+
+            # ── Tool use ──
+            if stop_reason == "tool_use" and (response.tool_calls if response else tool_calls):
+                active_tool_calls = response.tool_calls if (response and response.tool_calls) else tool_calls
+                messages.append(self._build_assistant_tool_message(content, active_tool_calls))
+                self._log_tool_use(content, active_tool_calls, usage)
+
+                tool_results, result_hash = await self._execute_tools(active_tool_calls)
+
+                break_msg = self._process_tool_use(
+                    active_tool_calls, recent_fingerprints, result_history, result_hash,
+                )
+                if break_msg:
+                    messages.append({"role": "user", "content": tool_results})
+                    messages.append({"role": "assistant", "content": break_msg})
+                    yield StreamEvent(type="done", response=ProviderResponse(content=break_msg))
+                    return
+
+                messages.append({"role": "user", "content": tool_results})
+                if stream:
+                    yield StreamEvent(type="tool_use", tool_call=active_tool_calls[0] if active_tool_calls else None)
+
+            # ── End turn ──
+            elif stop_reason == "end_turn":
+                final_text = content or "".join(text_parts)
+                final_text = self._handle_end_turn(final_text, user_message, messages, usage)
+
+                modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
+                if modified is not None:
+                    final_text = modified
+
+                yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
+                return
+
+            # ── Other stop reason ──
+            else:
+                final_text = content or "(No response)"
+                messages.append({"role": "assistant", "content": final_text})
+                yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
+                return
+
+        # Max iterations exhausted
+        max_iter_msg = "(Agent reached maximum iterations)"
+        messages.append({"role": "assistant", "content": max_iter_msg})
+        logger.warning("Agent hit max iterations (%d)", self._max_iterations)
+        yield StreamEvent(type="done", response=ProviderResponse(content=max_iter_msg))
+
+    async def _handle_provider_error_stream(
+        self,
+        error: Exception,
+        messages: list[dict],
+        tool_defs: list[dict] | None,
+        system: str,
+        text_parts: list[str],
+        overflow_retries: int,
+        user_id: str | None,
+    ) -> str | tuple:
+        """Handle provider errors in streaming mode.
+
+        Returns:
+            _CONTINUE — retry the iteration (after overflow compaction)
+            (response, tool_calls, new_events) — fallback succeeded
+            str — fatal error message
+        """
+        error_type = classify_error(error)
+        logger.error("Stream error: %s [%s]", error, error_type)
+
+        if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
+            return _CONTINUE
+
+        # Transient errors: try non-streaming fallback
+        if error_type in TRANSIENT_FAILURES:
+            await asyncio.sleep(3)
+            try:
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=tool_defs if tool_defs else None,
+                    system=system,
+                )
+                new_events: list[StreamEvent] = []
+                already_streamed = "".join(text_parts)
+                if response.content:
+                    new_text = response.content
+                    if already_streamed and new_text.startswith(already_streamed):
+                        remaining = new_text[len(already_streamed):]
+                        if remaining:
+                            new_events.append(StreamEvent(type="text_delta", text=remaining))
+                    elif not already_streamed:
+                        new_events.append(StreamEvent(type="text_delta", text=new_text))
+                    else:
+                        new_events.append(StreamEvent(type="text_delta", text="\n" + new_text))
+                return (response, response.tool_calls, new_events)
+            except Exception as e2:
+                logger.error("Stream fallback failed for user %s: %s", user_id, e2, exc_info=True)
+                return "Xatolik yuz berdi, qaytadan urinib ko'ring."
+
+        if error_type == ERROR_CONTEXT_OVERFLOW:
+            return "Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang."
+
+        return "Xatolik yuz berdi, qaytadan urinib ko'ring."
+
+    @staticmethod
+    def _error_message_for_type(error_type: str) -> str:
+        """Map error type to user-facing Uzbek message."""
+        messages = {
+            ERROR_RATE_LIMIT: "Limitga yetdik, biroz kutib qaytadan urinib ko'ring.",
+            ERROR_AUTH: "API kalitda xatolik. Administrator bilan bog'laning.",
+            ERROR_BILLING: "API hisob muammosi. Administrator bilan bog'laning.",
+            ERROR_CONTEXT_OVERFLOW: "Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang.",
+        }
+        return messages.get(error_type, "Xatolik yuz berdi, qaytadan urinib ko'ring.")
+
     async def _call_provider_with_retry(
         self,
         messages: list[dict],
@@ -679,94 +900,9 @@ class Agent:
         user_message, messages = await self._init_turn(user_message, user_id, images=images)
 
         final_text = ""
-        recent_fingerprints: list[str] = []
-        result_history: list[tuple[str, str]] = []
-        overflow_retries = 0
-        cached_system: str | None = None
-        cached_tool_defs: list[dict] | None = None
-
-        for iteration in range(self._max_iterations):
-            messages, system, tool_defs = await self._prepare_iteration(
-                messages, user_id,
-                cached_system=cached_system, cached_tool_defs=cached_tool_defs,
-                user_message=user_message,
-                turn_prompt_override=system_prompt_override,
-            )
-            # Cache after first iteration — prompt/tools don't change within a turn
-            if cached_system is None:
-                cached_system = system
-                cached_tool_defs = tool_defs
-
-            try:
-                response = await self._call_provider_with_retry(
-                    messages=messages,
-                    tools=tool_defs if tool_defs else None,
-                    system=system,
-                )
-            except Exception as e:
-                error_type = classify_error(e)
-                logger.error("Provider failed after retries: %s [%s]", e, error_type)
-
-                # Context overflow -> compact and retry
-                if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
-                    overflow_retries += 1
-                    logger.info("Overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
-                    messages = await self._handle_overflow(messages, user_id)
-                    continue
-
-                # Log error for agent learning
-                self._log_error_lesson(f"Provider error [{error_type}]", str(e))
-
-                if error_type == ERROR_RATE_LIMIT:
-                    return "Limitga yetdik, biroz kutib qaytadan urinib ko'ring."
-                elif error_type == ERROR_AUTH:
-                    return "API kalitda xatolik. Administrator bilan bog'laning."
-                elif error_type == ERROR_BILLING:
-                    return "API hisob muammosi. Administrator bilan bog'laning."
-                elif error_type == ERROR_CONTEXT_OVERFLOW:
-                    return "Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang."
-                return "Xatolik yuz berdi, qaytadan urinib ko'ring."
-
-            self._track_usage(response)
-
-            if response.stop_reason == "tool_use" and response.tool_calls:
-                messages.append(
-                    self._build_assistant_tool_message(response.content, response.tool_calls)
-                )
-                self._log_tool_use(response.content, response.tool_calls, response.usage)
-
-                tool_results, result_hash = await self._execute_tools(response.tool_calls)
-
-                break_msg = self._process_tool_use(
-                    response.tool_calls, recent_fingerprints, result_history, result_hash,
-                )
-                if break_msg:
-                    # Must append tool_results before the error message — Claude API
-                    # requires a tool_result for every tool_use block.
-                    messages.append({"role": "user", "content": tool_results})
-                    final_text = break_msg
-                    messages.append({"role": "assistant", "content": final_text})
-                    break
-
-                messages.append({"role": "user", "content": tool_results})
-
-            elif response.stop_reason == "end_turn":
-                final_text = response.content
-                final_text = self._handle_end_turn(final_text, user_message, messages, response.usage)
-                break
-            else:
-                final_text = response.content or "(No response)"
-                messages.append({"role": "assistant", "content": final_text})
-                break
-        else:
-            final_text = "(Agent reached maximum iterations)"
-            messages.append({"role": "assistant", "content": final_text})
-            logger.warning("Agent hit max iterations (%d)", self._max_iterations)
-
-        # Lifecycle hooks: post-turn
-        modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
-        if modified is not None:
-            final_text = modified
+        async for event in self._run_loop(user_message, user_id, messages, system_prompt_override=system_prompt_override, stream=False):
+            if event.type == "done" and event.response:
+                final_text = event.response.content or ""
 
         return final_text
 
@@ -810,157 +946,8 @@ class Agent:
         """Internal streaming implementation (called under lock)."""
         user_message, messages = await self._init_turn(user_message, user_id, images=images)
 
-        recent_fingerprints: list[str] = []
-        result_history: list[tuple[str, str]] = []
-        overflow_retries = 0
-        cached_system: str | None = None
-        cached_tool_defs: list[dict] | None = None
-
-        for iteration in range(self._max_iterations):
-            messages, system, tool_defs = await self._prepare_iteration(
-                messages, user_id,
-                cached_system=cached_system, cached_tool_defs=cached_tool_defs,
-                user_message=user_message,
-                turn_prompt_override=system_prompt_override,
-            )
-            if cached_system is None:
-                cached_system = system
-                cached_tool_defs = tool_defs
-
-            response: ProviderResponse | None = None
-            text_parts: list[str] = []
-            tool_calls: list[ToolCall] = []
-
-            try:
-                async for event in self.provider.chat_stream(
-                    messages=messages,
-                    tools=tool_defs if tool_defs else None,
-                    system=system,
-                ):
-                    if event.type == "text_delta":
-                        text_parts.append(event.text)
-                        yield event
-                    elif event.type == "tool_use" and event.tool_call:
-                        tool_calls.append(event.tool_call)
-                    elif event.type == "done":
-                        response = event.response
-            except Exception as e:
-                error_type = classify_error(e)
-                logger.error("Stream error: %s [%s]", e, error_type)
-
-                # Context overflow -> compact and retry the iteration
-                if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
-                    overflow_retries += 1
-                    logger.info("Stream overflow recovery attempt %d/%d", overflow_retries, MAX_COMPACTION_RETRIES)
-                    messages = await self._handle_overflow(messages, user_id)
-                    continue
-
-                # Try non-streaming fallback for transient errors
-                if error_type in TRANSIENT_FAILURES:
-                    await asyncio.sleep(3)
-                    try:
-                        response = await self.provider.chat(
-                            messages=messages,
-                            tools=tool_defs if tool_defs else None,
-                            system=system,
-                        )
-                        # Calculate what text is new vs already streamed
-                        already_streamed = "".join(text_parts)
-                        if response.content:
-                            new_text = response.content
-                            if already_streamed and new_text.startswith(already_streamed):
-                                # Only yield the part not yet streamed
-                                remaining = new_text[len(already_streamed):]
-                                if remaining:
-                                    yield StreamEvent(type="text_delta", text=remaining)
-                            elif not already_streamed:
-                                yield StreamEvent(type="text_delta", text=new_text)
-                            else:
-                                # Partial stream doesn't match fallback — yield replacement marker
-                                yield StreamEvent(type="text_delta", text="\n" + new_text)
-                            text_parts = [response.content]  # Reset to full fallback content
-                        tool_calls = response.tool_calls
-                    except Exception as e:
-                        logger.error("Stream fallback failed for user %s: %s", user_id, e, exc_info=True)
-                        yield StreamEvent(
-                            type="done",
-                            response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),
-                        )
-                        return
-                elif error_type == ERROR_CONTEXT_OVERFLOW:
-                    yield StreamEvent(
-                        type="done",
-                        response=ProviderResponse(
-                            content="Suhbat juda uzun bo'lib qoldi. /reset buyrug'ini yuboring va qaytadan boshlang."
-                        ),
-                    )
-                    return
-                else:
-                    yield StreamEvent(
-                        type="done",
-                        response=ProviderResponse(content="Xatolik yuz berdi, qaytadan urinib ko'ring."),
-                    )
-                    return
-
-            if response is None and not tool_calls:
-                break
-
-            if response:
-                self._track_usage(response)
-
-            stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
-
-            if stop_reason == "tool_use" and tool_calls:
-                text = response.content if response else ""
-                usage = response.usage if response else Usage()
-
-                messages.append(self._build_assistant_tool_message(text, tool_calls))
-                self._log_tool_use(text, tool_calls, usage)
-
-                tool_results, result_hash = await self._execute_tools(tool_calls)
-
-                break_msg = self._process_tool_use(
-                    tool_calls, recent_fingerprints, result_history, result_hash,
-                )
-                if break_msg:
-                    # Must append tool_results before the error message — Claude API
-                    # requires a tool_result for every tool_use block.
-                    messages.append({"role": "user", "content": tool_results})
-                    messages.append({"role": "assistant", "content": break_msg})
-                    yield StreamEvent(
-                        type="done",
-                        response=ProviderResponse(content=break_msg),
-                    )
-                    return
-
-                messages.append({"role": "user", "content": tool_results})
-
-                yield StreamEvent(type="tool_use", tool_call=tool_calls[0] if tool_calls else None)
-
-            elif stop_reason == "end_turn":
-                final_text = response.content if response else "".join(text_parts)
-                usage = response.usage if response else Usage()
-                final_text = self._handle_end_turn(final_text, user_message, messages, usage)
-
-                # Lifecycle hooks: post-turn
-                modified = await self.hooks.fire("on_post_turn", user_id=user_id or "", message=user_message, response=final_text)
-                if modified is not None:
-                    final_text = modified
-
-                yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
-                return
-            else:
-                final_text = (response.content if response else "") or "(No response)"
-                messages.append({"role": "assistant", "content": final_text})
-                yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
-                return
-
-        max_iter_msg = "(Agent reached maximum iterations)"
-        messages.append({"role": "assistant", "content": max_iter_msg})
-        yield StreamEvent(
-            type="done",
-            response=ProviderResponse(content=max_iter_msg),
-        )
+        async for event in self._run_loop(user_message, user_id, messages, system_prompt_override=system_prompt_override, stream=True):
+            yield event
 
     def reset(self, user_id: str | None = None) -> None:
         """Reset conversation state for a user, or all if user_id is None."""
