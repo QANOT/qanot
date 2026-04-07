@@ -203,6 +203,30 @@ class Config:
         return self.voice_api_keys.get(provider or self.voice_provider, self.voice_api_key)
 
 
+def _load_secrets_env(secrets_path: str) -> None:
+    """Load KEY=VALUE pairs from secrets.env into os.environ.
+
+    Silently skips if the file doesn't exist (first boot before any secret
+    is set).  Only sets env vars that are NOT already set, so explicit env
+    vars in the systemd/launchd unit take precedence.
+    """
+    p = Path(secrets_path)
+    if not p.is_file():
+        return
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception:
+        pass  # Best-effort; secrets.py will log warnings for missing vars
+
+
 def load_config(path: str | None = None) -> Config:
     """Load configuration from a JSON file and return a Config dataclass.
 
@@ -225,6 +249,11 @@ def load_config(path: str | None = None) -> Config:
         raise FileNotFoundError(f"Config file not found: {path}")
 
     raw = json.loads(p.read_text(encoding="utf-8"))
+
+    # Load secrets.env into os.environ BEFORE resolving SecretRef values.
+    # config_set_secret writes KEY=VALUE pairs to this file; without loading
+    # it here, {"env": "QANOT_BRAVE_API_KEY"} resolves to empty after restart.
+    _load_secrets_env(raw.get("secrets_env_path", "/data/secrets.env"))
 
     # Resolve SecretRef values (env vars, files) before parsing config
     from qanot.secrets import resolve_config_secrets
