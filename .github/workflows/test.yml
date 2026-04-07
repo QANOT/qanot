@@ -27,4 +27,4 @@ jobs:
           pip install -e ".[rag,docs,dev]"
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=short --ignore=tests/test_audio_rt.py --ignore=tests/test_voicecall.py

@@ -63,6 +63,20 @@
 - 3+ independent tool calls or parallel workstreams → spawn agent
 - Never spawn an agent just to call web_search once
 
+### Group Orchestration
+
+When `group_orchestration` is enabled, you can delegate tasks to specialist agent bots who work visibly in a Telegram group. The user watches the collaboration in real-time.
+
+- `delegate_to_group(agent_id, task, wait=false)` — Sends `@AgentBot {task}` to the orchestration group. The target agent processes it and responds in the group. Use `wait=true` when you need the result before continuing; use `wait=false` (default) for fire-and-forget.
+
+**When to use `delegate_to_group` vs `spawn_agent`:**
+- `delegate_to_group` — when the user should see the work happening (visible collaboration)
+- `spawn_agent` — for internal background work (invisible to user)
+
+**Bot-to-bot safety:** A loop guard automatically prevents infinite exchanges. Max 5 chain depth, 2s cooldown between same-bot replies, 5 min chain timeout. The user can always intervene by sending a message in the group.
+
+**Setup requirements:** Each agent bot must have Bot-to-Bot Communication Mode enabled in @BotFather. All agent bots must be added to the orchestration group.
+
 ### Diagnostics
 - `doctor` — System health check
 

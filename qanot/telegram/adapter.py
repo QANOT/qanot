@@ -284,6 +284,21 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         if not message.from_user:
             return
 
+        # Group orchestration: route messages in the orchestration group
+        if (
+            self.config.group_orchestration
+            and message.chat.id == self.config.orchestration_group_id
+            and hasattr(self, "_group_orchestrator")
+            and self._group_orchestrator
+        ):
+            try:
+                handled = await self._group_orchestrator.route_message(message)
+                if handled:
+                    return
+            except Exception as e:
+                logger.warning("Group orchestrator routing failed: %s", e)
+            # Fall through to default handling if not routed
+
         user_id_int = message.from_user.id
         if not self._is_allowed(user_id_int):
             return

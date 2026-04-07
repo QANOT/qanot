@@ -438,6 +438,58 @@ async def main() -> None:
     from qanot.agent_bot import start_agent_bots
     agent_bots = await start_agent_bots(config, provider, tool_registry, subagent_manager)
 
+    # Wire group orchestration (visible multi-agent collaboration in a Telegram group)
+    group_orchestrator = None
+    if config.group_orchestration and config.orchestration_group_id:
+        from qanot.orchestrator.loop_guard import LoopGuard
+        from qanot.orchestrator.group import GroupOrchestrator
+        from qanot.orchestrator.group_tools import register_group_orchestration_tools
+
+        loop_guard = LoopGuard(
+            max_depth=config.bot_to_bot_max_depth,
+            cooldown_seconds=config.bot_to_bot_cooldown,
+            chain_timeout_seconds=config.bot_to_bot_chain_timeout,
+        )
+
+        # Build agent_id -> AgentBot mapping from launched bots
+        from qanot.tools.agent_manager import _active_agent_bots
+        agent_bots_dict: dict[str, object] = dict(_active_agent_bots)
+        # Also include bots from start_agent_bots that may not be in _active_agent_bots
+        for ab in agent_bots:
+            if ab.agent_def.id not in agent_bots_dict:
+                agent_bots_dict[ab.agent_def.id] = ab
+
+        group_orchestrator = GroupOrchestrator(
+            config=config,
+            main_bot=telegram.bot,
+            agent_bots=agent_bots_dict,
+            loop_guard=loop_guard,
+            registry=subagent_manager.registry if subagent_manager else None,
+        )
+
+        # Inject into adapter
+        telegram._group_orchestrator = group_orchestrator
+
+        # Inject into each agent bot
+        for ab in agent_bots:
+            ab.group_orchestrator = group_orchestrator
+
+        # Register delegate_to_group tool on the main bot's registry
+        register_group_orchestration_tools(
+            tool_registry, config, group_orchestrator,
+            get_user_id=get_user_id,
+        )
+        logger.info(
+            "Group orchestration enabled (group_id=%d, %d agent bots)",
+            config.orchestration_group_id, len(agent_bots_dict),
+        )
+    else:
+        if config.group_orchestration and not config.orchestration_group_id:
+            logger.warning(
+                "group_orchestration is enabled but orchestration_group_id is 0 — "
+                "group orchestration disabled"
+            )
+
     # Start web dashboard (with optional webhook + webchat routes)
     dashboard = None
     if getattr(config, "dashboard_enabled", True):

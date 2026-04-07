@@ -22,6 +22,7 @@ from aiogram.types import Message
 if TYPE_CHECKING:
     from qanot.config import AgentDefinition, Config
     from qanot.agent import Agent
+    from qanot.orchestrator.group import GroupOrchestrator
     from qanot.registry import ToolRegistry
     from qanot.providers.base import LLMProvider
 
@@ -45,6 +46,7 @@ class AgentBot:
         provider: LLMProvider,
         parent_registry: ToolRegistry,
         subagent_manager=None,
+        group_orchestrator: GroupOrchestrator | None = None,
     ):
         self.agent_def = agent_def
         self.config = config
@@ -55,6 +57,8 @@ class AgentBot:
         self._subagent_manager = subagent_manager
         self._parent_registry = parent_registry
         self._bot_username: str = ""  # Resolved on first message
+        self._bot_id: int = 0  # Resolved on first message
+        self.group_orchestrator: GroupOrchestrator | None = group_orchestrator
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -112,11 +116,12 @@ class AgentBot:
         await message.answer("Suhbat tozalandi.")
 
     async def _resolve_bot_username(self) -> str:
-        """Resolve and cache this bot's username."""
+        """Resolve and cache this bot's username and ID."""
         if not self._bot_username:
             try:
                 me = await self.bot.get_me()
                 self._bot_username = (me.username or "").lower()
+                self._bot_id = me.id
             except Exception as e:
                 logger.debug("Failed to resolve bot username: %s", e)
         return self._bot_username
@@ -148,18 +153,46 @@ class AgentBot:
 
         return False
 
+    def _is_orchestration_group(self, message: Message) -> bool:
+        """Check if message is in the orchestration group."""
+        return self._is_orchestration_group_by_id(message.chat.id)
+
+    def _is_orchestration_group_by_id(self, chat_id: int) -> bool:
+        """Check if chat_id is the orchestration group."""
+        return (
+            self.config.group_orchestration
+            and self.config.orchestration_group_id != 0
+            and chat_id == self.config.orchestration_group_id
+        )
+
     async def _handle_message(self, message: Message) -> None:
         """Process an incoming message through the agent."""
         if not message.from_user:
             return
-        # Ignore messages from other bots (prevents mirror message loops)
-        if message.from_user.is_bot:
-            return
-        if not self._is_allowed(message.from_user.id):
-            return
+
+        is_bot_message = getattr(message.from_user, "is_bot", False)
+
+        # Bot-to-bot: only allow in orchestration group with loop guard
+        if is_bot_message:
+            if not self._is_orchestration_group(message) or not self.group_orchestrator:
+                return  # Ignore bot messages outside orchestration group
+            await self._resolve_bot_username()  # Ensure _bot_id is set
+            allowed, reason = self.group_orchestrator.loop_guard.should_respond(
+                message, self._bot_id,
+            )
+            if not allowed:
+                logger.info(
+                    "AgentBot '%s': loop guard blocked bot-to-bot: %s",
+                    self.agent_def.id, reason,
+                )
+                return
+            # Process as delegation task from another bot
+        else:
+            if not self._is_allowed(message.from_user.id):
+                return
 
         # In groups: only respond when mentioned or replied to
-        if self._is_group(message):
+        if self._is_group(message) and not is_bot_message:
             if not await self._is_mentioned(message):
                 return
 
@@ -190,7 +223,8 @@ class AgentBot:
         try:
             agent = self._ensure_agent()
             result = await agent.run_turn(text, user_id=user_id, chat_id=chat_id)
-            await self._send_response(chat_id, result)
+            reply_to = message.message_id if is_bot_message else None
+            await self._send_response(chat_id, result, reply_to_message_id=reply_to)
         except Exception as e:
             logger.error(
                 "AgentBot '%s' error for user %s: %s",
@@ -307,20 +341,36 @@ class AgentBot:
 
         return dataclasses.replace(self.config, **overrides)
 
-    async def _send_chunk(self, chat_id: int, chunk: str) -> None:
+    async def _send_chunk(
+        self,
+        chat_id: int,
+        chunk: str,
+        reply_to_message_id: int | None = None,
+    ) -> Message | None:
         """Send a single message chunk with HTML formatting and plain-text fallback."""
         from qanot.telegram import _md_to_html
 
+        sent = None
         try:
             html = _md_to_html(chunk)
-            await self.bot.send_message(
+            sent = await self.bot.send_message(
                 chat_id=chat_id, text=html,
                 parse_mode=ParseMode.HTML,
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception:
-            await self.bot.send_message(chat_id=chat_id, text=chunk)
+            sent = await self.bot.send_message(
+                chat_id=chat_id, text=chunk,
+                reply_to_message_id=reply_to_message_id,
+            )
+        return sent
 
-    async def _send_response(self, chat_id: int, text: str) -> None:
+    async def _send_response(
+        self,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+    ) -> None:
         """Send response, splitting if too long."""
         if not text.strip():
             return
@@ -332,14 +382,30 @@ class AgentBot:
         except Exception:
             logger.warning("AgentBot '%s': failed to sanitize response, sending raw", self.agent_def.id)
 
+        sent_message = None
         if len(text) <= MAX_MSG_LEN:
-            await self._send_chunk(chat_id, text)
+            sent_message = await self._send_chunk(
+                chat_id, text, reply_to_message_id=reply_to_message_id,
+            )
         else:
             # Split on newlines near the boundary to avoid breaking mid-word/entity
             chunks = self._split_text(text, MAX_MSG_LEN)
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks):
                 if chunk.strip():
-                    await self._send_chunk(chat_id, chunk)
+                    # Only reply_to on first chunk
+                    rid = reply_to_message_id if i == 0 else None
+                    sent_message = await self._send_chunk(chat_id, chunk, reply_to_message_id=rid)
+
+        # Track response for loop guard in orchestration group
+        if (
+            sent_message
+            and self.group_orchestrator
+            and self._is_orchestration_group_by_id(chat_id)
+        ):
+            self.group_orchestrator.loop_guard.track_response(
+                sent_message, self._bot_id,
+            )
+            await self.group_orchestrator.handle_agent_response(sent_message)
 
     @staticmethod
     def _split_text(text: str, max_len: int) -> list[str]:

@@ -70,6 +70,11 @@
   "webchat_origins": [],
   "webchat_max_sessions": 50,
   "monitor_group_id": 0,
+  "group_orchestration": false,
+  "orchestration_group_id": 0,
+  "bot_to_bot_max_depth": 5,
+  "bot_to_bot_cooldown": 2.0,
+  "bot_to_bot_chain_timeout": 300,
 
   "workspace_dir": "/data/workspace",
   "sessions_dir": "/data/sessions",

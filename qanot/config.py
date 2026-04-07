@@ -167,6 +167,12 @@ class Config:
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group
     monitor_group_id: int = 0
+    # Group orchestration — visible multi-agent collaboration in a Telegram group
+    group_orchestration: bool = False  # Enable bot-to-bot group collaboration
+    orchestration_group_id: int = 0  # Telegram group ID for collaboration (0 = disabled)
+    bot_to_bot_max_depth: int = 5  # Max chain depth before loop guard trips
+    bot_to_bot_cooldown: float = 2.0  # Min seconds between same-bot replies
+    bot_to_bot_chain_timeout: int = 300  # Max seconds for entire chain (5 min)
     # Multi-agent orchestrator (spawn_agent, list_agents, etc.)
     agents_enabled: bool = False
     # MCP (Model Context Protocol) servers
