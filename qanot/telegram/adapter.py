@@ -407,21 +407,52 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 file = await self.bot.get_file(message.video.file_id)
                 dl_dir = Path(self.config.workspace_dir) / "uploads"
                 dl_dir.mkdir(parents=True, exist_ok=True)
-                # Use video file_unique_id as stable name to enable re-runs
                 ext = Path(file.file_path or "video.mp4").suffix or ".mp4"
                 fname = f"{message.video.file_unique_id}{ext}"
                 dl_path = dl_dir / fname
-                if not dl_path.exists():
+
+                expected_size = message.video.file_size or 0
+
+                # For local Bot API mode: telegram-bot-api writes the file
+                # asynchronously. aiogram's is_local=True reads whatever is
+                # on disk NOW, which can return a partial file. Poll until
+                # file size matches Telegram's reported size (or stabilizes).
+                needs_wait = (
+                    not dl_path.exists()
+                    or (expected_size and dl_path.stat().st_size < expected_size)
+                )
+                if needs_wait:
                     await self.bot.download_file(file.file_path, dl_path)
+
+                    # Wait for telegram-bot-api to finish writing (up to 5 min)
+                    if expected_size:
+                        deadline = asyncio.get_running_loop().time() + 300
+                        while asyncio.get_running_loop().time() < deadline:
+                            try:
+                                # Read from the source (telegram-bot-api side)
+                                if file.file_path and Path(file.file_path).exists():
+                                    src_size = Path(file.file_path).stat().st_size
+                                    if src_size >= expected_size:
+                                        # Source complete — re-copy to be safe
+                                        if dl_path.stat().st_size < src_size:
+                                            await self.bot.download_file(file.file_path, dl_path)
+                                        break
+                                elif dl_path.exists() and dl_path.stat().st_size >= expected_size:
+                                    break
+                            except OSError:
+                                pass
+                            await asyncio.sleep(2)
+
                 duration = message.video.duration or 0
                 mm, ss = divmod(int(duration), 60)
+                size_mb = dl_path.stat().st_size / 1_048_576 if dl_path.exists() else 0
                 text = (
                     f"[Video yuklandi: {dl_path} "
-                    f"({mm}:{ss:02d}, {message.video.width}x{message.video.height})] {text}"
+                    f"({mm}:{ss:02d}, {message.video.width}x{message.video.height}, {size_mb:.0f}MB)] {text}"
                 ).strip()
-                logger.info("Downloaded video: %s (%ds)", dl_path, duration)
+                logger.info("Downloaded video: %s (%ds, %.0fMB)", dl_path, duration, size_mb)
             except Exception as e:
-                logger.error("Video download failed: %s", e)
+                logger.error("Video download failed: %s", e, exc_info=True)
                 text = f"[Video yuklab bo'lmadi: {e}] {text}".strip()
 
         if message.reply_to_message:
