@@ -115,7 +115,10 @@ class ClipperConfig:
     add_hook_overlay: bool = True
     output_dir: Path = field(default_factory=lambda: Path("output"))
     transcribe_provider: str = "faster-whisper"  # faster-whisper | elevenlabs
-    whisper_model: str = "large-v3"
+    # large-v3-turbo: ~1.5GB RAM, 3x faster than large-v3, minimal accuracy loss
+    # large-v3: ~5GB RAM, highest accuracy (requires 8GB+ server RAM)
+    # medium: ~1GB RAM, good accuracy for most languages
+    whisper_model: str = "large-v3-turbo"
     whisper_compute_type: str = "int8"  # int8 | float16 | float32
     align_words: bool = True  # use whisperx alignment for word-level accuracy
     diarize: bool = False
