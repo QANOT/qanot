@@ -248,6 +248,74 @@ async def align_words(transcript: Transcript, audio_path: Path, language: str) -
     )
 
 
+def _transcript_cache_key(source: SourceMedia, provider: str, model_name: str, language: str) -> str:
+    """Return a stable cache key for this source + transcription config."""
+    import hashlib
+    # File size + mtime is a fast stable identity (avoids hashing multi-GB files)
+    st = source.path.stat()
+    payload = f"{source.path.name}:{st.st_size}:{int(st.st_mtime)}:{provider}:{model_name}:{language}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _save_transcript_cache(transcript: Transcript, cache_path: Path) -> None:
+    import json as _json
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "language": transcript.language,
+        "duration_s": transcript.duration_s,
+        "segments": [
+            {
+                "text": s.text,
+                "start_s": s.start_s,
+                "end_s": s.end_s,
+                "speaker": s.speaker,
+                "words": [
+                    {"text": w.text, "start_s": w.start_s, "end_s": w.end_s,
+                     "speaker": w.speaker, "confidence": w.confidence}
+                    for w in s.words
+                ],
+            }
+            for s in transcript.segments
+        ],
+    }
+    cache_path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_transcript_cache(cache_path: Path) -> Transcript | None:
+    import json as _json
+    if not cache_path.exists():
+        return None
+    try:
+        data = _json.loads(cache_path.read_text(encoding="utf-8"))
+        segments = [
+            Segment(
+                text=s["text"],
+                start_s=s["start_s"],
+                end_s=s["end_s"],
+                speaker=s.get("speaker"),
+                words=[
+                    Word(
+                        text=w["text"],
+                        start_s=w["start_s"],
+                        end_s=w["end_s"],
+                        speaker=w.get("speaker"),
+                        confidence=w.get("confidence", 1.0),
+                    )
+                    for w in s.get("words", [])
+                ],
+            )
+            for s in data["segments"]
+        ]
+        return Transcript(
+            language=data["language"],
+            duration_s=data["duration_s"],
+            segments=segments,
+        )
+    except Exception as e:
+        logger.warning("Transcript cache read failed: %s", e)
+        return None
+
+
 async def transcribe(
     source: SourceMedia,
     *,
@@ -265,7 +333,29 @@ async def transcribe(
         provider: "faster-whisper" (local) or "elevenlabs" (API).
         language: ISO 639-1 for faster-whisper, ISO 639-3 for ElevenLabs.
         align: Run WhisperX alignment pass for sub-word precision.
+
+    Caches transcripts by (file-identity, provider, model, language). Re-runs
+    of the same video return instantly from disk.
     """
+    # Cache check — skip 10+ min transcription if we have the result already
+    cache_dir = (work_dir or source.path.parent) / ".transcripts"
+    cache_key = _transcript_cache_key(source, provider, model_name, language)
+    cache_path = cache_dir / f"{cache_key}.json"
+    cached = _load_transcript_cache(cache_path)
+    if cached is not None:
+        logger.info(
+            "Transcript cache hit: %s (%d segments, %d words)",
+            cache_path.name, len(cached.segments), len(cached.words),
+        )
+        if align and provider != "elevenlabs":
+            try:
+                audio_path = (work_dir or source.path.parent) / f"{source.path.stem}.wav"
+                if audio_path.exists():
+                    cached = await align_words(cached, audio_path, language)
+            except Exception as e:
+                logger.warning("Alignment failed on cached transcript: %s", e)
+        return cached
+
     if provider == "elevenlabs":
         if not elevenlabs_key:
             elevenlabs_key = os.environ.get("ELEVENLABS_API_KEY")
@@ -291,5 +381,12 @@ async def transcribe(
             transcript = await align_words(transcript, audio_path, language)
         except Exception as e:
             logger.warning("Word alignment failed (non-fatal): %s", e)
+
+    # Persist to cache for future re-runs of same source
+    try:
+        _save_transcript_cache(transcript, cache_path)
+        logger.info("Transcript cached: %s", cache_path.name)
+    except Exception as e:
+        logger.warning("Transcript cache write failed (non-fatal): %s", e)
 
     return transcript

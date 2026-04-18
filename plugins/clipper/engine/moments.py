@@ -194,20 +194,53 @@ async def detect_moments(
     logger.info("Calling LLM for moment detection (transcript: %d segments, %d chars)",
                 len(transcript.segments), len(transcript_text))
 
-    response = await provider.chat(
-        messages=[{"role": "user", "content": user_message}],
-        tools=None,
-        system=system,
-    )
+    # Retry LLM call on empty/invalid response (happens with thinking-mode OAuth tokens
+    # or transient rate limits). Each retry uses a shorter transcript slice.
+    import asyncio as _asyncio
 
-    raw_text = (response.content or "").strip()
+    max_attempts = 3
+    raw_text = ""
+    for attempt in range(max_attempts):
+        try:
+            response = await provider.chat(
+                messages=[{"role": "user", "content": user_message}],
+                tools=None,
+                system=system,
+            )
+            raw_text = (response.content or "").strip()
+        except Exception as e:
+            logger.warning("LLM call attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
+            if attempt < max_attempts - 1:
+                await _asyncio.sleep(2 * (attempt + 1))
+                continue
+            raise RuntimeError(f"LLM moment detection failed after {max_attempts} attempts: {e}") from e
+
+        if raw_text:
+            break
+        # Empty response — retry with backoff
+        logger.warning(
+            "LLM returned empty content (attempt %d/%d). Response object: stop_reason=%s",
+            attempt + 1, max_attempts, getattr(response, "stop_reason", "?"),
+        )
+        if attempt < max_attempts - 1:
+            await _asyncio.sleep(2 * (attempt + 1))
+
+    if not raw_text:
+        raise RuntimeError(
+            "LLM returned empty content 3 times in a row. This is usually caused by "
+            "max_tokens limits on OAuth tokens with thinking mode, or content moderation. "
+            "Try lowering count or using a shorter source video."
+        )
+
     json_text = _extract_json_block(raw_text)
 
     try:
         data = json.loads(json_text)
     except json.JSONDecodeError as e:
-        logger.error("LLM returned invalid JSON: %s\nRaw: %s", e, raw_text[:500])
-        return []
+        logger.error("LLM returned invalid JSON: %s\nRaw (first 1000 chars): %s", e, raw_text[:1000])
+        raise RuntimeError(
+            f"LLM returned unparseable JSON. First 200 chars: {raw_text[:200]!r}"
+        ) from e
 
     try:
         parsed = _MomentsResponse.model_validate(data)
