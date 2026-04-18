@@ -201,13 +201,38 @@ async def detect_moments(
     max_attempts = 3
     raw_text = ""
     last_stop_reason = "?"
+
+    # Temporarily disable server-side tool injection (code_execution, memory)
+    # on the underlying Anthropic provider. Otherwise Claude uses code_execution
+    # instead of emitting text, and response.content is empty. We only want a
+    # plain JSON text response for moment detection.
+    import contextlib
+
+    @contextlib.contextmanager
+    def _no_server_tools(p):
+        inner = getattr(p, "_provider", p)  # unwrap RoutingProvider/FailoverProvider
+        saved_ce = getattr(inner, "_code_execution", None)
+        saved_mt = getattr(inner, "_memory_tool", None)
+        try:
+            if hasattr(inner, "_code_execution"):
+                inner._code_execution = False
+            if hasattr(inner, "_memory_tool"):
+                inner._memory_tool = False
+            yield
+        finally:
+            if saved_ce is not None:
+                inner._code_execution = saved_ce
+            if saved_mt is not None:
+                inner._memory_tool = saved_mt
+
     for attempt in range(max_attempts):
         try:
-            response = await provider.chat(
-                messages=[{"role": "user", "content": user_message}],
-                tools=None,
-                system=system,
-            )
+            with _no_server_tools(provider):
+                response = await provider.chat(
+                    messages=[{"role": "user", "content": user_message}],
+                    tools=None,
+                    system=system,
+                )
             raw_text = (response.content or "").strip()
             last_stop_reason = getattr(response, "stop_reason", "?")
         except Exception as e:
