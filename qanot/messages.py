@@ -87,6 +87,8 @@ def repair_messages(messages: list[dict]) -> list[dict]:
 
     Fixes:
     - Orphaned tool_result blocks (no matching tool_use)
+    - Orphaned tool_use blocks (no matching tool_result) — synthesizes a
+      placeholder tool_result so Anthropic API accepts the history
     - Consecutive same-role messages (merge or remove)
     - Base64 image bloat in older messages
     """
@@ -96,19 +98,38 @@ def repair_messages(messages: list[dict]) -> list[dict]:
     # Strip old images first to prevent context bloat
     messages = strip_old_images(messages)
 
-    repaired = []
-    # Track tool_use IDs that exist
-    active_tool_ids: set[str] = set()
+    repaired: list[dict] = []
+    # Map of tool_use_id → (assistant_message_index_in_repaired) for orphan detection
+    pending_tool_uses: dict[str, int] = {}
 
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content")
 
         if role == "assistant" and isinstance(content, list):
-            # Track tool_use IDs from assistant messages
+            # If previous assistant message had tool_use but no tool_result followed,
+            # synthesize one BEFORE adding this new assistant message
+            if pending_tool_uses:
+                placeholder_results = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": "[Tool execution interrupted — no result recorded]",
+                        "is_error": True,
+                    }
+                    for tid in pending_tool_uses
+                ]
+                logger.warning(
+                    "Synthesizing %d placeholder tool_results for orphan tool_uses: %s",
+                    len(pending_tool_uses), list(pending_tool_uses.keys()),
+                )
+                repaired.append({"role": "user", "content": placeholder_results})
+                pending_tool_uses.clear()
+
+            # Track tool_use IDs from this assistant message
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    active_tool_ids.add(block.get("id", ""))
+                    pending_tool_uses[block.get("id", "")] = len(repaired)
             repaired.append(msg)
 
         elif role == "user" and isinstance(content, list):
@@ -117,9 +138,9 @@ def repair_messages(messages: list[dict]) -> list[dict]:
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     tool_use_id = block.get("tool_use_id", "")
-                    if tool_use_id in active_tool_ids:
+                    if tool_use_id in pending_tool_uses:
                         valid_results.append(block)
-                        active_tool_ids.discard(tool_use_id)
+                        pending_tool_uses.pop(tool_use_id, None)
                     else:
                         logger.warning("Removing orphaned tool_result: %s", tool_use_id)
                 else:
@@ -129,5 +150,22 @@ def repair_messages(messages: list[dict]) -> list[dict]:
                 repaired.append({"role": "user", "content": valid_results})
         else:
             repaired.append(msg)
+
+    # Any lingering pending tool_uses at the end need placeholder results
+    if pending_tool_uses:
+        placeholder_results = [
+            {
+                "type": "tool_result",
+                "tool_use_id": tid,
+                "content": "[Tool execution interrupted — no result recorded]",
+                "is_error": True,
+            }
+            for tid in pending_tool_uses
+        ]
+        logger.warning(
+            "Synthesizing %d trailing placeholder tool_results for orphan tool_uses: %s",
+            len(pending_tool_uses), list(pending_tool_uses.keys()),
+        )
+        repaired.append({"role": "user", "content": placeholder_results})
 
     return repaired
