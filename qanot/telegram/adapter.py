@@ -60,8 +60,12 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         if api_url:
             from aiogram.client.session.aiohttp import AiohttpSession
             from aiogram.client.telegram import TelegramAPIServer
-            logger.info("Using self-hosted Bot API at %s", api_url)
-            session = AiohttpSession(api=TelegramAPIServer.from_base(api_url))
+            logger.info("Using self-hosted Bot API at %s (local mode)", api_url)
+            # is_local=True tells aiogram that file_path is an absolute path
+            # on our local filesystem — it reads the file directly instead of
+            # HTTP-downloading. Required for the --local flag on telegram-bot-api.
+            server = TelegramAPIServer.from_base(api_url, is_local=True)
+            session = AiohttpSession(api=server)
             self.bot = Bot(token=config.bot_token, session=session)
         else:
             self.bot = Bot(token=config.bot_token)
