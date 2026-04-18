@@ -38,18 +38,17 @@ class ClipperPlugin(Plugin):
         self._output_dir: Path = _FALLBACK_OUTPUT
 
     async def setup(self, config: dict) -> None:
-        """Store config + agent references for tools to use.
+        """Store config. Agent provider is resolved lazily at tool-call time
+        because plugins load BEFORE the Agent instance is created.
 
-        Expected config keys (passed by plugin loader):
-          - agent: the Qanot Agent instance (we use its provider)
+        Expected config keys:
           - elevenlabs_key: optional, for Scribe transcription
           - output_dir: optional override for clip storage
-          - workspace_dir: injected by qanot if not set; clips go under {workspace_dir}/clipper/
+          - workspace_dir: injected by qanot; clips go under {workspace_dir}/clipper/
+          - public_url_base: for Meta Graph publishing
+          - meta_graph_access_token, meta_ig_user_id, meta_fb_page_id: auto-post
         """
         self._config = config
-        agent = config.get("agent")
-        if agent is not None:
-            self._provider = getattr(agent, "provider", None)
         self._elevenlabs_key = config.get("elevenlabs_key")
 
         # Resolve output dir: explicit config > workspace_dir/clipper > plugin dir fallback
@@ -65,11 +64,27 @@ class ClipperPlugin(Plugin):
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            "Clipper plugin ready (provider=%s, elevenlabs=%s, output=%s)",
-            type(self._provider).__name__ if self._provider else "none",
+            "Clipper plugin ready (elevenlabs=%s, output=%s)",
             bool(self._elevenlabs_key),
             self._output_dir,
         )
+
+    def _get_provider(self):
+        """Lazily resolve the Agent's LLM provider (Claude, etc.).
+
+        We can't store this at setup() because plugins load before the Agent
+        instance is created. Agent._instance is the main agent singleton.
+        """
+        if self._provider is not None:
+            return self._provider
+        try:
+            from qanot.agent import Agent
+            agent = getattr(Agent, "_instance", None)
+            if agent is not None:
+                self._provider = getattr(agent, "provider", None)
+        except Exception as e:
+            logger.warning("Failed to resolve provider: %s", e)
+        return self._provider
 
     def get_tools(self) -> list[ToolDef]:
         return self._collect_tools()
@@ -125,7 +140,8 @@ class ClipperPlugin(Plugin):
         """Handler for the clip_video tool."""
         from engine.pipeline import clip_video as run_pipeline
 
-        if self._provider is None:
+        provider = self._get_provider()
+        if provider is None:
             return json.dumps({
                 "error": "Clipper plugin not initialized — LLM provider unavailable",
             })
@@ -161,7 +177,7 @@ class ClipperPlugin(Plugin):
         try:
             clips = await run_pipeline(
                 source=source,
-                provider=self._provider,
+                provider=provider,
                 count=count,
                 min_duration_s=min_duration,
                 max_duration_s=max_duration,
