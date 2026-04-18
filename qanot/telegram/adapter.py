@@ -206,6 +206,14 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_video_note(message: Message) -> None:
             await self._handle_message(message, is_voice=True)
 
+        @self.dp.message(F.video)
+        async def handle_video(message: Message) -> None:
+            await self._handle_message(message)
+
+        @self.dp.message(F.animation)
+        async def handle_animation(message: Message) -> None:
+            await self._handle_message(message)
+
         from aiogram.types import CallbackQuery
 
         @self.dp.callback_query()
