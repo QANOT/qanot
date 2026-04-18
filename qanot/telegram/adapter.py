@@ -391,7 +391,7 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 duration = message.video.duration or 0
                 mm, ss = divmod(int(duration), 60)
                 text = (
-                    f"[Video yuklandi: uploads/{fname} "
+                    f"[Video yuklandi: {dl_path} "
                     f"({mm}:{ss:02d}, {message.video.width}x{message.video.height})] {text}"
                 ).strip()
                 logger.info("Downloaded video: %s (%ds)", dl_path, duration)

@@ -124,8 +124,21 @@ async def download_url(url: str, output_dir: Path, max_height: int = 1080) -> So
     output_dir.mkdir(parents=True, exist_ok=True)
     template = str(output_dir / "%(id)s.%(ext)s")
 
-    # Check for YouTube cookies file (helps bypass bot-check on server IPs)
-    cookies_file = output_dir.parent / "cookies.txt"
+    # Check multiple locations for YouTube cookies.txt
+    # Priority: clipper/cookies.txt > uploads/cookies.txt (so user can just upload via Telegram)
+    cookies_file: Path | None = None
+    workspace_root = output_dir.parent.parent  # output_dir = workspace/clipper/sources
+    candidate_paths = [
+        output_dir.parent / "cookies.txt",                       # /data/workspace/clipper/cookies.txt
+        workspace_root / "uploads" / "cookies.txt",              # /data/workspace/uploads/cookies.txt (Telegram upload)
+        workspace_root / "cookies.txt",                          # /data/workspace/cookies.txt
+    ]
+    for p in candidate_paths:
+        if p.exists() and p.stat().st_size > 0:
+            cookies_file = p
+            logger.info("Using YouTube cookies from: %s", p)
+            break
+
     common_args: list[str] = [
         "--no-warnings",
         "--no-playlist",
@@ -134,7 +147,7 @@ async def download_url(url: str, output_dir: Path, max_height: int = 1080) -> So
         # Android client works around many bot checks without needing cookies
         "--extractor-args", "youtube:player_client=android,web",
     ]
-    if cookies_file.exists():
+    if cookies_file is not None:
         common_args.extend(["--cookies", str(cookies_file)])
 
     # First probe via --dump-json to get metadata without downloading
