@@ -195,6 +195,10 @@ class Config:
     webchat_token: str = ""
     webchat_origins: list[str] = field(default_factory=list)
     webchat_max_sessions: int = 50
+    # Self-hosted Bot API server (for >20MB file uploads via MTProto sidecar).
+    # If empty/None, uses public Bot API (20MB cap).
+    # Example: http://127.0.0.1:8081
+    telegram_api_url: str = ""
     # Voice Call (Telegram voice chat via py-tgcalls, requires userbot)
     voicecall_enabled: bool = False  # Master switch (disabled by default)
     voicecall_api_id: int = 0  # Telegram API ID (from my.telegram.org)

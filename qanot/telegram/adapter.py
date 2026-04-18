@@ -51,7 +51,20 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self.agent = agent
         self.scheduler = scheduler
         self.subagent_manager = subagent_manager
-        self.bot = Bot(token=config.bot_token)
+
+        # Optional: point Bot at a self-hosted telegram-bot-api server for
+        # 2GB file upload/download (vs 20MB on the public API).
+        # Set TELEGRAM_API_URL env OR config.telegram_api_url to enable.
+        import os as _os
+        api_url = _os.environ.get("TELEGRAM_API_URL") or getattr(config, "telegram_api_url", None)
+        if api_url:
+            from aiogram.client.session.aiohttp import AiohttpSession
+            from aiogram.client.telegram import TelegramAPIServer
+            logger.info("Using self-hosted Bot API at %s", api_url)
+            session = AiohttpSession(api=TelegramAPIServer.from_base(api_url))
+            self.bot = Bot(token=config.bot_token, session=session)
+        else:
+            self.bot = Bot(token=config.bot_token)
         self.dp = Dispatcher()
         self._setup_handlers()
         self._concurrent = asyncio.Semaphore(config.max_concurrent)
