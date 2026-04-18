@@ -122,21 +122,40 @@ async def download_url(url: str, output_dir: Path, max_height: int = 1080) -> So
         raise RuntimeError("yt-dlp not installed — pip install yt-dlp")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    # Use deterministic filename pattern so we can find the output
     template = str(output_dir / "%(id)s.%(ext)s")
+
+    # Check for YouTube cookies file (helps bypass bot-check on server IPs)
+    cookies_file = output_dir.parent / "cookies.txt"
+    common_args: list[str] = [
+        "--no-warnings",
+        "--no-playlist",
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        # Android client works around many bot checks without needing cookies
+        "--extractor-args", "youtube:player_client=android,web",
+    ]
+    if cookies_file.exists():
+        common_args.extend(["--cookies", str(cookies_file)])
 
     # First probe via --dump-json to get metadata without downloading
     rc, out, err = await _run(
         "yt-dlp",
-        "--no-warnings",
+        *common_args,
         "--dump-json",
-        "--no-playlist",
         "--skip-download",
         url,
         timeout=60.0,
     )
     if rc != 0:
-        raise RuntimeError(f"yt-dlp metadata probe failed: {err[:500]}")
+        hint = ""
+        err_lower = err.lower()
+        if "sign in" in err_lower or "bot" in err_lower or "confirm you" in err_lower:
+            hint = (
+                " — YouTube requires authentication from this IP. Fix: export cookies from your browser "
+                f"to {cookies_file} (use 'yt-dlp --cookies-from-browser chrome --cookies cookies.txt'), "
+                "or use a direct MP4 URL instead, or upload the file via Telegram."
+            )
+        raise RuntimeError(f"yt-dlp metadata probe failed: {err[:400]}{hint}")
 
     try:
         meta = json.loads(out.splitlines()[0])
@@ -170,8 +189,7 @@ async def download_url(url: str, output_dir: Path, max_height: int = 1080) -> So
     logger.info("Downloading %s (%.0fs, max %dp)...", url, duration, max_height)
     rc, out, err = await _run(
         "yt-dlp",
-        "--no-warnings",
-        "--no-playlist",
+        *common_args,
         "-f", format_selector,
         "--merge-output-format", "mp4",
         "-o", template,
