@@ -50,8 +50,10 @@ _LONG_RUNNING_TOOLS = frozenset({
     "spawn_sub_agent",
     "spawn_agent",
     "create_reel",
+    "clip_video",  # transcribe (2-15 min) + LLM + cut + caption
+    "publish_clip_to_meta",  # Meta Graph container polling can take minutes
 })
-LONG_TOOL_TIMEOUT = 600  # 10 minutes for heavy tools (reel creation, delegation)
+LONG_TOOL_TIMEOUT = 1800  # 30 minutes for heavy tools (transcription of long videos)
 CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
 MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
 BASE_DELAY = 1.0  # seconds, base for exponential backoff
