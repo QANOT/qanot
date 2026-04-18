@@ -19,3 +19,6 @@ yt-dlp>=2024.12.13
 faster-whisper>=1.0.3
 ffmpeg-python>=0.2.0
 pydantic>=2.0.0
+# Production YouTube bypass — PO (Proof-of-Origin) token provider plugin.
+# Talks to the bgutil-pot sidecar on http://127.0.0.1:4416.
+bgutil-ytdlp-pot-provider>=0.8.0

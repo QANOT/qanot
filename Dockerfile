@@ -23,9 +23,21 @@ RUN mkdir -p /data/workspace /data/sessions /data/cron /data/plugins \
 
 USER qanot
 
+# Entrypoint wrapper: auto-upgrade yt-dlp + bgutil daily without image rebuild.
+# YouTube tightens bot detection weekly; pinned versions break in days.
+COPY --chown=qanot:qanot <<'EOF' /app/entrypoint.sh
+#!/bin/sh
+set -e
+# Best-effort upgrade — never block startup on network issues.
+pip install --user --upgrade --quiet yt-dlp bgutil-ytdlp-pot-provider 2>/dev/null || true
+exec python -m qanot.main
+EOF
+RUN chmod +x /app/entrypoint.sh
+
 EXPOSE 8765 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -sf http://127.0.0.1:8765/api/status || exit 1
 
-CMD ["python", "-m", "qanot.main"]
+ENV PATH="/home/qanot/.local/bin:${PATH}"
+CMD ["/app/entrypoint.sh"]

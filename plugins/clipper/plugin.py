@@ -264,6 +264,79 @@ class ClipperPlugin(Plugin):
             },
         },
     )
+    @tool(
+        name="clipper_health",
+        description=(
+            "Diagnose the clipper pipeline: checks yt-dlp version, PO-token provider reachability, "
+            "cookies.txt presence, ffmpeg availability, and whether YouTube downloads currently work. "
+            "Call this when clip_video fails to understand why."
+        ),
+        parameters={"type": "object", "properties": {}},
+    )
+    async def clipper_health(self, params: dict) -> str:
+        """Quick health probe of all external dependencies used by clip_video."""
+        import shutil as _shutil
+        import subprocess as _sub
+        from engine.source import _probe_bgutil_provider, _find_cookies_file
+
+        report: dict = {"ok": True, "checks": {}}
+
+        # yt-dlp
+        ytdlp = _shutil.which("yt-dlp")
+        if ytdlp:
+            try:
+                ver = _sub.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=5).stdout.strip()
+                report["checks"]["yt_dlp"] = {"ok": True, "version": ver}
+            except Exception as e:
+                report["checks"]["yt_dlp"] = {"ok": False, "error": str(e)}
+                report["ok"] = False
+        else:
+            report["checks"]["yt_dlp"] = {"ok": False, "error": "binary not found"}
+            report["ok"] = False
+
+        # ffmpeg
+        ffmpeg = _shutil.which("ffmpeg")
+        report["checks"]["ffmpeg"] = {"ok": bool(ffmpeg), "path": ffmpeg or None}
+        if not ffmpeg:
+            report["ok"] = False
+
+        # bgutil PO token sidecar
+        pot_ok = await _probe_bgutil_provider()
+        report["checks"]["po_token_provider"] = {
+            "ok": pot_ok,
+            "url": "http://127.0.0.1:4416",
+            "hint": None if pot_ok else "Start: docker run -d --name bgutil-pot --restart unless-stopped --network host brainicism/bgutil-ytdlp-pot-provider",
+        }
+
+        # cookies.txt presence
+        sources_dir = self._output_dir / "sources"
+        cookies = _find_cookies_file(sources_dir)
+        report["checks"]["cookies_txt"] = {
+            "present": cookies is not None,
+            "path": str(cookies) if cookies else None,
+        }
+
+        # End-to-end YouTube probe (small public video)
+        try:
+            from engine.source import _try_probe
+            rc, meta, err = await _try_probe(
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",  # classic public video
+                ["--extractor-args", "youtube:player_client=default,-tv_simply"] if pot_ok
+                else ["--extractor-args", "youtube:player_client=android"],
+                timeout=30.0,
+            )
+            report["checks"]["youtube_probe"] = {
+                "ok": meta is not None,
+                "error": err[:200] if meta is None else None,
+            }
+            if meta is None:
+                report["ok"] = False
+        except Exception as e:
+            report["checks"]["youtube_probe"] = {"ok": False, "error": str(e)}
+            report["ok"] = False
+
+        return json.dumps(report, ensure_ascii=False)
+
     async def publish_clip_to_meta(self, params: dict) -> str:
         """Handler for the publish_clip_to_meta tool."""
         from engine.publisher import publish_clip, build_caption
