@@ -79,11 +79,16 @@ class SessionWriter:
             content.append({"type": "text", "text": text})
         if tool_uses:
             for tu in tool_uses:
-                content.append({
+                block: dict = {
                     "type": "tool_use",
                     "name": tu.get("name", ""),
                     "input": tu.get("input", {}),
-                })
+                }
+                # Preserve Anthropic's tool_use id so session restore produces
+                # a valid Claude history (id is required to match tool_result)
+                if tu.get("id"):
+                    block["id"] = tu["id"]
+                content.append(block)
 
         entry: dict = {
             "type": "message",
