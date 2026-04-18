@@ -200,6 +200,7 @@ async def detect_moments(
 
     max_attempts = 3
     raw_text = ""
+    last_stop_reason = "?"
     for attempt in range(max_attempts):
         try:
             response = await provider.chat(
@@ -208,6 +209,7 @@ async def detect_moments(
                 system=system,
             )
             raw_text = (response.content or "").strip()
+            last_stop_reason = getattr(response, "stop_reason", "?")
         except Exception as e:
             logger.warning("LLM call attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
             if attempt < max_attempts - 1:
@@ -216,21 +218,33 @@ async def detect_moments(
             raise RuntimeError(f"LLM moment detection failed after {max_attempts} attempts: {e}") from e
 
         if raw_text:
+            logger.info(
+                "LLM moment detection succeeded on attempt %d: stop_reason=%s, chars=%d",
+                attempt + 1, last_stop_reason, len(raw_text),
+            )
             break
-        # Empty response — retry with backoff
+        # Empty response — log + retry
         logger.warning(
-            "LLM returned empty content (attempt %d/%d). Response object: stop_reason=%s",
-            attempt + 1, max_attempts, getattr(response, "stop_reason", "?"),
+            "LLM returned empty content (attempt %d/%d). stop_reason=%s, usage=%s",
+            attempt + 1, max_attempts, last_stop_reason,
+            getattr(response, "usage", None),
         )
         if attempt < max_attempts - 1:
             await _asyncio.sleep(2 * (attempt + 1))
 
     if not raw_text:
-        raise RuntimeError(
-            "LLM returned empty content 3 times in a row. This is usually caused by "
-            "max_tokens limits on OAuth tokens with thinking mode, or content moderation. "
-            "Try lowering count or using a shorter source video."
-        )
+        # Diagnose based on stop_reason per Anthropic docs
+        if last_stop_reason == "refusal":
+            hint = (
+                "Claude's API safety filter refused. Sonnet 4.5/4.6 has tightened "
+                "filters — try running with Haiku 4.5 via /model haiku, or check "
+                "if the transcript contains content that triggers refusal."
+            )
+        elif last_stop_reason == "max_tokens":
+            hint = "Response hit max_tokens (8192) before any text was generated. Rare but possible."
+        else:
+            hint = f"Unexpected empty response (stop_reason={last_stop_reason}). Possibly transient API issue."
+        raise RuntimeError(f"LLM returned empty content 3 times. {hint}")
 
     json_text = _extract_json_block(raw_text)
 
