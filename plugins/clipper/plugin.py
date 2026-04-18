@@ -24,12 +24,12 @@ PLUGIN_DIR = Path(__file__).parent
 # Fallback output dir if no workspace_dir is set
 _FALLBACK_OUTPUT = PLUGIN_DIR / "output"
 
-# The plugin loader removes our plugin dir from sys.path after setup().
-# Re-add it permanently at module load so engine.X imports keep working
-# when tool handlers run later.
-_plugin_dir_str = str(PLUGIN_DIR)
-if _plugin_dir_str not in sys.path:
-    sys.path.insert(0, _plugin_dir_str)
+# The plugin loader inserts our plugin dir into sys.path BEFORE exec-ing this
+# module, then removes it in a finally block. That removal uses list.remove()
+# which deletes the FIRST occurrence only. So we insert a SECOND copy of our
+# plugin dir so at least one survives after the loader's cleanup — this keeps
+# `from engine.X import Y` working when tool handlers run later.
+sys.path.insert(0, str(PLUGIN_DIR))
 
 
 class ClipperPlugin(Plugin):
