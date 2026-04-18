@@ -109,7 +109,11 @@ class ClipperConfig:
     max_duration_s: float = 90.0
     language: str = "uz"  # whisper language code
     caption_style: str = "captions_ai"  # captions_ai | submagic | minimal | off
-    reframe_mode: str = "center"  # center | smart | none
+    # blur_pad: original uncropped + blurred-bg fill (OpusClip/Submagic default)
+    # center:   naive center-crop — DESTROYS edge content (text, lower-thirds)
+    # smart:    face-tracking reframe (needs MediaPipe deps)
+    # none:     letterbox with black bars — ugly but preserves everything
+    reframe_mode: str = "blur_pad"
     target_width: int = 1080
     target_height: int = 1920  # 9:16
     add_hook_overlay: bool = True

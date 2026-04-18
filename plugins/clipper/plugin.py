@@ -135,7 +135,14 @@ class ClipperPlugin(Plugin):
                 },
                 "reframe_mode": {
                     "type": "string",
-                    "description": "9:16 reframe: center | smart | none. Default: center (smart needs MediaPipe)",
+                    "description": (
+                        "9:16 reframe mode:\n"
+                        " • blur_pad (DEFAULT) — original uncropped, blurred background fills 9:16. "
+                        "Best for content with on-screen text/graphics. No content loss.\n"
+                        " • center — naive center-crop. Loses left/right edges (text/graphics in edges disappear).\n"
+                        " • smart — face-tracking reframe (needs MediaPipe deps). Best for solo talking head.\n"
+                        " • none — letterbox with black bars. Preserves everything but looks ugly."
+                    ),
                 },
                 "virality_threshold": {
                     "type": "integer",

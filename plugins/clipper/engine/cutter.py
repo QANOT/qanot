@@ -36,22 +36,56 @@ def _scale_crop_filter(src_w: int, src_h: int, target_w: int, target_h: int) -> 
     target_aspect = target_w / max(target_h, 1)
 
     if abs(src_aspect - target_aspect) < 0.01:
-        # Already matching aspect — just scale
         return f"scale={target_w}:{target_h}"
 
     if src_aspect > target_aspect:
-        # Source is wider than target — scale by height, crop width
-        # e.g. 1920x1080 → 9:16 means scale to fit 1920 height, then center-crop width
         return (
             f"scale=-2:{target_h},"
             f"crop={target_w}:{target_h}:(iw-{target_w})/2:0"
         )
     else:
-        # Source is taller than target — scale by width, crop height
         return (
             f"scale={target_w}:-2,"
             f"crop={target_w}:{target_h}:0:(ih-{target_h})/2"
         )
+
+
+def _blur_pad_filter(src_w: int, src_h: int, target_w: int, target_h: int) -> str:
+    """Blur-background composite (OpusClip/Submagic/Vugola style).
+
+    Preserves 100% of the original frame — scales the original to fit target
+    width (or height, whichever is limiting), centers it, and fills the
+    remaining space with a blurred copy of the same video scaled to fill 9:16.
+
+    Result: clear un-cropped original in the middle, blurred background
+    filling the rest. No edge content loss. Professional look.
+
+    Uses filter_complex with split + two pipelines (scale+blur for bg,
+    scale-to-fit for fg) then overlay centered.
+    """
+    # Foreground: scale so the entire source fits within target — use
+    # `force_original_aspect_ratio=decrease` so we get "contain" semantics.
+    # Resulting dimensions are at most target_w × target_h.
+    fg_chain = (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease"
+    )
+
+    # Background: scale to fill entirely, then crop to exact target, then blur.
+    # `force_original_aspect_ratio=increase` = cover semantics.
+    bg_chain = (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{target_h},"
+        f"boxblur=luma_radius=30:luma_power=2:"
+        f"chroma_radius=30:chroma_power=2"
+    )
+
+    # Split input, process both branches, overlay FG centered over BG.
+    return (
+        f"split=2[bg][fg];"
+        f"[bg]{bg_chain}[bgblur];"
+        f"[fg]{fg_chain}[fgfit];"
+        f"[bgblur][fgfit]overlay=(W-w)/2:(H-h)/2,format=yuv420p"
+    )
 
 
 async def cut_clip(
@@ -68,8 +102,18 @@ async def cut_clip(
     """Cut a clip from source and apply reframe.
 
     Args:
-        reframe_mode: "center" for MVP center-crop. "none" keeps original aspect
-                      (letterboxes if needed). "smart" requires reframer.py (Phase 2).
+        reframe_mode:
+            "blur_pad"  — PRODUCTION DEFAULT. Original shown uncropped with
+                          blurred-background fill (OpusClip/Submagic/Vugola
+                          style). No content loss, works for content with
+                          text/graphics at the edges.
+            "center"    — Naive center-crop. Loses left/right edges (content
+                          in edges like lower-thirds, text overlays disappears).
+                          Fast, simple, but destructive.
+            "none"      — Letterbox with black bars. Ugly but preserves all
+                          content.
+            "smart"     — Face-tracked reframe (requires MediaPipe + YOLOv8).
+                          Good for solo talking head; still loses edge content.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,13 +121,14 @@ async def cut_clip(
     duration = max(0.5, moment.end_s - moment.start_s)
 
     if reframe_mode == "none":
-        # Keep source aspect — pad to target size to preserve orientation
         vf = (
             f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
             f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
         )
     elif reframe_mode == "center":
         vf = _scale_crop_filter(source.width, source.height, target_width, target_height)
+    elif reframe_mode in ("blur_pad", "blurpad", "blur"):
+        vf = _blur_pad_filter(source.width, source.height, target_width, target_height)
     elif reframe_mode == "smart":
         # Phase 2 — delegate to reframer
         from engine.reframer import smart_reframe_cut
