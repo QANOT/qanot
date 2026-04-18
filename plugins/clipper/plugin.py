@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,13 @@ logger = logging.getLogger(__name__)
 PLUGIN_DIR = Path(__file__).parent
 # Fallback output dir if no workspace_dir is set
 _FALLBACK_OUTPUT = PLUGIN_DIR / "output"
+
+# The plugin loader removes our plugin dir from sys.path after setup().
+# Re-add it permanently at module load so engine.X imports keep working
+# when tool handlers run later.
+_plugin_dir_str = str(PLUGIN_DIR)
+if _plugin_dir_str not in sys.path:
+    sys.path.insert(0, _plugin_dir_str)
 
 
 class ClipperPlugin(Plugin):
