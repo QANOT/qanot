@@ -1,0 +1,34 @@
+{
+  "name": "clipper",
+  "version": "1.0.0",
+  "description": "Long-form → short-form viral video clipper — podcasts, interviews, vlogs to TikTok/Reels/Shorts",
+  "author": "Sirli AI",
+  "dependencies": [
+    "yt-dlp>=2024.12.13",
+    "faster-whisper>=1.0.3",
+    "ffmpeg-python>=0.2.0",
+    "Pillow>=10.0.0",
+    "pydantic>=2.0.0"
+  ],
+  "optional_dependencies": {
+    "smart_reframe": ["mediapipe>=0.10.14", "opencv-python>=4.10.0", "ultralytics>=8.2.0"],
+    "diarization": ["pyannote.audio>=3.1.0", "torch>=2.0.0"],
+    "whisperx_align": ["whisperx>=3.1.0"]
+  },
+  "required_config": [],
+  "optional_config": [
+    "elevenlabs_key",
+    "huggingface_token",
+    "meta_graph_access_token",
+    "meta_ig_user_id"
+  ],
+  "homepage": "https://github.com/sirli-ai/qanot",
+  "license": "MIT",
+  "cloud": {
+    "display_name": "AI Video Clipper",
+    "icon": "✂️",
+    "category": "content",
+    "connect_type": "config",
+    "visible": true
+  }
+}

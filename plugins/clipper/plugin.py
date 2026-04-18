@@ -1,0 +1,279 @@
+"""Clipper Plugin — long-form video → viral shorts.
+
+Registers `clip_video` tool on the Qanot agent.
+
+Usage from Telegram:
+  User: "shu YouTube video-dan 5ta shorts qil: https://youtu.be/XYZ"
+  Agent: calls clip_video(source="https://youtu.be/XYZ", count=5)
+         returns list of rendered clips with virality scores, sends them as documents
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from qanot.plugins.base import Plugin, ToolDef, tool
+
+logger = logging.getLogger(__name__)
+
+PLUGIN_DIR = Path(__file__).parent
+OUTPUT_DIR = PLUGIN_DIR / "output"
+
+
+class ClipperPlugin(Plugin):
+    """Long-form → short-form video clipper plugin."""
+
+    name = "clipper"
+    description = "Clip long videos (podcasts, interviews) into viral shorts"
+    version = "1.0.0"
+
+    def __init__(self):
+        self._provider: Any = None  # LLMProvider, set via setup
+        self._elevenlabs_key: str | None = None
+        self._config: dict = {}
+
+    async def setup(self, config: dict) -> None:
+        """Store config + agent references for tools to use.
+
+        Expected config keys (passed by plugin loader):
+          - agent: the Qanot Agent instance (we use its provider)
+          - elevenlabs_key: optional, for Scribe transcription
+        """
+        self._config = config
+        # The agent instance is injected by qanot's plugin loader when available
+        agent = config.get("agent")
+        if agent is not None:
+            self._provider = getattr(agent, "provider", None)
+        self._elevenlabs_key = config.get("elevenlabs_key")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info("Clipper plugin ready (provider=%s, elevenlabs=%s)",
+                    type(self._provider).__name__ if self._provider else "none",
+                    bool(self._elevenlabs_key))
+
+    def get_tools(self) -> list[ToolDef]:
+        return self._collect_tools()
+
+    @tool(
+        name="clip_video",
+        description=(
+            "Turn a long-form video (YouTube/TikTok/local/Telegram file) into viral short clips "
+            "for Instagram Reels, TikTok, and YouTube Shorts. Uses AI to find the most engaging "
+            "moments (hooks, punchlines, insights), then cuts and captions them automatically. "
+            "Default language is Uzbek. Returns clip file paths + virality scores."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["source"],
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Video source: YouTube URL, any http(s) video URL, or local file path",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "How many clips to extract (default 5, max 10)",
+                },
+                "min_duration": {
+                    "type": "number",
+                    "description": "Minimum clip length in seconds (default 30)",
+                },
+                "max_duration": {
+                    "type": "number",
+                    "description": "Maximum clip length in seconds (default 90)",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Source language (uz, ru, en, tr). Default: uz",
+                },
+                "caption_style": {
+                    "type": "string",
+                    "description": "Caption style: captions_ai | submagic | minimal | off. Default: captions_ai",
+                },
+                "reframe_mode": {
+                    "type": "string",
+                    "description": "9:16 reframe: center | smart | none. Default: center (smart needs MediaPipe)",
+                },
+                "virality_threshold": {
+                    "type": "integer",
+                    "description": "Drop clips scoring below this (0-99). Default: 60",
+                },
+            },
+        },
+    )
+    async def clip_video(self, params: dict) -> str:
+        """Handler for the clip_video tool."""
+        from engine.pipeline import clip_video as run_pipeline
+
+        if self._provider is None:
+            return json.dumps({
+                "error": "Clipper plugin not initialized — LLM provider unavailable",
+            })
+
+        source = (params.get("source") or "").strip()
+        if not source:
+            return json.dumps({"error": "source is required"})
+
+        try:
+            count = max(1, min(10, int(params.get("count", 5))))
+        except (TypeError, ValueError):
+            count = 5
+
+        try:
+            min_duration = float(params.get("min_duration", 30.0))
+        except (TypeError, ValueError):
+            min_duration = 30.0
+
+        try:
+            max_duration = float(params.get("max_duration", 90.0))
+        except (TypeError, ValueError):
+            max_duration = 90.0
+
+        try:
+            virality_threshold = int(params.get("virality_threshold", 60))
+        except (TypeError, ValueError):
+            virality_threshold = 60
+
+        language = (params.get("language") or "uz").strip().lower()
+        caption_style = (params.get("caption_style") or "captions_ai").strip().lower()
+        reframe_mode = (params.get("reframe_mode") or "center").strip().lower()
+
+        try:
+            clips = await run_pipeline(
+                source=source,
+                provider=self._provider,
+                count=count,
+                min_duration_s=min_duration,
+                max_duration_s=max_duration,
+                language=language,
+                caption_style=caption_style,
+                reframe_mode=reframe_mode,
+                output_dir=OUTPUT_DIR,
+                elevenlabs_key=self._elevenlabs_key,
+                virality_threshold=virality_threshold,
+            )
+        except Exception as e:
+            logger.error("clip_video failed: %s", e, exc_info=True)
+            return json.dumps({"error": f"Clipping failed: {e}"})
+
+        if not clips:
+            return json.dumps({
+                "status": "no_clips",
+                "message": "No viral moments found above threshold. Try lowering virality_threshold or check source content.",
+            })
+
+        result = {
+            "status": "ok",
+            "count": len(clips),
+            "clips": [
+                {
+                    "path": str(c.path),
+                    "thumbnail": str(c.thumbnail_path) if c.thumbnail_path else None,
+                    "duration_s": round(c.moment.duration_s, 1),
+                    "start_s": round(c.moment.start_s, 1),
+                    "end_s": round(c.moment.end_s, 1),
+                    "hook": c.moment.hook,
+                    "title": c.moment.title,
+                    "virality_score": c.moment.virality_score,
+                    "rationale": c.moment.rationale,
+                    "hashtags": c.moment.hashtags,
+                }
+                for c in clips
+            ],
+        }
+        return json.dumps(result, ensure_ascii=False)
+
+    @tool(
+        name="publish_clip_to_meta",
+        description=(
+            "Publish a clip file to Instagram Reels and/or Facebook Reels via Meta Graph API. "
+            "Requires META_GRAPH_ACCESS_TOKEN + META_IG_USER_ID (or META_FB_PAGE_ID) in env. "
+            "The clip must be reachable via a public HTTPS URL — provide `public_url_base` "
+            "or ensure an upload callback is configured. Returns per-platform success/failure."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["clip_path", "caption"],
+            "properties": {
+                "clip_path": {
+                    "type": "string",
+                    "description": "Local file path to the MP4 clip (output of clip_video)",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Caption with hashtags. Max 2200 chars for IG.",
+                },
+                "hashtags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional hashtags (no # prefix) — appended to caption",
+                },
+                "platforms": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["instagram", "facebook"]},
+                    "description": "Target platforms. Default: [instagram]",
+                },
+                "public_url_base": {
+                    "type": "string",
+                    "description": "Public HTTPS base URL where clips are hosted (e.g. https://cdn.example.com/clips)",
+                },
+            },
+        },
+    )
+    async def publish_clip_to_meta(self, params: dict) -> str:
+        """Handler for the publish_clip_to_meta tool."""
+        from engine.publisher import publish_clip, build_caption
+
+        clip_path_str = (params.get("clip_path") or "").strip()
+        if not clip_path_str:
+            return json.dumps({"error": "clip_path is required"})
+        clip_path = Path(clip_path_str)
+        if not clip_path.exists():
+            return json.dumps({"error": f"Clip file not found: {clip_path}"})
+
+        caption = params.get("caption", "") or ""
+        hashtags = params.get("hashtags") or []
+        if not isinstance(hashtags, list):
+            hashtags = []
+        platforms = params.get("platforms") or ["instagram"]
+        if not isinstance(platforms, list):
+            platforms = ["instagram"]
+        platforms_tuple = tuple(p for p in platforms if p in ("instagram", "facebook"))
+        if not platforms_tuple:
+            return json.dumps({"error": "platforms must be non-empty subset of [instagram, facebook]"})
+
+        public_url_base = (
+            params.get("public_url_base")
+            or self._config.get("public_url_base")
+        )
+
+        try:
+            results = await publish_clip(
+                clip_path=clip_path,
+                moment_hook=caption,
+                moment_title="",
+                hashtags=hashtags,
+                public_url_base=public_url_base,
+                access_token=self._config.get("meta_graph_access_token"),
+                ig_user_id=self._config.get("meta_ig_user_id"),
+                fb_page_id=self._config.get("meta_fb_page_id"),
+                platforms=platforms_tuple,
+            )
+        except Exception as e:
+            logger.error("publish_clip_to_meta failed: %s", e, exc_info=True)
+            return json.dumps({"error": f"Publish failed: {e}"})
+
+        return json.dumps({
+            "status": "ok" if any(r.ok for r in results.values()) else "failed",
+            "results": {
+                platform: {
+                    "ok": r.ok,
+                    "media_id": r.media_id,
+                    "permalink": r.permalink,
+                    "error": r.error,
+                }
+                for platform, r in results.items()
+            },
+        }, ensure_ascii=False)
