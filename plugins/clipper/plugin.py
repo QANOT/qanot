@@ -20,7 +20,8 @@ from qanot.plugins.base import Plugin, ToolDef, tool
 logger = logging.getLogger(__name__)
 
 PLUGIN_DIR = Path(__file__).parent
-OUTPUT_DIR = PLUGIN_DIR / "output"
+# Fallback output dir if no workspace_dir is set
+_FALLBACK_OUTPUT = PLUGIN_DIR / "output"
 
 
 class ClipperPlugin(Plugin):
@@ -34,6 +35,7 @@ class ClipperPlugin(Plugin):
         self._provider: Any = None  # LLMProvider, set via setup
         self._elevenlabs_key: str | None = None
         self._config: dict = {}
+        self._output_dir: Path = _FALLBACK_OUTPUT
 
     async def setup(self, config: dict) -> None:
         """Store config + agent references for tools to use.
@@ -41,17 +43,33 @@ class ClipperPlugin(Plugin):
         Expected config keys (passed by plugin loader):
           - agent: the Qanot Agent instance (we use its provider)
           - elevenlabs_key: optional, for Scribe transcription
+          - output_dir: optional override for clip storage
+          - workspace_dir: injected by qanot if not set; clips go under {workspace_dir}/clipper/
         """
         self._config = config
-        # The agent instance is injected by qanot's plugin loader when available
         agent = config.get("agent")
         if agent is not None:
             self._provider = getattr(agent, "provider", None)
         self._elevenlabs_key = config.get("elevenlabs_key")
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info("Clipper plugin ready (provider=%s, elevenlabs=%s)",
-                    type(self._provider).__name__ if self._provider else "none",
-                    bool(self._elevenlabs_key))
+
+        # Resolve output dir: explicit config > workspace_dir/clipper > plugin dir fallback
+        out = config.get("output_dir")
+        if not out:
+            workspace = config.get("workspace_dir")
+            if workspace:
+                out = str(Path(workspace) / "clipper")
+        if out:
+            self._output_dir = Path(out)
+        else:
+            self._output_dir = _FALLBACK_OUTPUT
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            "Clipper plugin ready (provider=%s, elevenlabs=%s, output=%s)",
+            type(self._provider).__name__ if self._provider else "none",
+            bool(self._elevenlabs_key),
+            self._output_dir,
+        )
 
     def get_tools(self) -> list[ToolDef]:
         return self._collect_tools()
@@ -150,7 +168,7 @@ class ClipperPlugin(Plugin):
                 language=language,
                 caption_style=caption_style,
                 reframe_mode=reframe_mode,
-                output_dir=OUTPUT_DIR,
+                output_dir=self._output_dir,
                 elevenlabs_key=self._elevenlabs_key,
                 virality_threshold=virality_threshold,
             )

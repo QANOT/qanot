@@ -376,6 +376,29 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 logger.error("File download failed: %s", e)
                 text = f"[Document: {fname} \u2014 yuklab bo'lmadi] {text}".strip()
 
+        # Video uploads (not document-type) — important for clipper plugin
+        if message.video:
+            try:
+                file = await self.bot.get_file(message.video.file_id)
+                dl_dir = Path(self.config.workspace_dir) / "uploads"
+                dl_dir.mkdir(parents=True, exist_ok=True)
+                # Use video file_unique_id as stable name to enable re-runs
+                ext = Path(file.file_path or "video.mp4").suffix or ".mp4"
+                fname = f"{message.video.file_unique_id}{ext}"
+                dl_path = dl_dir / fname
+                if not dl_path.exists():
+                    await self.bot.download_file(file.file_path, dl_path)
+                duration = message.video.duration or 0
+                mm, ss = divmod(int(duration), 60)
+                text = (
+                    f"[Video yuklandi: uploads/{fname} "
+                    f"({mm}:{ss:02d}, {message.video.width}x{message.video.height})] {text}"
+                ).strip()
+                logger.info("Downloaded video: %s (%ds)", dl_path, duration)
+            except Exception as e:
+                logger.error("Video download failed: %s", e)
+                text = f"[Video yuklab bo'lmadi: {e}] {text}".strip()
+
         if message.reply_to_message:
             quoted = message.reply_to_message
             quoted_text = quoted.text or quoted.caption or ""

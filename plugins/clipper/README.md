@@ -107,6 +107,53 @@ await pipeline.render()
 - MoviePy loads entire video into memory — fails on long sources
 - ffmpeg overlay streams — handles multi-hour sources
 
+## Production deployment
+
+### Serving clips publicly (for Meta Graph auto-post)
+
+Meta requires a publicly-accessible HTTPS URL to pull the clip. Since clips live
+in the `/data` volume (mounted at `/var/qanot/{user_id}/clipper/` on host), the
+simplest approach is to let nginx serve the directory.
+
+Add this to your nginx `qanot.topkey.uz` (or similar) server block:
+
+```nginx
+location /clips/ {
+    alias /var/qanot/;
+    # Only allow mp4 files from the clipper output tree
+    location ~ ^/clips/([^/]+)/clipper/clips/(.+\.mp4)$ {
+        alias /var/qanot/$1/clipper/clips/$2;
+        add_header Cache-Control "public, max-age=86400";
+        add_header Access-Control-Allow-Origin *;
+    }
+    # Everything else: 404
+    return 404;
+}
+```
+
+Then set in the plugin config:
+```json
+"public_url_base": "https://qanot.topkey.uz/clips/1545224574/clipper/clips"
+```
+
+Or use any CDN (S3, R2, Cloudflare Pages) by implementing an uploader callback.
+
+### Resource sizing
+
+- **Docker image**: +300MB (yt-dlp, faster-whisper, ffmpeg-python, pydantic)
+- **First transcription**: downloads whisper model (~1.5GB for large-v3, one-time)
+- **Per-clip runtime** (CPU): ~0.5x realtime for transcribe, 2-3s per clip render
+- **Memory**: ~1.5GB peak during transcription (whisper model in RAM)
+
+### Disk hygiene
+
+Clips pile up at `/var/qanot/{user_id}/clipper/clips/`. Recommend a cron:
+```bash
+# Delete clips older than 7 days
+find /var/qanot/*/clipper/clips -name '*.mp4' -mtime +7 -delete
+find /var/qanot/*/clipper/sources -name '*.mp4' -mtime +3 -delete
+```
+
 ## Roadmap
 
 - [x] Phase 1: MVP end-to-end (source → transcribe → detect → cut → caption)

@@ -13,3 +13,9 @@ python-pptx>=0.6
 sqlite-vec>=0.1.6
 PyMuPDF>=1.24
 fastembed>=0.4
+
+# Clipper plugin deps (MVP — heavy deps like mediapipe/torch are optional extras)
+yt-dlp>=2024.12.13
+faster-whisper>=1.0.3
+ffmpeg-python>=0.2.0
+pydantic>=2.0.0

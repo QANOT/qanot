@@ -92,6 +92,10 @@ class PluginManager:
                     name, ", ".join(missing_config),
                 )
 
+            # Inject framework-level context into plugin_config (safe — copy first)
+            plugin_config = dict(plugin_config)
+            plugin_config.setdefault("workspace_dir", config.workspace_dir)
+
             # Load and instantiate
             plugin = await _load_from_path(plugin_dir, plugin_config)
             if plugin is None:
