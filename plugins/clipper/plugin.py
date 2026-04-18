@@ -228,43 +228,6 @@ class ClipperPlugin(Plugin):
         return json.dumps(result, ensure_ascii=False)
 
     @tool(
-        name="publish_clip_to_meta",
-        description=(
-            "Publish a clip file to Instagram Reels and/or Facebook Reels via Meta Graph API. "
-            "Requires META_GRAPH_ACCESS_TOKEN + META_IG_USER_ID (or META_FB_PAGE_ID) in env. "
-            "The clip must be reachable via a public HTTPS URL — provide `public_url_base` "
-            "or ensure an upload callback is configured. Returns per-platform success/failure."
-        ),
-        parameters={
-            "type": "object",
-            "required": ["clip_path", "caption"],
-            "properties": {
-                "clip_path": {
-                    "type": "string",
-                    "description": "Local file path to the MP4 clip (output of clip_video)",
-                },
-                "caption": {
-                    "type": "string",
-                    "description": "Caption with hashtags. Max 2200 chars for IG.",
-                },
-                "hashtags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional hashtags (no # prefix) — appended to caption",
-                },
-                "platforms": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["instagram", "facebook"]},
-                    "description": "Target platforms. Default: [instagram]",
-                },
-                "public_url_base": {
-                    "type": "string",
-                    "description": "Public HTTPS base URL where clips are hosted (e.g. https://cdn.example.com/clips)",
-                },
-            },
-        },
-    )
-    @tool(
         name="clipper_health",
         description=(
             "Diagnose the clipper pipeline: checks yt-dlp version, PO-token provider reachability, "
@@ -337,6 +300,43 @@ class ClipperPlugin(Plugin):
 
         return json.dumps(report, ensure_ascii=False)
 
+    @tool(
+        name="publish_clip_to_meta",
+        description=(
+            "Publish a clip file to Instagram Reels and/or Facebook Reels via Meta Graph API. "
+            "Requires META_GRAPH_ACCESS_TOKEN + META_IG_USER_ID (or META_FB_PAGE_ID) in env. "
+            "The clip must be reachable via a public HTTPS URL — provide `public_url_base` "
+            "or ensure an upload callback is configured. Returns per-platform success/failure."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["clip_path", "caption"],
+            "properties": {
+                "clip_path": {
+                    "type": "string",
+                    "description": "Local file path to the MP4 clip (output of clip_video)",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Caption with hashtags. Max 2200 chars for IG.",
+                },
+                "hashtags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional hashtags (no # prefix) — appended to caption",
+                },
+                "platforms": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["instagram", "facebook"]},
+                    "description": "Target platforms. Default: [instagram]",
+                },
+                "public_url_base": {
+                    "type": "string",
+                    "description": "Public HTTPS base URL where clips are hosted (e.g. https://cdn.example.com/clips)",
+                },
+            },
+        },
+    )
     async def publish_clip_to_meta(self, params: dict) -> str:
         """Handler for the publish_clip_to_meta tool."""
         from engine.publisher import publish_clip, build_caption
