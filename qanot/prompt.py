@@ -187,18 +187,33 @@ def build_system_prompt(
         if active_skills_content:
             _add(active_skills_content)
 
-    # Session info — changes every request
-    now = datetime.now(timezone.utc)
-    date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M UTC")
+    # Session info — changes every request.
+    # IMPORTANT: agent has repeatedly miscomputed dates when only given UTC,
+    # so we show BOTH local (the user's civil date/time) AND UTC with offset.
+    # Never make the model do timezone arithmetic.
+    now_utc = datetime.now(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        local_tz = ZoneInfo(timezone_str)
+        now_local = now_utc.astimezone(local_tz)
+    except Exception:
+        now_local = now_utc
+    date_str = now_local.strftime("%Y-%m-%d")
+    time_str_local = now_local.strftime("%H:%M")
+    offset_str = now_local.strftime("%z")
+    offset_fmt = f"{offset_str[:3]}:{offset_str[3:]}" if offset_str else ""
+    utc_date_str = now_utc.strftime("%Y-%m-%d")
+    utc_time_str = now_utc.strftime("%H:%M")
+    weekday = now_local.strftime("%A")
 
     parts.append(
         f"# Session Info\n"
-        f"- **Date:** {date_str}\n"
-        f"- **Time:** {time_str}\n"
-        f"- **Timezone:** {timezone_str}\n"
+        f"- **Local date & time:** {date_str} {time_str_local} ({weekday}, {timezone_str}, UTC{offset_fmt})\n"
+        f"- **UTC reference:** {utc_date_str}T{utc_time_str}:00Z\n"
         f"- **Context Usage:** {context_percent:.1f}%\n"
         f"- **Total Tokens:** {total_tokens:,}\n"
+        f"- **Reminder:** when scheduling cron/reminders, pass local time with the offset "
+        f"(e.g. `2026-03-12T17:00:00{offset_fmt or '+05:00'}`) — do NOT do timezone math yourself.\n"
         + ("- **WARNING:** Context above 50% — Working Buffer Protocol ACTIVE\n" if context_percent >= 50 else "")
     )
 
