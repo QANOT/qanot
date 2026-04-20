@@ -80,11 +80,14 @@ def _blur_pad_filter(src_w: int, src_h: int, target_w: int, target_h: int) -> st
     )
 
     # Split input, process both branches, overlay FG centered over BG.
+    # NOTE: the leading [0:v] label is required when this is fed to
+    # -filter_complex (labeled graph). cut_clip() detects the leading
+    # bracket and switches from -vf to -filter_complex automatically.
     return (
-        f"split=2[bg][fg];"
+        f"[0:v]split=2[bg][fg];"
         f"[bg]{bg_chain}[bgblur];"
         f"[fg]{fg_chain}[fgfit];"
-        f"[bgblur][fgfit]overlay=(W-w)/2:(H-h)/2,format=yuv420p"
+        f"[bgblur][fgfit]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]"
     )
 
 
@@ -140,29 +143,48 @@ async def cut_clip(
     else:
         raise ValueError(f"Unknown reframe_mode: {reframe_mode}")
 
-    # Accurate seek + re-encode
+    # If the filter graph uses labels ([bg], [fg], [vout], …) it must be
+    # fed to -filter_complex, not -vf. Detect by leading bracket.
+    uses_complex = vf.lstrip().startswith("[")
+
     cmd: list[str] = [
         "ffmpeg", "-y",
         "-ss", f"{start:.3f}",
         "-i", str(source.path),
         "-t", f"{duration:.3f}",
-        "-vf", vf,
+    ]
+    if uses_complex:
+        cmd.extend(["-filter_complex", vf, "-map", "[vout]"])
+        if source.has_audio:
+            cmd.extend(["-map", "0:a?"])
+    else:
+        cmd.extend(["-vf", vf])
+
+    cmd.extend([
         "-c:v", "libx264",
         "-preset", preset,
         "-crf", str(crf),
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
-    ]
+    ])
     if source.has_audio:
         cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
     else:
         cmd.extend(["-an"])
     cmd.append(str(output_path))
 
-    logger.info("Cutting clip: %.1fs-%.1fs (%.1fs) → %s", start, moment.end_s, duration, output_path.name)
+    logger.info(
+        "Cutting clip: %.1fs-%.1fs (%.1fs) → %s (mode=%s, complex=%s)",
+        start, moment.end_s, duration, output_path.name, reframe_mode, uses_complex,
+    )
     rc, out, err = await _run(*cmd, timeout=max(duration * 8, 60))
     if rc != 0:
-        raise RuntimeError(f"ffmpeg cut failed: {err[-1000:]}")
+        # Log the full command + stderr so we can actually diagnose. Previous
+        # err[-1000:] was silently chopping the real failure line.
+        logger.error("ffmpeg cut cmd: %s", " ".join(cmd))
+        logger.error("ffmpeg cut stderr (full):\n%s", err)
+        tail = err.strip().splitlines()[-8:] if err else []
+        raise RuntimeError("ffmpeg cut failed: " + " | ".join(tail))
 
     return output_path
 

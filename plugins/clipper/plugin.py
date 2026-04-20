@@ -131,7 +131,11 @@ class ClipperPlugin(Plugin):
                 },
                 "caption_style": {
                     "type": "string",
-                    "description": "Caption style: captions_ai | submagic | minimal | off. Default: captions_ai",
+                    "description": (
+                        "Caption style: captions_ai | submagic | minimal | off. "
+                        "Default: off (no captions burned). Only set to a style "
+                        "if the user explicitly asks for subtitles/captions."
+                    ),
                 },
                 "reframe_mode": {
                     "type": "string",
@@ -147,6 +151,20 @@ class ClipperPlugin(Plugin):
                 "virality_threshold": {
                     "type": "integer",
                     "description": "Drop clips scoring below this (0-99). Default: 60",
+                },
+                "jumpcut": {
+                    "type": "boolean",
+                    "description": (
+                        "Remove silence/pauses between spoken words for tighter pacing "
+                        "(OpusClip/Submagic-style jump cuts). Default: true."
+                    ),
+                },
+                "add_hook_overlay": {
+                    "type": "boolean",
+                    "description": (
+                        "Burn a big hook-text overlay across the first 2.5s of each clip. "
+                        "Default: false (viewers often dislike the intrusive title card)."
+                    ),
                 },
             },
         },
@@ -186,8 +204,13 @@ class ClipperPlugin(Plugin):
             virality_threshold = 60
 
         language = (params.get("language") or "uz").strip().lower()
-        caption_style = (params.get("caption_style") or "captions_ai").strip().lower()
-        reframe_mode = (params.get("reframe_mode") or "center").strip().lower()
+        caption_style = (params.get("caption_style") or "off").strip().lower()
+        reframe_mode = (params.get("reframe_mode") or "blur_pad").strip().lower()
+
+        jumpcut_param = params.get("jumpcut")
+        jumpcut = True if jumpcut_param is None else bool(jumpcut_param)
+        hook_param = params.get("add_hook_overlay")
+        add_hook_overlay = False if hook_param is None else bool(hook_param)
 
         try:
             clips = await run_pipeline(
@@ -199,6 +222,8 @@ class ClipperPlugin(Plugin):
                 language=language,
                 caption_style=caption_style,
                 reframe_mode=reframe_mode,
+                add_hook_overlay=add_hook_overlay,
+                jumpcut=jumpcut,
                 output_dir=self._output_dir,
                 elevenlabs_key=self._elevenlabs_key,
                 virality_threshold=virality_threshold,

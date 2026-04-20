@@ -15,16 +15,25 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from engine.captions import burn_captions, clip_local_words
 from engine.cutter import cut_clip, extract_thumbnail
 from engine.hook import burn_hook_overlay
+from engine.jumpcut import (
+    _sentence_boundary_times,
+    apply_jumpcut,
+    compute_keep_segments,
+    remap_words,
+    total_kept_duration,
+)
 from engine.models import (
     Clip,
     ClipperConfig,
     Moment,
+    Segment,
     SourceMedia,
     Transcript,
 )
@@ -162,6 +171,7 @@ class ClipperPipeline:
             clip_t0 = time.monotonic()
             stem = f"clip_{i:02d}_score{moment.virality_score}"
             cut_path = clips_dir / f"{stem}_raw.mp4"
+            jumpcut_path = clips_dir / f"{stem}_jumpcut.mp4"
             hooked_path = clips_dir / f"{stem}_hooked.mp4"
             final_path = clips_dir / f"{stem}.mp4"
             thumb_path = clips_dir / f"{stem}.jpg"
@@ -178,17 +188,82 @@ class ClipperPipeline:
                 logger.error("Failed to cut clip %d: %s", i, e)
                 continue
 
-            # Stage 4b: hook overlay (optional)
+            # Words local to this clip (relative to 0 = moment.start_s).
+            local_words = clip_local_words(
+                self.transcript.words, moment.start_s, moment.end_s
+            )
+            clip_duration = max(0.0, moment.end_s - moment.start_s)
+
+            # Stage 4a: jump-cut (silence compression, not deletion).
+            # Pauses longer than long_gap_threshold_s are TRIMMED down to a
+            # natural target length — not removed entirely. Keeps meaning
+            # intact while eliminating dead air.
             stage_input = cut_path
+            if self.config.jumpcut and local_words:
+                try:
+                    # Build sentence-boundary times in clip-local seconds.
+                    clip_local_segments = [
+                        Segment(
+                            text=seg.text,
+                            start_s=seg.start_s - moment.start_s,
+                            end_s=seg.end_s - moment.start_s,
+                            words=[
+                                replace(w, start_s=w.start_s - moment.start_s,
+                                        end_s=w.end_s - moment.start_s)
+                                for w in seg.words
+                            ],
+                            speaker=seg.speaker,
+                        )
+                        for seg in self.transcript.segments
+                        if seg.end_s > moment.start_s and seg.start_s < moment.end_s
+                    ]
+                    boundary_times = _sentence_boundary_times(clip_local_segments)
+
+                    keep_segments = compute_keep_segments(
+                        local_words,
+                        clip_duration,
+                        long_gap_threshold_s=self.config.long_gap_threshold_s,
+                        target_mid_sentence_gap_s=self.config.target_mid_sentence_gap_s,
+                        target_sentence_boundary_gap_s=self.config.target_sentence_boundary_gap_s,
+                        sentence_boundary_times=boundary_times,
+                    )
+                    removed = clip_duration - total_kept_duration(keep_segments)
+                    if removed > 0.2 and len(keep_segments) >= 1:
+                        await apply_jumpcut(
+                            cut_path, jumpcut_path, keep_segments,
+                            has_audio=self.source.has_audio,
+                        )
+                        local_words = remap_words(local_words, keep_segments)
+                        try:
+                            cut_path.unlink()
+                        except OSError:
+                            pass
+                        stage_input = jumpcut_path
+                        logger.info(
+                            "Clip %d jumpcut: %d segments kept, %.1fs removed (%.0f%%)",
+                            i, len(keep_segments), removed,
+                            100.0 * removed / max(clip_duration, 0.001),
+                        )
+                    else:
+                        logger.info(
+                            "Clip %d jumpcut: nothing to trim (removed=%.2fs)",
+                            i, removed,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Jumpcut failed for clip %d (keeping raw): %s", i, e,
+                    )
+
+            # Stage 4b: hook overlay (optional)
             if self.config.add_hook_overlay and moment.hook:
                 try:
                     await burn_hook_overlay(
-                        cut_path, moment.hook, hooked_path,
+                        stage_input, moment.hook, hooked_path,
                         canvas_width=self.config.target_width,
                         canvas_height=self.config.target_height,
                     )
                     try:
-                        cut_path.unlink()
+                        stage_input.unlink()
                     except OSError:
                         pass
                     stage_input = hooked_path
@@ -196,7 +271,6 @@ class ClipperPipeline:
                     logger.warning("Hook overlay failed for clip %d (skipping hook): %s", i, e)
 
             # Stage 5: burn captions
-            local_words = clip_local_words(self.transcript.words, moment.start_s, moment.end_s)
             if self.config.caption_style != "off" and local_words:
                 try:
                     await burn_captions(
@@ -260,9 +334,13 @@ async def clip_video(
     min_duration_s: float = 30.0,
     max_duration_s: float = 90.0,
     language: str = "uz",
-    caption_style: str = "captions_ai",
-    reframe_mode: str = "center",
-    add_hook_overlay: bool = True,
+    caption_style: str = "off",
+    reframe_mode: str = "blur_pad",
+    add_hook_overlay: bool = False,
+    jumpcut: bool = True,
+    long_gap_threshold_s: float = 0.5,
+    target_mid_sentence_gap_s: float = 0.25,
+    target_sentence_boundary_gap_s: float = 0.45,
     diarize: bool = False,
     output_dir: Path | None = None,
     elevenlabs_key: str | None = None,
@@ -279,6 +357,10 @@ async def clip_video(
         caption_style=caption_style,
         reframe_mode=reframe_mode,
         add_hook_overlay=add_hook_overlay,
+        jumpcut=jumpcut,
+        long_gap_threshold_s=long_gap_threshold_s,
+        target_mid_sentence_gap_s=target_mid_sentence_gap_s,
+        target_sentence_boundary_gap_s=target_sentence_boundary_gap_s,
         diarize=diarize,
         output_dir=output_dir or (Path(__file__).parent.parent / "output"),
         virality_threshold=virality_threshold,

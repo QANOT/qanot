@@ -108,7 +108,7 @@ class ClipperConfig:
     min_duration_s: float = 30.0
     max_duration_s: float = 90.0
     language: str = "uz"  # whisper language code
-    caption_style: str = "captions_ai"  # captions_ai | submagic | minimal | off
+    caption_style: str = "off"  # captions_ai | submagic | minimal | off
     # blur_pad: original uncropped + blurred-bg fill (OpusClip/Submagic default)
     # center:   naive center-crop — DESTROYS edge content (text, lower-thirds)
     # smart:    face-tracking reframe (needs MediaPipe deps)
@@ -116,7 +116,19 @@ class ClipperConfig:
     reframe_mode: str = "blur_pad"
     target_width: int = 1080
     target_height: int = 1920  # 9:16
-    add_hook_overlay: bool = True
+    # Hook overlay = big text across first 2.5s. Looks spammy on real
+    # content — off by default; enable per-call if desired.
+    add_hook_overlay: bool = False
+    # Jump-cut: compress (NOT delete) speech pauses using word-level
+    # timestamps. Matches Descript/OpusClip/Cleanvoice behaviour —
+    # preserves natural cadence while eliminating dead air.
+    #   - only gaps longer than long_gap_threshold_s are touched
+    #   - sentence boundaries kept longer (breathing/thinking room)
+    #   - within-sentence gaps tightened more aggressively
+    jumpcut: bool = True
+    long_gap_threshold_s: float = 0.5
+    target_mid_sentence_gap_s: float = 0.25
+    target_sentence_boundary_gap_s: float = 0.45
     output_dir: Path = field(default_factory=lambda: Path("output"))
     transcribe_provider: str = "faster-whisper"  # faster-whisper | elevenlabs
     # large-v3-turbo: ~1.5GB RAM, 3x faster than large-v3, minimal accuracy loss
