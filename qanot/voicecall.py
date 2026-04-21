@@ -325,31 +325,47 @@ class AudioPipeline:
     async def _playback_loop(self) -> None:
         """Continuously dequeue outbound PCM and send to voice chat.
 
-        Paces at real-time rate (20ms per frame) using asyncio.sleep.
+        ntgcalls is paced by its internal jitter buffer keyed on each
+        frame's capture_time (microseconds). Our job is to: (1) pass a
+        monotonically-increasing capture_time stamp in 20ms steps, and
+        (2) NOT over-pace with asyncio.sleep — the event loop adds drift
+        that makes real-time 20ms sleeps stretch to 25-30ms, producing
+        the audible 'grgrgrgr' underruns. We self-pace only when we're
+        running ahead of real time (we pushed too fast); otherwise push
+        as fast as ntgcalls will accept.
         """
         from pytgcalls.types import Device
         from pytgcalls.types.stream.frame import Frame
 
         tgcalls = self._manager._tgcalls
         chat_id = self._session.chat_id
-        # Default audio frame info — width/height/rotation only matter for
-        # video. capture_time=0 lets ntgcalls stamp it on send.
-        frame_info = Frame.Info()
+
+        # Per-utterance capture_time clock. Reset when the queue drains
+        # so a new TTS response starts fresh instead of appearing far in
+        # the future (which ntgcalls would treat as very late frames).
+        base_mono_ns: int | None = None
+        capture_time_us: int = 0
+        FRAME_US = 20_000  # 20ms per 48kHz/stereo/960-sample frame
 
         while True:
             try:
                 frame = await asyncio.wait_for(
                     self._outbound_queue.get(), timeout=1.0,
                 )
-                # Send frame to voice chat.
-                # py-tgcalls 2.x: send_frame(chat_id, device, data, frame_info)
-                # — device=MICROPHONE for outbound audio, default Frame.Info
-                # is fine for audio (width/height/rotation matter for video only).
+
+                # Start / restart the capture clock on first frame after idle.
+                now_ns = time.monotonic_ns()
+                if base_mono_ns is None:
+                    base_mono_ns = now_ns
+                    capture_time_us = 0
+
+                frame_info = Frame.Info(capture_time=capture_time_us)
+                capture_time_us += FRAME_US
+
                 try:
                     await tgcalls.send_frame(
                         chat_id, Device.MICROPHONE, frame, frame_info,
                     )
-                    # Log first sent frame + periodic progress.
                     self._sent_count = getattr(self, "_sent_count", 0) + 1
                     if self._sent_count == 1 or self._sent_count % 50 == 0:
                         logger.info(
@@ -359,15 +375,20 @@ class AudioPipeline:
                 except Exception as e:
                     logger.warning("VC send_frame failed [%d]: %r", chat_id, e)
 
-                # Pace at real-time rate
-                await asyncio.sleep(PLAYBACK_INTERVAL)
+                # Only sleep if we've pushed ahead of real time. This keeps
+                # the jitter buffer ~1 frame deep without starving it.
+                elapsed_us = (time.monotonic_ns() - base_mono_ns) // 1000
+                ahead_us = capture_time_us - elapsed_us
+                if ahead_us > FRAME_US:
+                    await asyncio.sleep((ahead_us - FRAME_US) / 1_000_000)
 
-                # Mark not speaking when queue is drained
                 if self._outbound_queue.empty():
                     self._session.is_speaking = False
+                    base_mono_ns = None  # restart clock for next utterance
 
             except asyncio.TimeoutError:
-                # No audio to play — send silence or just wait
+                # Idle — drop the clock so the next utterance starts fresh.
+                base_mono_ns = None
                 continue
             except asyncio.CancelledError:
                 break
