@@ -12,12 +12,17 @@ PLUGIN_DIR = Path(__file__).parent.parent / "plugins" / "clipper"
 
 
 def _load_engine_module(name: str):
-    """Load a clipper engine module in isolation (matches plugin loader behavior)."""
-    # Ensure plugin dir is on sys.path so 'engine.X' imports resolve
+    """Load a clipper engine module in isolation (matches plugin loader behavior).
+
+    Subpackage was renamed from ``engine`` → ``cl_engine`` to avoid a
+    sys.modules collision: other plugins (tgchannel, sheets, notion)
+    previously used a generic ``engine`` subpackage too, so whichever
+    loaded first would hijack later imports and silently break setup.
+    """
     plugin_str = str(PLUGIN_DIR)
     if plugin_str not in sys.path:
         sys.path.insert(0, plugin_str)
-    return importlib.import_module(f"engine.{name}")
+    return importlib.import_module(f"cl_engine.{name}")
 
 
 @pytest.fixture(scope="module")
