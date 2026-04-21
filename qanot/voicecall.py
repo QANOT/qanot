@@ -498,6 +498,8 @@ class VoiceCallManager:
             self._pipelines[chat_id] = pipeline
             await pipeline.start()
 
+            from pytgcalls.types import RecordStream
+
             # Join voice chat.
             # py-tgcalls 2.x: play(chat_id, stream=None) joins without any
             # outbound media — we stream our TTS frames manually via
@@ -506,10 +508,14 @@ class VoiceCallManager:
             # which 2.x rejects with "missing a required argument".
             await self._tgcalls.play(chat_id)
 
-            # Start recording to receive incoming audio frames.
-            # py-tgcalls 2.x: record(chat_id) defaults are fine. 1.x's
-            # RecordStream(audio=True) arg was removed.
-            await self._tgcalls.record(chat_id)
+            # Enable inbound audio frame delivery.
+            # RecordStream(audio=True) sets media_source=MediaSource.EXTERNAL,
+            # which tells ntgcalls to route incoming mic audio to our
+            # on_update(stream_frame) handler as raw PCM. Without this,
+            # ntgcalls silently discards the audio and no frames ever reach
+            # Python. I mistakenly removed this when porting to 2.x — the
+            # class is still valid in 2.x; only some param names changed.
+            await self._tgcalls.record(chat_id, RecordStream(audio=True))
 
             logger.info("Joined voice chat in %d (user %d)", chat_id, user_id)
             return "Ovozli suhbatga qo'shildim! Gapiring — men tinglayman."
