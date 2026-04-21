@@ -55,29 +55,71 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 async def _write_tts_audio_to_temp(tts_result) -> str | None:
-    """Persist TTS output to a temp file for tgcalls.play(audio_path=...).
+    """Persist TTS output to a WAV temp file ready for ntgcalls playback.
 
-    Handles both audio_data (bytes, Muxlisa/Aisha) and audio_url
-    (Kotib). Returns the absolute path or None on failure.
+    Runs the provider audio through a single ffmpeg pass that:
+    - pads 150ms of silence at the head and 250ms at the tail, so the
+      stream-switch click from ntgcalls lands on silence instead of
+      speech onset / mid-word tail
+    - applies a 30ms fade-in and 80ms fade-out to blend the transitions
+    - normalises to 48kHz stereo s16le (ntgcalls' native voice chat
+      format — zero resampling cost at playback time)
+
+    Handles both audio_data bytes (Muxlisa/Aisha) and audio_url (Kotib).
+    Returns the absolute path or None on failure.
     """
-    import aiohttp
     from qanot.voice import download_audio
 
-    if tts_result.audio_data:
-        # Muxlisa returns WAV bytes directly. Aisha may return MP3.
-        # Preserve the original extension if recognisable.
-        suffix = ".wav" if tts_result.audio_data[:4] == b"RIFF" else ".mp3"
-        fd, path = tempfile.mkstemp(prefix="qanot_tts_", suffix=suffix)
-        with os.fdopen(fd, "wb") as f:
-            f.write(tts_result.audio_data)
-        return path
-    if tts_result.audio_url:
-        try:
-            return await download_audio(tts_result.audio_url)
-        except Exception as e:
-            logger.error("download_audio failed: %s", e)
+    source_path: str | None = None
+    source_is_temp = False
+    try:
+        if tts_result.audio_data:
+            fd, source_path = tempfile.mkstemp(prefix="qanot_tts_src_", suffix=".bin")
+            with os.fdopen(fd, "wb") as f:
+                f.write(tts_result.audio_data)
+            source_is_temp = True
+        elif tts_result.audio_url:
+            source_path = await download_audio(tts_result.audio_url)
+            source_is_temp = True
+        if not source_path:
             return None
-    return None
+
+        fd, out_path = tempfile.mkstemp(prefix="qanot_tts_", suffix=".wav")
+        os.close(fd)
+        # adelay adds 150ms silence at head (per-channel), apad tacks on
+        # 250ms at tail, afade ramps the first 30ms smoothly in. The
+        # trailing silence keeps the stream-end click on silence.
+        filter_chain = (
+            "adelay=150|150,"
+            "apad=pad_dur=0.25,"
+            "afade=t=in:st=0:d=0.03"
+        )
+        # Let ffmpeg detect the input format (WAV/MP3/etc) automatically.
+        result = await asyncio.to_thread(
+            __import__("subprocess").run,
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", source_path,
+                "-af", filter_chain,
+                "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
+                out_path,
+            ],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "ffmpeg TTS polish failed: %s",
+                result.stderr[-300:].decode("utf-8", "replace"),
+            )
+            os.unlink(out_path)
+            return None
+        return out_path
+    finally:
+        if source_is_temp and source_path:
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
 
 
 def sanitize_for_tts(text: str) -> str:
