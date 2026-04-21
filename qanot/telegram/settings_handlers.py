@@ -144,12 +144,10 @@ class SettingsHandlersMixin:
 
     # ── /voiceprovider ────────────────────────────────────
 
-    async def _handle_voiceprovider(self, message: "Message") -> None:
-        """Handle /voiceprovider — change voice STT/TTS provider via inline buttons."""
-        if not self._check_command_access(message):
-            return
-
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    def _build_voiceprovider_menu(self):
+        """Render the /voiceprovider picker. Used by the command handler
+        AND by the cancel-key callback to restore the list in place."""
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         current = self.config.voice_provider
         providers = [
@@ -168,16 +166,21 @@ class SettingsHandlersMixin:
                 text=f"{check}{key_icon} {label} \u2014 {desc}",
                 callback_data=f"vprov:{prov_id}",
             )])
-
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
         voice_name = self.config.voice_name or "default"
-        await message.reply(
+        text = (
             f"\U0001f3a4 **Joriy provayder:** `{current}`\n"
             f"**Ovoz:** `{voice_name}`\n\n"
-            f"Provayderni tanlang (\U0001f511 = kalit bor, \U0001f512 = kalit yo'q):",
-            reply_markup=keyboard,
-            parse_mode="Markdown",
+            f"Provayderni tanlang (\U0001f511 = kalit bor, \U0001f512 = kalit yo'q):"
         )
+        return text, keyboard
+
+    async def _handle_voiceprovider(self, message: "Message") -> None:
+        """Handle /voiceprovider — change voice STT/TTS provider via inline buttons."""
+        if not self._check_command_access(message):
+            return
+        text, keyboard = self._build_voiceprovider_menu()
+        await message.reply(text, parse_mode="Markdown", reply_markup=keyboard)
 
     # ── /lang ─────────────────────────────────────────────
 
@@ -631,6 +634,23 @@ class SettingsHandlersMixin:
     # ── Callback: voice provider ──────────────────────────
 
     async def _cb_voiceprovider(self, callback: "CallbackQuery", prov: str) -> None:
+        # Cancel button pressed on the "waiting for key" prompt \u2014 clear
+        # the pending state and re-render the voiceprovider menu in place so
+        # the user can pick a different provider without typing /voiceprovider
+        # again.
+        if prov == "__cancel__":
+            user_id = str(callback.from_user.id) if callback.from_user else ""
+            self._pending_voice_key.pop(user_id, None)
+            await callback.answer("\u2705 Bekor qilindi")
+            try:
+                text, markup = self._build_voiceprovider_menu()
+                await callback.message.edit_text(
+                    text, parse_mode="Markdown", reply_markup=markup,
+                )
+            except Exception as e:
+                logger.debug("Failed to re-render voiceprovider menu: %s", e)
+            return
+
         labels = {"muxlisa": "Muxlisa", "kotib": "Kotib AI", "aisha": "Aisha", "whisper": "Whisper"}
         name = labels.get(prov, prov)
 
@@ -641,15 +661,27 @@ class SettingsHandlersMixin:
             user_id = str(callback.from_user.id) if callback.from_user else ""
             if user_id:
                 self._pending_voice_key[user_id] = prov
+
+            # Cancel button stays on the message so the user can abort
+            # without remembering a slash command.
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="\u274c Bekor qilish",
+                    callback_data="vprov:__cancel__",
+                )],
+            ])
+
             await callback.answer()
             try:
                 await callback.message.edit_text(
                     f"\U0001f511 <b>{name}</b> uchun API kalit kerak.\n\n"
                     "Keyingi xabarda kalitni yuboring (faqat kalit, boshqa "
                     "matn qo'shmang). Kalit saqlanadi va xabaringiz xavfsizlik "
-                    "uchun avtomatik o'chiriladi.\n\n"
-                    "Bekor qilish: /cancel_voice_key",
+                    "uchun avtomatik o'chiriladi.",
                     parse_mode="HTML",
+                    reply_markup=kb,
                 )
             except Exception as e:
                 logger.debug("Failed to edit voiceprovider prompt: %s", e)
