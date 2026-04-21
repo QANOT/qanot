@@ -104,6 +104,14 @@ class Config:
     # RAG
     rag_enabled: bool = True
     rag_mode: str = "auto"  # "auto" | "agentic" | "always"
+    # Pre-turn image extraction. When True, every incoming Telegram photo
+    # is run through a Haiku call before the main agent turn. Output is
+    # persisted to workspace/memory/extractions/ (durable across compaction
+    # + context resets) and injected into the main turn's user message.
+    # ~$0.001 per image at Haiku 4.5 pricing. See qanot/extraction.py.
+    pre_extract_images: bool = True
+    pre_extract_model: str = "claude-haiku-4-5-20251001"
+    pre_extract_timeout: float = 20.0  # seconds; extraction never blocks past this
     # Voice (Muxlisa.uz / KotibAI)
     voice_provider: str = "muxlisa"  # "muxlisa" | "kotib"
     voice_api_key: str = ""  # Default API key (used if per-provider key not set)

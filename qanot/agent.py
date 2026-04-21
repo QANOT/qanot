@@ -112,6 +112,10 @@ class Agent:
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
         self._pending_files: dict[str, list[str]] = {}
+        # Lazy-initialised image extractor (Haiku-backed pre-turn pipeline).
+        # None until first image arrives; we build it lazily so turns that
+        # never include images pay zero overhead.
+        self._image_extractor = None
         # Lifecycle hooks
         self.hooks: HookRegistry = hooks or HookRegistry()
         # Only main agent sets _instance (child agents must not clobber it)
@@ -221,6 +225,65 @@ class Agent:
             inject_legacy_memory=self.config.inject_legacy_memory,
         )
 
+    async def _run_image_extractions(self, images: list[dict]) -> str:
+        """Run the pre-turn extraction pipeline for N image blocks.
+
+        Returns a markdown context string to inject into the main turn's
+        user message. Empty string when extraction is disabled, nothing
+        was extractable, or the provider client isn't available.
+
+        Extraction failures (timeout, bad JSON, network) are logged but
+        never raise — extraction is pure augmentation, so the main turn
+        must still fire with the raw images even if this helper fails.
+        """
+        try:
+            from qanot.extraction import ImageExtractor, extract_images
+        except Exception as e:
+            logger.warning("extraction module unavailable: %s", e)
+            return ""
+
+        client = getattr(self.provider, "client", None)
+        if client is None:
+            logger.debug("provider has no .client attr; skipping pre-extract")
+            return ""
+
+        if self._image_extractor is None:
+            self._image_extractor = ImageExtractor(
+                client,
+                model=getattr(self.config, "pre_extract_model", "claude-haiku-4-5-20251001"),
+                timeout_seconds=float(getattr(self.config, "pre_extract_timeout", 20.0)),
+            )
+
+        try:
+            results = await extract_images(
+                self._image_extractor,
+                images,
+                self.config.workspace_dir,
+            )
+        except Exception as e:
+            logger.warning("pre-turn image extraction failed: %s", e)
+            return ""
+
+        blocks: list[str] = []
+        for i, r in enumerate(results, 1):
+            prefix = f"Rasm {i}/{len(results)}" if len(results) > 1 else "Rasm"
+            if r.ok or r.raw_text or r.fields:
+                body = r.to_context_markdown()
+                if r.source_path:
+                    body += f"\n- saved: {r.source_path}"
+                blocks.append(f"[{prefix}]\n{body}")
+            else:
+                # Don't inject empty errors — just note the failure so the
+                # main turn knows extraction was attempted.
+                blocks.append(
+                    f"[{prefix}] extraction unavailable"
+                    f"{' — ' + (r.error or '') if r.error else ''}"
+                )
+
+        if not blocks:
+            return ""
+        return "\n\n".join(blocks)
+
     async def _prepare_turn(self, user_message: str, messages: list[dict], *, images: list[dict] | None = None) -> str:
         """Shared turn setup: WAL scan, RAG context, compaction recovery, add user message.
 
@@ -306,9 +369,28 @@ class Agent:
                 logger.info("Session resume context injected (%d messages)", n_msgs)
             self._conv_manager.clear_restored_flag(self._current_user_id)
 
-        # Add user message to conversation (with images if present)
+        # Add user message to conversation (with images if present).
+        # Pre-turn extraction: for each attached image, call Haiku with a
+        # schema-enforced prompt to pull structured fields, persist the
+        # extraction to workspace/memory/extractions/ (durable across
+        # compaction + context resets), and inject the extracted fields
+        # as text alongside the image. This removes the failure mode where
+        # the main turn writes prose instead of structured data, then later
+        # turns invent rows because the image has dropped from context.
         if images:
-            content: list[dict] = [{"type": "text", "text": user_message}]
+            extraction_context = ""
+            if getattr(self.config, "pre_extract_images", True):
+                extraction_context = await self._run_image_extractions(images)
+
+            # Prepend extracted context to the user's text so the main model
+            # has it as the first thing it reads. The image blocks still
+            # follow — the model sees both signal and raw pixels.
+            text_part = (
+                f"{user_message}\n\n{extraction_context}".rstrip()
+                if extraction_context
+                else user_message
+            )
+            content: list[dict] = [{"type": "text", "text": text_part}]
             content.extend(images)
             messages.append({"role": "user", "content": content})
         else:
