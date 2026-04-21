@@ -300,4 +300,180 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
         category="core",
     )
 
+    # ── install_skill_from_github ─────────────────────────────────
+
+    async def install_skill_from_github(params: dict) -> str:
+        """Download a skill folder from GitHub into workspace/skills/.
+
+        Built for Anthropic's official catalogue (anthropics/skills) and any
+        compatible repo that uses `{subpath}/{name}/SKILL.md` layout.
+
+        Uses the git trees API to get the full listing in one call, then
+        downloads each file from raw.githubusercontent.com. No auth needed
+        for public repos; 60-req/hr rate limit is plenty for hand-driven use.
+        """
+        import aiohttp
+
+        repo = (params.get("repo") or "anthropics/skills").strip().strip("/")
+        name = (params.get("name") or "").strip().strip("/")
+        branch = (params.get("branch") or "main").strip()
+        subpath = (params.get("subpath") or "skills").strip().strip("/")
+        overwrite = bool(params.get("overwrite", False))
+
+        if not name:
+            return json.dumps({"error": "name is required (e.g. 'pdf', 'docx', 'xlsx')"})
+        if not all(c.isalnum() or c in "-_" for c in name):
+            return json.dumps({"error": f"invalid skill name {name!r} — use [a-z0-9-_]"})
+
+        target = skills_dir / name
+        if target.exists() and not overwrite:
+            return json.dumps({
+                "error": f"skill '{name}' already exists. Pass overwrite=true to replace.",
+                "existing_path": str(target),
+            })
+
+        # Fetch tree once, filter to the skill's directory prefix.
+        tree_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
+        prefix = f"{subpath}/{name}/" if subpath else f"{name}/"
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            try:
+                async with session.get(tree_url) as resp:
+                    if resp.status != 200:
+                        body = (await resp.text())[:300]
+                        return json.dumps({
+                            "error": f"GitHub tree fetch failed ({resp.status}): {body}",
+                        })
+                    tree_data = await resp.json()
+            except Exception as e:
+                return json.dumps({"error": f"GitHub tree fetch error: {e}"})
+
+            if tree_data.get("truncated"):
+                return json.dumps({
+                    "error": "GitHub tree was truncated — repo too large for this tool; "
+                             "clone it manually and copy the skill dir.",
+                })
+
+            files = [
+                e for e in tree_data.get("tree", [])
+                if e.get("type") == "blob" and e.get("path", "").startswith(prefix)
+            ]
+            if not files:
+                return json.dumps({
+                    "error": f"no files found at {prefix!r} in {repo}@{branch}. "
+                             f"Check 'name' and 'subpath' (try list_github_skills first).",
+                })
+
+            has_skill_md = any(e["path"].endswith("/SKILL.md") for e in files)
+            if not has_skill_md:
+                return json.dumps({
+                    "error": f"{prefix}SKILL.md not found — not a valid skill directory.",
+                })
+
+            # Stage download into a tmp dir so a partial failure doesn't leave
+            # a half-installed skill on disk.
+            import shutil
+            import tempfile
+            staged = Path(tempfile.mkdtemp(prefix=f"qanot-skill-{name}-"))
+            try:
+                for entry in files:
+                    rel = entry["path"][len(prefix):]  # drop `subpath/name/` prefix
+                    if not rel:
+                        continue
+                    # Basic path-traversal defence on the rel path
+                    if ".." in rel.split("/") or rel.startswith("/"):
+                        return json.dumps({"error": f"unsafe path in repo: {rel!r}"})
+                    raw_url = (
+                        f"https://raw.githubusercontent.com/"
+                        f"{repo}/{branch}/{entry['path']}"
+                    )
+                    try:
+                        async with session.get(raw_url) as rresp:
+                            if rresp.status != 200:
+                                return json.dumps({
+                                    "error": f"download failed for {rel}: HTTP {rresp.status}",
+                                })
+                            content = await rresp.read()
+                    except Exception as e:
+                        return json.dumps({"error": f"download failed for {rel}: {e}"})
+
+                    out = staged / rel
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_bytes(content)
+
+                # Atomic-ish swap
+                if target.exists():
+                    backup = target.with_suffix(".bak")
+                    if backup.exists():
+                        shutil.rmtree(backup)
+                    target.rename(backup)
+                skills_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(staged), str(target))
+            finally:
+                if staged.exists():
+                    shutil.rmtree(staged, ignore_errors=True)
+
+        installed_files = sorted(
+            str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()
+        )
+        if reload_callback:
+            try:
+                reload_callback()
+            except Exception as e:
+                logger.warning("Skill reload failed after install: %s", e)
+
+        logger.info("Installed skill '%s' from %s@%s (%d files)",
+                    name, repo, branch, len(installed_files))
+        return json.dumps({
+            "success": True,
+            "skill": name,
+            "source": f"{repo}@{branch}:{subpath}/{name}",
+            "path": str(target),
+            "files": installed_files,
+            "file_count": len(installed_files),
+        }, ensure_ascii=False)
+
+    registry.register(
+        name="install_skill_from_github",
+        description=(
+            "Install a skill folder from a GitHub repo into workspace/skills/. "
+            "Defaults to the official Anthropic catalogue (anthropics/skills). "
+            "Usage examples: name='pdf' installs anthropics/skills/skills/pdf; "
+            "name='xlsx' installs anthropics/skills/skills/xlsx. "
+            "Available skills in the default catalogue: algorithmic-art, "
+            "brand-guidelines, canvas-design, claude-api, doc-coauthoring, "
+            "docx, frontend-design, internal-comms, mcp-builder, pdf, pptx, "
+            "skill-creator, slack-gif-creator, theme-factory, "
+            "web-artifacts-builder, webapp-testing, xlsx."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill folder name to install (e.g. 'pdf', 'xlsx').",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "GitHub repo as 'owner/name'. Default: anthropics/skills.",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch or tag. Default: main.",
+                },
+                "subpath": {
+                    "type": "string",
+                    "description": "Directory inside the repo holding skill folders. Default: 'skills'.",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Overwrite an existing skill of the same name. Default: false.",
+                },
+            },
+        },
+        handler=install_skill_from_github,
+        category="core",
+    )
+
     logger.info("Skill tools registered: create_skill, list_skills, run_skill_script, delete_skill")

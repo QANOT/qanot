@@ -44,11 +44,20 @@ class Skill:
     allowed_tools: list[str] = field(default_factory=list)
     user_invocable: bool = True
     auto_invoke: bool = True  # Can model invoke automatically
+    # Claude Code compatibility — optional frontmatter fields.
+    when_to_use: str = ""   # progressive-disclosure hint; richer than description
+    version: str = ""
 
     @property
     def index_entry(self) -> str:
-        """Compact representation for prompt injection."""
-        return f"- {self.name}: {self.description}"
+        """Compact representation for prompt injection.
+
+        Prefers `when_to_use` when the skill author provided it — that's the
+        Claude Code convention for telling the model WHEN to reach for the
+        skill, not just what it does. Falls back to `description`.
+        """
+        hint = self.when_to_use or self.description
+        return f"- {self.name}: {hint}"
 
 
 def discover_skills(workspace_dir: str) -> list[Skill]:
@@ -124,6 +133,16 @@ def _parse_skill(path: Path) -> Skill | None:
     allowed_tools = raw_tools.split() if isinstance(raw_tools, str) and raw_tools else []
     user_invocable = frontmatter.get("user-invocable", True)
     auto_invoke = not frontmatter.get("disable-auto", False)
+    # Claude Code compat fields — `when_to_use` improves auto-matching and
+    # is used as the primary index-entry hint when provided. Anthropic's
+    # catalogue skills don't use it, but skill-creator etc. emit both keys
+    # (with and without underscore). Accept both.
+    when_to_use = (
+        frontmatter.get("when_to_use")
+        or frontmatter.get("when-to-use")
+        or ""
+    )
+    version = str(frontmatter.get("version") or "")
 
     return Skill(
         name=name,
@@ -133,6 +152,8 @@ def _parse_skill(path: Path) -> Skill | None:
         allowed_tools=allowed_tools,
         user_invocable=user_invocable if isinstance(user_invocable, bool) else str(user_invocable).lower() != "false",
         auto_invoke=auto_invoke,
+        when_to_use=str(when_to_use).strip()[:400],
+        version=version.strip()[:40],
     )
 
 
