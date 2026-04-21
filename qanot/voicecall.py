@@ -260,14 +260,20 @@ class AudioPipeline:
             # 6. Queue frames for playback
             self._session.is_speaking = True
             frames = split_pcm_frames(vc_pcm)
+            queued = 0
             for frame in frames:
                 if self._session._tts_cancel.is_set():
                     break
                 try:
                     self._outbound_queue.put_nowait(frame)
+                    queued += 1
                 except asyncio.QueueFull:
                     logger.warning("VC outbound queue full, dropping frame")
                     break
+            logger.info(
+                "VC queued %d/%d frames for playback [%d]",
+                queued, len(frames), self._session.chat_id,
+            )
 
         except asyncio.CancelledError:
             logger.debug("VC turn cancelled (barge-in)")
@@ -304,8 +310,15 @@ class AudioPipeline:
                     await tgcalls.send_frame(
                         chat_id, Device.MICROPHONE, frame, Frame.Info.default,
                     )
+                    # Log first sent frame + periodic progress.
+                    self._sent_count = getattr(self, "_sent_count", 0) + 1
+                    if self._sent_count == 1 or self._sent_count % 50 == 0:
+                        logger.info(
+                            "VC send_frame [%d]: %d frames sent",
+                            chat_id, self._sent_count,
+                        )
                 except Exception as e:
-                    logger.debug("send_frame failed: %s", e)
+                    logger.warning("VC send_frame failed [%d]: %r", chat_id, e)
 
                 # Pace at real-time rate
                 await asyncio.sleep(PLAYBACK_INTERVAL)
