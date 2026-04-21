@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 PLUGIN_DIR = Path(__file__).parent
 sys.path.insert(0, str(PLUGIN_DIR))
 
+# Load SOUL_APPEND.md and TOOLS.md at module import time. These files are
+# the PRIMARY VALUE of this plugin — without SOUL the agent falls back to
+# generic image-description behaviour instead of the structured
+# extract→confirm→save flow. See ibox/plugin.py for the same pattern.
+_TOOLS_PATH = PLUGIN_DIR / "TOOLS.md"
+_SOUL_PATH = PLUGIN_DIR / "SOUL_APPEND.md"
+TOOLS_MD = _TOOLS_PATH.read_text(encoding="utf-8") if _TOOLS_PATH.exists() else ""
+SOUL_APPEND = _SOUL_PATH.read_text(encoding="utf-8") if _SOUL_PATH.exists() else ""
+
 
 class ScannerPlugin(Plugin):
     """Document scanner — receipt, invoice, business card, menu, contract, …"""
@@ -35,6 +44,8 @@ class ScannerPlugin(Plugin):
     name = "scanner"
     description = "Phone-photo documents → structured data → Sheet/Excel/PDF/Word/CRM"
     version = "0.1.0"
+    tools_md = TOOLS_MD
+    soul_append = SOUL_APPEND
 
     def __init__(self) -> None:
         pass
