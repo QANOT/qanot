@@ -7,6 +7,7 @@ All functions operate on raw PCM16LE bytes — no file I/O in the hot path.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import tempfile
@@ -119,40 +120,68 @@ def wav_bytes_to_pcm(wav_data: bytes) -> tuple[bytes, int, int]:
 async def tts_result_to_vc_pcm(tts_result, config) -> bytes | None:
     """Convert a TTSResult from voice.text_to_speech() to 48kHz stereo PCM.
 
-    Handles all provider output formats:
-    - audio_data (bytes): WAV or MP3 — decode and resample
-    - audio_url (str): Download, decode, resample
-
-    Returns 48kHz stereo PCM bytes ready for send_frame(), or None on error.
+    Decodes directly to 48kHz stereo via ffmpeg with a single resample
+    pass. Going provider-SR → 16k → 48k (old path) stacked two lossy
+    resamples and produced audible artifacts ("ftq ftq" chopping).
     """
     try:
-        raw_pcm_16k: bytes | None = None
-
         if tts_result.audio_data:
-            # WAV bytes (Muxlisa) or MP3 bytes (Aisha)
-            raw_pcm_16k = _decode_audio_bytes(tts_result.audio_data)
-        elif tts_result.audio_url:
-            # Download and decode (KotibAI, Aisha URL mode)
+            return await asyncio.to_thread(
+                _ffmpeg_decode_to_vc_pcm_bytes, tts_result.audio_data,
+            )
+        if tts_result.audio_url:
             from qanot.voice import download_audio
             audio_path = await download_audio(tts_result.audio_url)
-            if audio_path:
+            if not audio_path:
+                return None
+            try:
+                return await asyncio.to_thread(
+                    _ffmpeg_decode_to_vc_pcm_file, audio_path,
+                )
+            finally:
+                import os
                 try:
-                    raw_pcm_16k = await _decode_audio_file(audio_path)
-                finally:
-                    import os
-                    try:
-                        os.unlink(audio_path)
-                    except OSError:
-                        pass
-
-        if raw_pcm_16k is None:
-            return None
-
-        return resample_16k_mono_to_48k_stereo(raw_pcm_16k)
-
+                    os.unlink(audio_path)
+                except OSError:
+                    pass
+        return None
     except Exception as e:
         logger.error("Failed to convert TTS to VC PCM: %s", e)
         return None
+
+
+def _ffmpeg_decode_to_vc_pcm_bytes(data: bytes) -> bytes | None:
+    """Decode audio bytes directly to 48kHz stereo s16le PCM."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", "pipe:0",
+             "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1"],
+            input=data, capture_output=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+        logger.warning("ffmpeg pipe decode failed: %s", result.stderr[-200:].decode("utf-8", "replace"))
+    except Exception as e:
+        logger.warning("ffmpeg pipe decode exception: %s", e)
+    return None
+
+
+def _ffmpeg_decode_to_vc_pcm_file(path: str) -> bytes | None:
+    """Decode an audio file directly to 48kHz stereo s16le PCM."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", path,
+             "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1"],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+        logger.warning("ffmpeg file decode failed: %s", result.stderr[-200:].decode("utf-8", "replace"))
+    except Exception as e:
+        logger.warning("ffmpeg file decode exception: %s", e)
+    return None
 
 
 def _decode_audio_bytes(data: bytes) -> bytes | None:
