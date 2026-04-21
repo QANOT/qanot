@@ -605,12 +605,15 @@ class VoiceCallManager:
             from pytgcalls.types import RecordStream
 
             # Join voice chat.
-            # py-tgcalls 2.x: play(chat_id, stream=None) joins without any
-            # outbound media — we stream our TTS frames manually via
-            # send_frame(Device.MICROPHONE, ...) from the playback_loop.
-            # This replaces the 1.x MediaStream(audio_path="") pattern,
-            # which 2.x rejects with "missing a required argument".
-            await self._tgcalls.play(chat_id)
+            # py-tgcalls 2.x: to stream TTS frames manually via
+            # send_frame(Device.MICROPHONE, ...), we must declare an
+            # external audio source with MediaStream(ExternalMedia.AUDIO).
+            # Calling play(chat_id) without a stream joins the call but
+            # leaves the outbound microphone uninitialised, causing every
+            # send_frame to fail with 'External source not initialized'.
+            from pytgcalls.types import MediaStream
+            from pytgcalls.types.stream.external_media import ExternalMedia
+            await self._tgcalls.play(chat_id, MediaStream(ExternalMedia.AUDIO))
 
             # Enable inbound audio frame delivery.
             # RecordStream(audio=True) sets media_source=MediaSource.EXTERNAL,
