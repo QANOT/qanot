@@ -122,9 +122,9 @@ class SettingsHandlersMixin:
 
         current = self.config.voice_mode
         modes = [
-            ("off", "Off", "Ovoz o'chirilgan"),
-            ("inbound", "Inbound", "Faqat ovozli xabarga javob"),
-            ("always", "Always", "Har doim ovozli javob"),
+            ("off", "Off", "Faqat matn javob"),
+            ("inbound", "Ovozga ovoz", "Ovozga \u2014 ovoz, matnga \u2014 matn"),
+            ("always", "Har doim ovoz", "Har javob ovoz bilan ham"),
         ]
 
         buttons = []
