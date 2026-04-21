@@ -567,35 +567,32 @@ class VoiceCallManager:
     async def start(self) -> None:
         """Initialize Pyrogram client + py-tgcalls. Called once at bot startup."""
         try:
-            from pyrogram import Client
             from pytgcalls import PyTgCalls
         except ImportError:
             raise RuntimeError(
-                "Voice call requires: pip install py-tgcalls pyrogram numpy torch"
+                "Voice call requires: pip install py-tgcalls pyrofork"
             )
 
         cfg = self._config
         if not cfg.voicecall_api_id or not cfg.voicecall_api_hash:
             raise ValueError("voicecall_api_id and voicecall_api_hash required")
 
-        # Create Pyrogram client with session string (no interactive auth needed)
-        client_kwargs = {
-            "name": "qanot_voicecall",
-            "api_id": cfg.voicecall_api_id,
-            "api_hash": cfg.voicecall_api_hash,
-            "no_updates": True,  # Don't process regular messages
-            "in_memory": True,
-        }
-        if cfg.voicecall_session:
-            client_kwargs["session_string"] = cfg.voicecall_session
-
-        self._client = Client(**client_kwargs)
+        # Share the MTProto client with the userbot plugin so both don't
+        # open duplicate sessions against the same account (causes random
+        # auth-key resyncs and flood errors).
+        from qanot.userbot_client import get_userbot_client
+        self._client = await get_userbot_client(cfg)
+        if self._client is None:
+            raise ValueError(
+                "voicecall_session missing — run session_gen.py and populate "
+                "voicecall_session in config before enabling voicecall"
+            )
         self._tgcalls = PyTgCalls(self._client)
 
         # Register frame handler
         self._register_handlers()
 
-        await self._client.start()
+        # Client is already started by get_userbot_client — only start tgcalls.
         await self._tgcalls.start()
         self._started = True
 
@@ -727,11 +724,12 @@ class VoiceCallManager:
             except Exception as e:
                 logger.debug("py-tgcalls stop error: %s", e)
 
-        if self._client:
-            try:
-                await self._client.stop()
-            except Exception as e:
-                logger.debug("Pyrogram stop error: %s", e)
+        # Intentionally do NOT stop self._client — it's the shared
+        # Pyrogram client owned by qanot.userbot_client. Stopping it
+        # here would break any still-running userbot-plugin tools.
+        # qanot.main.main()'s finally block calls
+        # shutdown_userbot_client() at actual bot shutdown.
+        self._client = None
 
         self._started = False
         logger.info("VoiceCallManager stopped")

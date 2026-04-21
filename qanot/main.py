@@ -618,6 +618,13 @@ async def main() -> None:
                 await voicecall_manager.stop()
             except Exception as e:
                 logger.warning("Error stopping voice call manager: %s", e)
+        # Stop the shared MTProto client (used by voicecall + userbot).
+        # Safe when nothing started it.
+        try:
+            from qanot.userbot_client import shutdown_userbot_client
+            await shutdown_userbot_client()
+        except Exception as e:
+            logger.warning("Error stopping userbot client: %s", e)
         # Save conversation snapshots before shutdown
         try:
             saved = agent.save_snapshot()

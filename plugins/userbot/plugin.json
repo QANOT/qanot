@@ -1,0 +1,17 @@
+{
+  "name": "userbot",
+  "version": "0.1.0",
+  "description": "Send Telegram messages AS the human operator via MTProto (pyrofork). Reuses the shared voicecall session. Rate-limited, whitelist-gated, audited.",
+  "author": "Qanot AI",
+  "dependencies": ["pyrofork>=2.3.33"],
+  "plugin_deps": [],
+  "required_config": [],
+  "min_qanot_version": "2.0.0",
+  "cloud": {
+    "display_name": "Telegram userbot",
+    "icon": "👤",
+    "category": "messaging",
+    "connect_type": "auto",
+    "visible": true
+  }
+}

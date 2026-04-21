@@ -239,6 +239,15 @@ class Config:
     voicecall_api_id: int = 0  # Telegram API ID (from my.telegram.org)
     voicecall_api_hash: str = ""  # Telegram API hash
     voicecall_session: str = ""  # Pyrogram session string (base64, from initial auth)
+    # ── Userbot plugin (send messages as the owner via MTProto) ──
+    # Disabled by default — high blast radius: the shared voicecall_session
+    # has full account access. Rate limits and audit log are always on.
+    userbot_enabled: bool = False
+    userbot_send_per_recipient_seconds: int = 10  # min gap between sends to same recipient
+    userbot_send_hourly_global: int = 20  # max sends per hour across all recipients
+    userbot_recipient_whitelist: list[str] = field(
+        default_factory=list
+    )  # usernames (@name) or int ids; empty = allow any the account can reach
     voicecall_vad_threshold: float = 0.5  # Silero VAD speech probability threshold
     voicecall_silence_ms: int = 400  # Silence duration (ms) to end speech segment
     voicecall_min_speech_ms: int = 250  # Min speech duration (ms) to process (filters coughs)
