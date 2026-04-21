@@ -101,8 +101,8 @@ class TgChannelPlugin(Plugin):
             return
 
         try:
-            from engine.channels import ChannelStore
-            from engine.client import TelegramClient
+            from tg_engine.channels import ChannelStore
+            from tg_engine.client import TelegramClient
         except Exception as e:
             logger.error("tgchannel engine import failed: %s", e)
             return
@@ -201,7 +201,7 @@ class TgChannelPlugin(Plugin):
         if self._client is None or self._store is None:
             return self._not_configured()
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         raw = (params.get("channel") or "").strip()
         if not raw:
@@ -394,8 +394,8 @@ class TgChannelPlugin(Plugin):
         elif parse_mode is None:
             parse_mode = "HTML"
 
-        from engine.client import make_inline_keyboard
-        from engine.errors import map_exception
+        from tg_engine.client import make_inline_keyboard
+        from tg_engine.errors import map_exception
 
         reply_markup = None
         if isinstance(params.get("buttons"), list) and params["buttons"]:
@@ -454,8 +454,8 @@ class TgChannelPlugin(Plugin):
         if self._client is None or self._store is None:
             return self._not_configured()
 
-        from engine.client import make_inline_keyboard
-        from engine.errors import map_exception
+        from tg_engine.client import make_inline_keyboard
+        from tg_engine.errors import map_exception
 
         text = params.get("text") or ""
         if not text.strip():
@@ -559,8 +559,8 @@ class TgChannelPlugin(Plugin):
         elif parse_mode is None:
             parse_mode = "HTML"
 
-        from engine.client import make_inline_keyboard
-        from engine.errors import map_exception
+        from tg_engine.client import make_inline_keyboard
+        from tg_engine.errors import map_exception
 
         reply_markup = None
         if isinstance(params.get("buttons"), list) and params["buttons"]:
@@ -615,7 +615,7 @@ class TgChannelPlugin(Plugin):
         except (TypeError, ValueError):
             return json.dumps({"error": "message_id is required (integer)"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         try:
             await self._client.delete_message(cid, message_id)  # type: ignore[arg-type]
@@ -658,7 +658,7 @@ class TgChannelPlugin(Plugin):
         except (TypeError, ValueError):
             return json.dumps({"error": "message_id is required"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         try:
             await self._client.pin_chat_message(
@@ -700,7 +700,7 @@ class TgChannelPlugin(Plugin):
         except (TypeError, ValueError):
             message_id = None
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         try:
             await self._client.unpin_chat_message(cid, message_id)  # type: ignore[arg-type]
@@ -734,7 +734,7 @@ class TgChannelPlugin(Plugin):
         if err:
             return err
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         try:
             chat, count = await asyncio.gather(
@@ -950,8 +950,8 @@ class TgChannelPlugin(Plugin):
         elif parse_mode is None:
             parse_mode = "HTML"
 
-        from engine.client import make_inline_keyboard
-        from engine.errors import map_exception
+        from tg_engine.client import make_inline_keyboard
+        from tg_engine.errors import map_exception
 
         reply_markup = None
         if isinstance(params.get("buttons"), list) and params["buttons"]:
@@ -1084,7 +1084,7 @@ class TgChannelPlugin(Plugin):
                 {"error": "media must be an array of 2-10 items"}, ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         # Normalise: default parse_mode, keep only supported fields
         cleaned: list[dict] = []
@@ -1188,7 +1188,7 @@ class TgChannelPlugin(Plugin):
         if err:
             return err
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         question = (params.get("question") or "").strip()
         options = params.get("options") or []
@@ -1259,7 +1259,7 @@ class TgChannelPlugin(Plugin):
         except (TypeError, ValueError):
             return json.dumps({"error": "message_id is required"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
+        from tg_engine.errors import map_exception
 
         try:
             result = await self._client.stop_poll(cid, message_id)
@@ -1319,8 +1319,8 @@ class TgChannelPlugin(Plugin):
         elif parse_mode is None:
             parse_mode = "HTML"
 
-        from engine.client import make_inline_keyboard
-        from engine.errors import map_exception
+        from tg_engine.client import make_inline_keyboard
+        from tg_engine.errors import map_exception
 
         reply_markup = None
         if isinstance(params.get("buttons"), list) and params["buttons"]:

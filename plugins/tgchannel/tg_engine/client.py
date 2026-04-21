@@ -30,7 +30,7 @@ from typing import Any
 
 import aiohttp
 
-from engine.errors import TelegramAPIError
+from tg_engine.errors import TelegramAPIError
 
 logger = logging.getLogger(__name__)
 

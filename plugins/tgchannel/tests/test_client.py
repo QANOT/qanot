@@ -11,11 +11,11 @@ import pytest
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from engine.client import (  # noqa: E402
+from tg_engine.client import (  # noqa: E402
     TelegramClient,
     make_inline_keyboard,
 )
-from engine.errors import TelegramAPIError, map_exception  # noqa: E402
+from tg_engine.errors import TelegramAPIError, map_exception  # noqa: E402
 
 
 class _FakeResponse:

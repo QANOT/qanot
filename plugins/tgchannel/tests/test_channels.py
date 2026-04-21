@@ -9,7 +9,7 @@ from pathlib import Path
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from engine.channels import ChannelStore  # noqa: E402
+from tg_engine.channels import ChannelStore  # noqa: E402
 
 
 def test_empty_store_no_file(tmp_path):
