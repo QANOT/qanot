@@ -1,0 +1,17 @@
+{
+  "name": "sheets",
+  "version": "0.1.0",
+  "description": "Google Sheets integration — create, read, append, update spreadsheets via OAuth (drive.file scope)",
+  "author": "Qanot AI",
+  "dependencies": ["aiohttp"],
+  "plugin_deps": [],
+  "required_config": ["refresh_token", "client_id", "client_secret"],
+  "min_qanot_version": "2.0.0",
+  "cloud": {
+    "display_name": "Google Sheets",
+    "icon": "📊",
+    "category": "database",
+    "connect_type": "oauth",
+    "visible": true
+  }
+}
