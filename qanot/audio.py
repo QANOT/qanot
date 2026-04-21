@@ -18,12 +18,16 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Telegram voice chat audio format
+# Telegram voice chat audio format.
+# py-tgcalls/ntgcalls (WebRTC-based) expects 10ms PCM16LE frames, not 20ms.
+# Reference: pytgcalls/example/frame_sending/example_frame_sending.py uses
+# `bitrate*16//8//100*channels` = 1920 bytes @ 48kHz stereo and
+# time.sleep(0.01). Using 20ms frames produces audible "grgrgr" underflows.
 VC_SAMPLE_RATE = 48000
 VC_CHANNELS = 2  # stereo
 VC_SAMPLE_WIDTH = 2  # 16-bit = 2 bytes
-VC_FRAME_DURATION_MS = 20
-VC_FRAME_BYTES = VC_SAMPLE_RATE * VC_CHANNELS * VC_SAMPLE_WIDTH * VC_FRAME_DURATION_MS // 1000  # 3840
+VC_FRAME_DURATION_MS = 10
+VC_FRAME_BYTES = VC_SAMPLE_RATE * VC_CHANNELS * VC_SAMPLE_WIDTH * VC_FRAME_DURATION_MS // 1000  # 1920
 
 # STT/VAD processing format
 STT_SAMPLE_RATE = 16000

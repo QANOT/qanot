@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 # Minimum speech bytes to process (250ms at 16kHz mono 16-bit)
 MIN_SPEECH_BYTES = 16000 * 2 * 250 // 1000  # 8000 bytes
 
-# Playback frame pacing: 20ms at 48kHz stereo
-PLAYBACK_INTERVAL = 0.02  # seconds
+# Playback frame pacing: 10ms per frame (WebRTC / ntgcalls standard).
+# Must match qanot.audio.VC_FRAME_DURATION_MS.
+PLAYBACK_INTERVAL = 0.01  # seconds
 
 # Rate limit: minimum seconds between processing speech segments
 MIN_TURN_INTERVAL = 2.0
@@ -323,29 +324,21 @@ class AudioPipeline:
                     pass
 
     async def _playback_loop(self) -> None:
-        """Continuously dequeue outbound PCM and send to voice chat.
+        """Continuously dequeue 10ms PCM frames and send to voice chat.
 
-        ntgcalls is paced by its internal jitter buffer keyed on each
-        frame's capture_time (microseconds). Our job is to: (1) pass a
-        monotonically-increasing capture_time stamp in 20ms steps, and
-        (2) NOT over-pace with asyncio.sleep — the event loop adds drift
-        that makes real-time 20ms sleeps stretch to 25-30ms, producing
-        the audible 'grgrgrgr' underruns. We self-pace only when we're
-        running ahead of real time (we pushed too fast); otherwise push
-        as fast as ntgcalls will accept.
+        Matches pytgcalls' official frame_sending example byte-for-byte:
+        - 10ms frames (1920 bytes at 48kHz stereo PCM16LE)
+        - Default Frame.Info() (no capture_time — ntgcalls doesn't use it
+          as a pacer; it's purely informational)
+        - Monotonic-deadline sleep so asyncio jitter doesn't drift the
+          playback speed
         """
         from pytgcalls.types import Device
-        from pytgcalls.types.stream.frame import Frame
 
         tgcalls = self._manager._tgcalls
         chat_id = self._session.chat_id
 
-        # Per-utterance capture_time clock. Reset when the queue drains
-        # so a new TTS response starts fresh instead of appearing far in
-        # the future (which ntgcalls would treat as very late frames).
-        base_mono_ns: int | None = None
-        capture_time_us: int = 0
-        FRAME_US = 20_000  # 20ms per 48kHz/stereo/960-sample frame
+        next_deadline: float | None = None
 
         while True:
             try:
@@ -353,21 +346,13 @@ class AudioPipeline:
                     self._outbound_queue.get(), timeout=1.0,
                 )
 
-                # Start / restart the capture clock on first frame after idle.
-                now_ns = time.monotonic_ns()
-                if base_mono_ns is None:
-                    base_mono_ns = now_ns
-                    capture_time_us = 0
-
-                frame_info = Frame.Info(capture_time=capture_time_us)
-                capture_time_us += FRAME_US
+                if next_deadline is None:
+                    next_deadline = time.monotonic()
 
                 try:
-                    await tgcalls.send_frame(
-                        chat_id, Device.MICROPHONE, frame, frame_info,
-                    )
+                    await tgcalls.send_frame(chat_id, Device.MICROPHONE, frame)
                     self._sent_count = getattr(self, "_sent_count", 0) + 1
-                    if self._sent_count == 1 or self._sent_count % 50 == 0:
+                    if self._sent_count == 1 or self._sent_count % 100 == 0:
                         logger.info(
                             "VC send_frame [%d]: %d frames sent",
                             chat_id, self._sent_count,
@@ -375,20 +360,21 @@ class AudioPipeline:
                 except Exception as e:
                     logger.warning("VC send_frame failed [%d]: %r", chat_id, e)
 
-                # Only sleep if we've pushed ahead of real time. This keeps
-                # the jitter buffer ~1 frame deep without starving it.
-                elapsed_us = (time.monotonic_ns() - base_mono_ns) // 1000
-                ahead_us = capture_time_us - elapsed_us
-                if ahead_us > FRAME_US:
-                    await asyncio.sleep((ahead_us - FRAME_US) / 1_000_000)
+                next_deadline += PLAYBACK_INTERVAL
+                delay = next_deadline - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                elif delay < -0.05:
+                    # We fell >50ms behind — reset deadline to avoid
+                    # spiraling catch-up bursts that starve the jitter buffer.
+                    next_deadline = time.monotonic()
 
                 if self._outbound_queue.empty():
                     self._session.is_speaking = False
-                    base_mono_ns = None  # restart clock for next utterance
+                    next_deadline = None  # restart clock for next utterance
 
             except asyncio.TimeoutError:
-                # Idle — drop the clock so the next utterance starts fresh.
-                base_mono_ns = None
+                next_deadline = None
                 continue
             except asyncio.CancelledError:
                 break
