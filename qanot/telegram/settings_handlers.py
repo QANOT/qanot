@@ -122,16 +122,16 @@ class SettingsHandlersMixin:
 
         current = self.config.voice_mode
         modes = [
-            ("off", "Off", "Faqat matn javob"),
-            ("inbound", "Ovozga ovoz", "Ovozga \u2014 ovoz, matnga \u2014 matn"),
-            ("always", "Har doim ovoz", "Har javob ovoz bilan ham"),
+            ("off", "Off"),
+            ("inbound", "Ovozga ovoz"),
+            ("always", "Har doim ovoz"),
         ]
 
         buttons = []
-        for mode_id, label, desc in modes:
+        for mode_id, label in modes:
             check = "\u2705 " if mode_id == current else ""
             buttons.append([InlineKeyboardButton(
-                text=f"{check}{label} \u2014 {desc}",
+                text=f"{check}{label}",
                 callback_data=f"voice:{mode_id}",
             )])
 
