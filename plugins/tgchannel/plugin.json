@@ -1,0 +1,17 @@
+{
+  "name": "tgchannel",
+  "version": "0.1.0",
+  "description": "Telegram channel automation — post, edit, delete, pin, schedule (via cron), cross-post across multiple channels where the bot is admin.",
+  "author": "Qanot AI",
+  "dependencies": ["aiohttp"],
+  "plugin_deps": [],
+  "required_config": [],
+  "min_qanot_version": "2.0.0",
+  "cloud": {
+    "display_name": "Telegram kanal",
+    "icon": "📢",
+    "category": "messaging",
+    "connect_type": "auto",
+    "visible": true
+  }
+}
