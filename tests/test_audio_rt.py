@@ -39,10 +39,13 @@ class TestResample48kTo16k:
         assert resample_48k_stereo_to_16k_mono(b"") == b""
 
     def test_frame_size(self):
-        # Standard VC frame
+        # Standard VC frame (10ms, 1920 bytes at 48kHz stereo 16-bit):
+        # → 480 stereo samples → 480 mono → 160 samples @ 16kHz → 320 bytes
         pcm = b"\x00" * VC_FRAME_BYTES
         result = resample_48k_stereo_to_16k_mono(pcm)
-        assert len(result) == 640  # 320 samples * 2 bytes
+        samples_48k_stereo = VC_FRAME_BYTES // 4
+        expected_bytes = (samples_48k_stereo // 3) * 2
+        assert len(result) == expected_bytes
 
 
 class TestResample16kTo48k:

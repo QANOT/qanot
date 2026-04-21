@@ -23,7 +23,7 @@ class TestCallSession:
         assert session.user_id == 111
         assert session.conv_key == "vc_-100123"
         assert session.is_speaking is False
-        assert session._llm_task is None
+        assert session._pending_tempfiles == []
 
     def test_timestamps(self):
         session = CallSession(chat_id=1, user_id=1, conv_key="vc_1")
@@ -32,28 +32,23 @@ class TestCallSession:
 
 
 class TestAudioPipelineCancelPlayback:
-    """Test barge-in playback cancellation."""
+    """Test barge-in playback cancellation — file-based play() version."""
 
-    def test_cancel_clears_queue(self):
-        # Create minimal pipeline with mock dependencies
+    def test_cancel_sets_not_speaking(self):
         pipeline = AudioPipeline.__new__(AudioPipeline)
-        pipeline._outbound_queue = asyncio.Queue(maxsize=100)
         pipeline._session = CallSession(chat_id=1, user_id=1, conv_key="vc_1")
+        pipeline._session.is_speaking = True
+        pipeline._manager = MagicMock()
+        pipeline._manager._tgcalls = None  # no-op path
 
-        # Fill queue
-        for _ in range(10):
-            pipeline._outbound_queue.put_nowait(b"\x00" * 100)
-        assert pipeline._outbound_queue.qsize() == 10
-
-        # Cancel
         pipeline.cancel_playback()
-        assert pipeline._outbound_queue.empty()
         assert pipeline._session.is_speaking is False
 
-    def test_cancel_empty_queue_no_error(self):
+    def test_cancel_no_tgcalls_does_not_raise(self):
         pipeline = AudioPipeline.__new__(AudioPipeline)
-        pipeline._outbound_queue = asyncio.Queue()
         pipeline._session = CallSession(chat_id=1, user_id=1, conv_key="vc_1")
+        pipeline._manager = MagicMock()
+        pipeline._manager._tgcalls = None
         pipeline.cancel_playback()  # Should not raise
 
 

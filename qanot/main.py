@@ -592,8 +592,11 @@ async def main() -> None:
         try:
             from qanot.voicecall import VoiceCallManager
             voicecall_manager = VoiceCallManager(config=config, agent=agent)
+            voicecall_manager.notify_owner = telegram.notify_admins
             await voicecall_manager.start()
             telegram.voicecall_manager = voicecall_manager
+            if dashboard is not None:
+                dashboard.voicecall_manager = voicecall_manager
             logger.info("Voice call manager started (py-tgcalls)")
         except ImportError:
             logger.warning(

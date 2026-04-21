@@ -89,6 +89,28 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         from qanot.ratelimit import RateLimiter
         self._rate_limiter = RateLimiter()
         self.voicecall_manager = None  # Set by main.py if voicecall_enabled
+        # Admin notification throttle: key -> last-sent monotonic time.
+        self._admin_notify_last: dict[str, float] = {}
+
+    async def notify_admins(self, text: str, throttle_key: str | None = None,
+                            throttle_seconds: float = 3600.0) -> None:
+        """Send a short alert to each admin_chat_ids. Throttled per key so
+        recurring failures don't spam. Silently drops if no admin is set."""
+        ids = getattr(self.config, "admin_chat_ids", None) or []
+        if not ids:
+            return
+        if throttle_key is not None:
+            import time as _time
+            now = _time.monotonic()
+            last = self._admin_notify_last.get(throttle_key, 0.0)
+            if now - last < throttle_seconds:
+                return
+            self._admin_notify_last[throttle_key] = now
+        for admin_id in ids:
+            try:
+                await self.bot.send_message(admin_id, text[:4000])
+            except Exception as e:
+                logger.warning("notify_admins to %s failed: %r", admin_id, e)
 
     def _setup_handlers(self) -> None:
         @self.dp.message(F.text == "/start")

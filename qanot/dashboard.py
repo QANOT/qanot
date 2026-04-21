@@ -28,6 +28,7 @@ class Dashboard:
     def __init__(self, config: "Config", agent: "Agent"):
         self.config = config
         self.agent = agent
+        self.voicecall_manager = None  # set by main.py if enabled
         self.app = web.Application(middlewares=[self._auth_middleware])
         self._setup_routes()
         self._start_time = time.time()
@@ -54,6 +55,7 @@ class Dashboard:
         self.app.router.add_get("/api/memory/{filename}", self._handle_api_memory_file)
         self.app.router.add_get("/api/tools", self._handle_api_tools)
         self.app.router.add_get("/api/routing", self._handle_api_routing)
+        self.app.router.add_get("/api/voicecall", self._handle_api_voicecall)
 
     # ── API endpoints ──
 
@@ -158,6 +160,12 @@ class Dashboard:
             elif isinstance(data, list):
                 return web.json_response({"providers": data})
         return web.json_response({"routing": "disabled"})
+
+    async def _handle_api_voicecall(self, request: web.Request) -> web.Response:
+        vcm = self.voicecall_manager
+        if vcm is None:
+            return web.json_response({"enabled": False})
+        return web.json_response(vcm.stats_snapshot())
 
     # ── Dashboard HTML ──
 

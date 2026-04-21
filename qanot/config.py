@@ -86,6 +86,10 @@ class Config:
     tools_path: str = "/data/workspace/TOOLS.md"
     plugins: list[PluginConfig] = field(default_factory=list)
     owner_name: str = ""
+    # Telegram user IDs who should receive operational alerts (STT/TTS
+    # failures, balance warnings, etc.). First entry is treated as the
+    # primary owner.
+    admin_chat_ids: list[int] = field(default_factory=list)
     bot_name: str = ""
     timezone: str = "Asia/Tashkent"
     max_concurrent: int = 4

@@ -17,6 +17,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from qanot.audio import (
@@ -328,10 +329,14 @@ class AudioPipeline:
         Runs under _turn_lock via _run_turn; guarantees only one turn
         at a time per call. Cancellable at every await boundary.
         """
+        turn_started = time.monotonic()
+        stats = self._manager._stats
         wav_path: str | None = None
+        stage = "init"
         try:
             # 1. Write PCM to temp WAV for STT provider
             wav_path = pcm_to_wav_file(pcm_16k_mono)
+            stage = "stt"
 
             # 2. STT: transcribe speech
             from qanot.voice import transcribe
@@ -354,6 +359,7 @@ class AudioPipeline:
             if self._session._tts_cancel.is_set():
                 return
 
+            stage = "llm"
             # 3. LLM: process through agent loop
             response = await self._agent.run_turn(
                 text,
@@ -376,6 +382,7 @@ class AudioPipeline:
             if not tts_text:
                 logger.info("VC skipping TTS [%d]: empty after sanitize", self._session.chat_id)
                 return
+            stage = "tts"
             from qanot.voice import text_to_speech
             logger.info(
                 "VC TTS request [%d]: provider=%s len=%d (raw=%d)",
@@ -407,6 +414,7 @@ class AudioPipeline:
             if not audio_path:
                 logger.warning("VC TTS conversion failed")
                 return
+            stage = "play"
             try:
                 self._session.is_speaking = True
                 logger.info(
@@ -417,15 +425,35 @@ class AudioPipeline:
                     MediaStream(audio_path, video_flags=MediaStream.Flags.IGNORE),
                 )
             finally:
-                # Remove file after a grace period; play() returns immediately
-                # but ntgcalls keeps reading the file.  Scheduling cleanup
-                # protects against filesystem fill-up.
                 self._session._pending_tempfiles.append(audio_path)
 
+            # Turn succeeded. Record latency + bump counter.
+            latency_ms = (time.monotonic() - turn_started) * 1000
+            stats["turns_completed"] += 1
+            stats["e2e_latency_sum_ms"] += latency_ms
+            stats["e2e_latency_count"] += 1
+
         except asyncio.CancelledError:
+            stats["turns_cancelled"] += 1
             logger.debug("VC turn cancelled (barge-in)")
+            raise
         except Exception as e:
-            logger.error("VC pipeline error [%d]: %s", self._session.chat_id, e, exc_info=True)
+            stats["turns_failed"] += 1
+            if stage == "stt":
+                stats["stt_errors"] += 1
+            elif stage == "tts":
+                stats["tts_errors"] += 1
+            logger.error(
+                "VC pipeline error [%d] at stage=%s: %s",
+                self._session.chat_id, stage, e, exc_info=True,
+            )
+            error_class = type(e).__name__
+            message = str(e)[:300]
+            throttle = f"vc:{stage}:{error_class}"
+            await self._manager._notify(
+                f"⚠️ Ovozli suhbat xatoligi ({stage}): {error_class}\n{message}",
+                throttle_key=throttle,
+            )
         finally:
             if wav_path:
                 try:
@@ -494,6 +522,48 @@ class VoiceCallManager:
         )
         self._started = False
         self._auto_leave_task: asyncio.Task | None = None
+        # Optional owner-notification hook (wired by main.py to telegram
+        # adapter). Signature: (text, throttle_key) -> Awaitable[None].
+        self.notify_owner: Callable[..., Awaitable[None]] | None = None
+        # Observability counters. Reset at restart; dashboard reads via
+        # stats_snapshot(). Not thread-safe but we only touch these in
+        # the asyncio loop.
+        self._stats: dict[str, int | float] = {
+            "turns_completed": 0,
+            "turns_failed": 0,
+            "turns_cancelled": 0,
+            "stt_errors": 0,
+            "tts_errors": 0,
+            "e2e_latency_sum_ms": 0.0,
+            "e2e_latency_count": 0,
+        }
+
+    def stats_snapshot(self) -> dict:
+        """Return a point-in-time voice-call metrics dict for the dashboard."""
+        latency_avg = (
+            self._stats["e2e_latency_sum_ms"] / self._stats["e2e_latency_count"]
+            if self._stats["e2e_latency_count"] else 0
+        )
+        return {
+            "enabled": True,
+            "started": self._started,
+            "active_calls": len(self._active_calls),
+            "turns_completed": self._stats["turns_completed"],
+            "turns_failed": self._stats["turns_failed"],
+            "turns_cancelled": self._stats["turns_cancelled"],
+            "stt_errors": self._stats["stt_errors"],
+            "tts_errors": self._stats["tts_errors"],
+            "e2e_latency_avg_ms": round(latency_avg, 1),
+            "e2e_latency_samples": self._stats["e2e_latency_count"],
+        }
+
+    async def _notify(self, text: str, throttle_key: str | None = None) -> None:
+        if self.notify_owner is None:
+            return
+        try:
+            await self.notify_owner(text, throttle_key=throttle_key)
+        except Exception as e:
+            logger.debug("notify_owner failed: %r", e)
 
     async def start(self) -> None:
         """Initialize Pyrogram client + py-tgcalls. Called once at bot startup."""

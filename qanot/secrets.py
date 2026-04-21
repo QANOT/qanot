@@ -103,6 +103,9 @@ def _read_secret_file(path: str) -> str:
 _SECRET_FIELDS = frozenset({
     "api_key", "bot_token", "brave_api_key",
     "voice_api_key", "image_api_key",
+    # voicecall_session gives *full* access to the user's Telegram account
+    # — belongs in env/file, never plaintext config.json.
+    "voicecall_session", "voicecall_api_hash",
 })
 
 
