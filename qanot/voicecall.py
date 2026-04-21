@@ -112,7 +112,9 @@ class AudioPipeline:
         self._vad_buffer = bytearray()
 
         # Outbound audio queue (48kHz stereo PCM frames)
-        self._outbound_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=300)
+        # 2500 frames * 20ms = 50s buffer — enough for a full LLM response,
+        # not so large it pins memory for abandoned calls.
+        self._outbound_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2500)
         self._playback_task: asyncio.Task | None = None
         self._last_turn_time: float = 0.0
 
