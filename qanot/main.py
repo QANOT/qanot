@@ -107,6 +107,11 @@ async def main() -> None:
     # Initialize workspace (copy templates on first run)
     init_workspace(config.workspace_dir)
 
+    # Telemetry — per-call JSONL sink for real-traffic analysis. Best-effort;
+    # never blocks or fails the agent. See qanot/telemetry.py for schema.
+    from qanot import telemetry
+    telemetry.init(config.workspace_dir)
+
     # Backup critical workspace files (non-fatal)
     if config.backup_enabled:
         try:

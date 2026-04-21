@@ -401,6 +401,10 @@ class AnthropicProvider(LLMProvider):
         self._inject_server_tools(kwargs)
         self._inject_context_editing(kwargs)
 
+        import time as _time
+        t0 = _time.perf_counter()
+        api_error: str | None = None
+
         for _overflow_attempt in range(2):
             try:
                 response = await self.client.messages.create(**kwargs)
@@ -418,6 +422,11 @@ class AnthropicProvider(LLMProvider):
                     kwargs["max_tokens"] = new_max
                     continue
                 logger.error("Anthropic API error: %s", e)
+                api_error = f"{type(e).__name__}: {e}"[:200]
+                self._record_telemetry(
+                    response=None, latency_ms=(_time.perf_counter() - t0) * 1000,
+                    stream=False, error=api_error,
+                )
                 raise
 
         self._capture_container(response)
@@ -443,12 +452,57 @@ class AnthropicProvider(LLMProvider):
                 if exec_text:
                     text_parts.append(exec_text)
 
-        return ProviderResponse(
+        final = ProviderResponse(
             content="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=response.stop_reason or "end_turn",
             usage=self._build_usage(self._extract_usage_dict(response.usage)),
         )
+        self._record_telemetry(
+            response=final, latency_ms=(_time.perf_counter() - t0) * 1000,
+            stream=False, error=None,
+            raw_stop_reason=response.stop_reason,
+        )
+        return final
+
+    def _record_telemetry(
+        self,
+        *,
+        response: ProviderResponse | None,
+        latency_ms: float,
+        stream: bool,
+        error: str | None,
+        raw_stop_reason: str | None = None,
+    ) -> None:
+        """Ship one event to the telemetry JSONL sink. Never raises."""
+        try:
+            from qanot.telemetry import record_call
+            u = response.usage if response else None
+            record_call(
+                provider="anthropic",
+                model=self.model,
+                stream=stream,
+                latency_ms=round(latency_ms, 1),
+                input_tokens=(u.input_tokens if u else 0),
+                output_tokens=(u.output_tokens if u else 0),
+                cache_read=(getattr(u, "cache_read_input_tokens", 0) or 0) if u else 0,
+                cache_write=(getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0,
+                stop_reason=raw_stop_reason or (response.stop_reason if response else None),
+                tool_calls=len(response.tool_calls) if response else 0,
+                tool_names=(
+                    [tc.name for tc in response.tool_calls] if response else []
+                ),
+                # Flag snapshot — what the decision-maker was running with.
+                flags={
+                    "thinking_level": self._thinking_level,
+                    "memory_tool": self._memory_tool,
+                    "code_execution": self._code_execution,
+                    "context_editing": self._context_editing,
+                },
+                error=error,
+            )
+        except Exception:
+            pass
 
     async def chat_stream(
         self,
@@ -471,6 +525,9 @@ class AnthropicProvider(LLMProvider):
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
         self._inject_context_editing(kwargs)
+
+        import time as _time
+        _stream_t0 = _time.perf_counter()
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -594,5 +651,9 @@ class AnthropicProvider(LLMProvider):
             tool_calls=tool_calls,
             stop_reason=final.stop_reason or "end_turn",
             usage=self._build_usage(usage_dict),
+        )
+        self._record_telemetry(
+            response=response, latency_ms=(_time.perf_counter() - _stream_t0) * 1000,
+            stream=True, error=None, raw_stop_reason=final.stop_reason,
         )
         yield StreamEvent(type="done", response=response)
