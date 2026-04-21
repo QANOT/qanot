@@ -520,13 +520,20 @@ class VoiceCallManager:
                 self._frame_counters[chat_id] = count
                 if count == 1 or count % 50 == 0:
                     logger.info(
-                        "voicecall: %d inbound frames received in chat %d",
-                        count, chat_id,
+                        "voicecall: %d inbound frames received in chat %d "
+                        "(pipelines=%s)",
+                        count, chat_id, list(self._pipelines.keys()),
                     )
                 pipeline = self._pipelines.get(chat_id)
                 if pipeline and update.frames:
                     for frame in update.frames:
                         pipeline.feed_inbound(frame.frame)
+                elif count == 1:
+                    # Log once if pipeline isn't registered for this chat.
+                    logger.warning(
+                        "voicecall: no pipeline for chat %d (registered: %s)",
+                        chat_id, list(self._pipelines.keys()),
+                    )
 
             logger.info("voicecall: stream_frame handler registered")
         except Exception as e:
