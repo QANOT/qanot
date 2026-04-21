@@ -120,11 +120,11 @@ class SileroVAD:
         confidence = float(result.item()) if hasattr(result, "item") else float(result)
         is_speech = confidence >= self._threshold
 
-        # Diagnostic: log every 30th chunk (~1s) with confidence so we
-        # can see whether VAD is seeing speech-like probabilities.
+        # Diagnostic at DEBUG only — kept so we can bump log level when
+        # debugging a "bot not hearing" report without redeploying.
         self._chunk_count = getattr(self, "_chunk_count", 0) + 1
-        if self._chunk_count % 30 == 0:
-            logger.info(
+        if self._chunk_count % 30 == 0 and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
                 "VAD chunk %d: conf=%.3f (thr=%.2f) is_speech=%s "
                 "speech_count=%d silence_count=%d triggered=%s",
                 self._chunk_count, confidence, self._threshold,

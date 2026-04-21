@@ -223,17 +223,16 @@ class AudioPipeline:
         # Accumulate into VAD buffer
         self._vad_buffer.extend(pcm_16k)
 
-        # Diagnostic: log the audio amplitude every ~1s so we can see
-        # whether the PCM reaching VAD is actually speech (non-zero)
-        # vs silence/noise (~zero). Compute abs-max of int16 samples.
+        # Diagnostic amplitude logging at DEBUG only. Flip log level
+        # when investigating a "bot isn't hearing me" report.
         self._feed_calls = getattr(self, "_feed_calls", 0) + 1
-        if self._feed_calls % 50 == 0:
+        if self._feed_calls % 50 == 0 and logger.isEnabledFor(logging.DEBUG):
             try:
                 import numpy as _np
                 samples = _np.frombuffer(pcm_16k, dtype=_np.int16)
                 amp = int(_np.abs(samples).max()) if samples.size else 0
-                logger.info(
-                    "voicecall: feed_inbound %d | input=%dB 16k=%dB amp=%d (int16 max 32767)",
+                logger.debug(
+                    "voicecall: feed_inbound %d | input=%dB 16k=%dB amp=%d",
                     self._feed_calls, len(pcm_48k_stereo), len(pcm_16k), amp,
                 )
             except Exception:
@@ -655,22 +654,30 @@ class VoiceCallManager:
                 chat_id = update.chat_id
                 count = self._frame_counters.get(chat_id, 0) + len(update.frames or [])
                 self._frame_counters[chat_id] = count
-                if count == 1 or count % 50 == 0:
-                    logger.info(
-                        "voicecall: %d inbound frames received in chat %d "
-                        "(pipelines=%s)",
-                        count, chat_id, list(self._pipelines.keys()),
-                    )
+                # Info log only at first frame per call (confirms audio
+                # pipeline is alive). After that, DEBUG every 500 frames
+                # (~10s) keeps prod logs quiet.
                 pipeline = self._pipelines.get(chat_id)
+                if count == 1:
+                    if pipeline is None:
+                        logger.warning(
+                            "voicecall: first frame for chat %d but no "
+                            "pipeline registered (known chats: %s)",
+                            chat_id, list(self._pipelines.keys()),
+                        )
+                    else:
+                        logger.info(
+                            "voicecall: receiving inbound audio for chat %d",
+                            chat_id,
+                        )
+                elif count % 500 == 0 and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "voicecall: %d inbound frames in chat %d",
+                        count, chat_id,
+                    )
                 if pipeline and update.frames:
                     for frame in update.frames:
                         pipeline.feed_inbound(frame.frame)
-                elif count == 1:
-                    # Log once if pipeline isn't registered for this chat.
-                    logger.warning(
-                        "voicecall: no pipeline for chat %d (registered: %s)",
-                        chat_id, list(self._pipelines.keys()),
-                    )
 
             logger.info("voicecall: stream_frame handler registered")
         except Exception as e:
