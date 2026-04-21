@@ -29,10 +29,16 @@ notion-client>=2.2.1
 # Voicecall (Telegram group voice chat participation) — off by default.
 # When voicecall_enabled=true the bot joins voice chats as an MTProto
 # userbot and streams live TTS/STT via py-tgcalls.
-# NOTE: tgcrypto dropped intentionally — its last release (1.2.5, 2021)
-# has no cp312+ wheels and needs gcc to build from source. Pyrogram
-# falls back to pyaes (pure Python) which is fine for the join-chat-
-# occasionally workload. If throughput becomes a problem, switch to
-# cryptg (actively maintained, has cp312 wheels).
-pyrogram>=2.0.106
+#
+# IMPORTANT: py-tgcalls 2.x needs pyrofork (a maintained pyrogram fork),
+# NOT upstream pyrogram. Upstream pyrogram 2.0.106 is missing symbols
+# like GroupcallForbidden that py-tgcalls imports unconditionally.
+# Using pyrogram would produce: ImportError: cannot import name
+# 'GroupcallForbidden' from 'pyrogram.errors'.
+#
+# tgcrypto dropped intentionally — its last release (1.2.5, 2021) has
+# no cp312+ wheels and needs gcc to build from source. pyrofork falls
+# back to pyaes (pure Python) which is fine for the join-chat-
+# occasionally workload.
+pyrofork>=2.3.47
 py-tgcalls>=2.0.0
