@@ -330,6 +330,9 @@ class AudioPipeline:
 
         tgcalls = self._manager._tgcalls
         chat_id = self._session.chat_id
+        # Default audio frame info — width/height/rotation only matter for
+        # video. capture_time=0 lets ntgcalls stamp it on send.
+        frame_info = Frame.Info()
 
         while True:
             try:
@@ -342,7 +345,7 @@ class AudioPipeline:
                 # is fine for audio (width/height/rotation matter for video only).
                 try:
                     await tgcalls.send_frame(
-                        chat_id, Device.MICROPHONE, frame, Frame.Info.default,
+                        chat_id, Device.MICROPHONE, frame, frame_info,
                     )
                     # Log first sent frame + periodic progress.
                     self._sent_count = getattr(self, "_sent_count", 0) + 1
