@@ -1,6 +1,10 @@
 """Voice Activity Detection (VAD) wrapper for real-time speech boundary detection.
 
-Uses Silero VAD (ONNX) for accurate, low-latency speech detection.
+Uses Silero VAD via the official ``silero-vad`` pip package, which bundles
+the ONNX model and runs on ``onnxruntime`` — no torch dependency. This is
+the production pattern used by Pipecat, LiveKit, and Modal voice pipelines
+(torch.hub's silero flavour needs a 600MB+ install and is ~2x slower).
+
 Processes 16kHz mono PCM in 512-sample (32ms) chunks.
 Returns SPEECH_START/SPEECH_END events for turn boundary detection.
 """
@@ -9,7 +13,6 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -58,23 +61,27 @@ class SileroVAD:
         self._triggered = False  # True after SPEECH_START emitted
 
     def _ensure_model(self) -> None:
-        """Lazy-load Silero VAD model on first use (~50ms, ~2MB ONNX)."""
+        """Lazy-load Silero VAD (ONNX) on first use.
+
+        The ``silero-vad`` pip package exposes ``load_silero_vad(onnx=True)``
+        which returns an inference callable that takes a (float32 numpy
+        array, sample_rate) and returns a speech probability tensor. No
+        torch needed — onnxruntime handles everything.
+        """
         if self._model is not None:
             return
         try:
-            import torch
-            model, _ = torch.hub.load(
-                "snakers4/silero-vad", "silero_vad",
-                trust_repo=True, verbose=False,
-            )
-            self._model = model
-            logger.info("Silero VAD model loaded")
-        except ImportError:
+            from silero_vad import load_silero_vad
+        except ImportError as e:
             raise RuntimeError(
-                "Silero VAD requires torch. Install with: pip install torch"
-            )
+                "silero-vad package not installed. Add silero-vad>=5.1 to "
+                "requirements.txt and rebuild the bot image."
+            ) from e
+        try:
+            self._model = load_silero_vad(onnx=True)
+            logger.info("Silero VAD loaded (ONNX backend)")
         except Exception as e:
-            raise RuntimeError(f"Failed to load Silero VAD model: {e}")
+            raise RuntimeError(f"Failed to load Silero VAD model: {e}") from e
 
     def process_chunk(self, pcm_16k_mono: bytes) -> VADEvent | None:
         """Process one 512-sample chunk of 16kHz mono PCM16LE.
@@ -89,18 +96,41 @@ class SileroVAD:
         """
         self._ensure_model()
 
-        import torch
-
-        # Convert PCM bytes to float32 tensor [-1, 1]
+        # Convert PCM bytes to float32 array [-1, 1]. silero-vad's ONNX
+        # model accepts either a torch tensor OR a numpy float32 array;
+        # we use numpy to avoid pulling torch in.
         samples = np.frombuffer(pcm_16k_mono[:CHUNK_BYTES], dtype=np.int16)
         if len(samples) < CHUNK_SAMPLES:
-            # Pad short chunks with silence
             samples = np.pad(samples, (0, CHUNK_SAMPLES - len(samples)))
-        audio_tensor = torch.from_numpy(samples.astype(np.float32) / 32768.0)
+        audio = samples.astype(np.float32) / 32768.0
 
-        # Get speech probability
-        confidence = self._model(audio_tensor, SAMPLE_RATE).item()
+        # Run inference. The package internally wraps onnxruntime and
+        # returns either a torch tensor (if available) or a numpy array
+        # with .item() / float-coercible shape.
+        try:
+            result = self._model(audio, SAMPLE_RATE)
+        except Exception as e:
+            logger.error("VAD model inference failed: %s", e)
+            return None
+        # Normalise to a float. silero returns torch.Tensor when torch is
+        # installed, else a numpy array — both expose .item().
+        if hasattr(result, "item"):
+            confidence = float(result.item())
+        else:
+            confidence = float(result)
         is_speech = confidence >= self._threshold
+
+        # Diagnostic: log every 30th chunk (~1s) with confidence so we
+        # can see whether VAD is seeing speech-like probabilities.
+        self._chunk_count = getattr(self, "_chunk_count", 0) + 1
+        if self._chunk_count % 30 == 0:
+            logger.info(
+                "VAD chunk %d: conf=%.3f (thr=%.2f) is_speech=%s "
+                "speech_count=%d silence_count=%d triggered=%s",
+                self._chunk_count, confidence, self._threshold,
+                is_speech, self._speech_count, self._silence_count,
+                self._triggered,
+            )
 
         if is_speech:
             self._speech_count += 1
@@ -133,12 +163,19 @@ class SileroVAD:
         self._speech_count = 0
         self._silence_count = 0
         self._triggered = False
-        # Reset model state (Silero has internal hidden state)
+        self._chunk_count = 0
+        # Reset model state (Silero has internal hidden state carried
+        # across chunks — must clear between conversations to avoid
+        # bleed).
         if self._model is not None:
-            try:
-                self._model.reset_states()
-            except Exception:
-                pass
+            for method in ("reset_states", "reset"):
+                fn = getattr(self._model, method, None)
+                if callable(fn):
+                    try:
+                        fn()
+                        break
+                    except Exception:
+                        pass
 
     @property
     def is_speech_active(self) -> bool:
