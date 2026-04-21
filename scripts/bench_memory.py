@@ -211,6 +211,10 @@ class TurnMetric:
     tool_calls: int = 0
     tools_used: list[str] = field(default_factory=list)
     error: str = ""
+    # Captured response text + grading (populated when --grade is used).
+    response_text: str = ""
+    score: int = 0          # 1-5 (0 = ungraded / errored)
+    score_reason: str = ""
 
 
 async def run_turn(
@@ -274,7 +278,9 @@ async def run_turn(
             continue
 
         # Final text response — append and stop
-        conv_messages.append({"role": "assistant", "content": resp.content or ""})
+        final_text = resp.content or ""
+        conv_messages.append({"role": "assistant", "content": final_text})
+        m.response_text = final_text
         break
     else:
         m.error = f"hit max_iters={max_iters} without final response"
@@ -360,6 +366,101 @@ async def run_config(
     return results
 
 
+# ── Correctness grading (LLM judge) ────────────────────────────────
+
+JUDGE_MODEL = "claude-haiku-4-5-20251001"
+JUDGE_SYSTEM = """You are an impartial evaluator of an AI assistant's replies to a Telegram user.
+
+You rate QUALITY on a 1-5 scale:
+  5 — excellent: complete, factually correct, well-formed
+  4 — good: mostly correct, minor omission or rough edge
+  3 — acceptable: partial answer, some things right, others wrong
+  2 — weak: largely wrong, unhelpful, or irrelevant
+  1 — bad: wrong answer, confused, or refused when it shouldn't
+
+Category-specific rubrics:
+  recall  — the user is asking about THEIR OWN facts. The assistant should
+            surface concrete preferences / habits / identity items.
+            A vague "I don't know" is 2. A clear personalised answer = 5.
+  write   — the user stated a new durable fact and said "remember it".
+            The assistant should acknowledge and commit to remembering.
+            Committing + confirming the fact = 5. Generic reply = 3.
+  task    — the user asked for a factual answer or simple action. Math
+            must be exact. Greetings must be returned naturally.
+  followup — depends on context. A naturally-contextual reply = 4+.
+            Confused/repeated = 2.
+
+The user speaks Uzbek, English, and occasionally Russian. Replies in ANY
+of those languages are fine; score the CONTENT, not the language choice.
+
+Output ONLY a single-line JSON object, no markdown, no commentary:
+{"score": <int 1-5>, "reason": "<≤15 words>"}"""
+
+
+async def grade_turn(judge, m: TurnMetric) -> tuple[int, str]:
+    """Ask Haiku to grade a single (question, answer, category) triple."""
+    if m.error:
+        return 0, f"ungraded (turn errored: {m.error[:80]})"
+    if not m.response_text.strip():
+        return 1, "ungraded: empty response"
+
+    user_prompt = (
+        f"Category: {m.category}\n"
+        f"User question: {m.text}\n"
+        f"Assistant answer:\n{m.response_text[:2000]}"
+    )
+    try:
+        resp = await judge.chat(
+            messages=[{"role": "user", "content": user_prompt}],
+            tools=None,
+            system=JUDGE_SYSTEM,
+        )
+    except Exception as e:
+        return 0, f"judge error: {type(e).__name__}: {str(e)[:80]}"
+
+    raw = (resp.content or "").strip()
+    # Strip markdown fences if the judge slipped them in
+    for fence in ("```json", "```"):
+        if raw.startswith(fence):
+            raw = raw[len(fence):]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+    raw = raw.strip()
+    try:
+        parsed = json.loads(raw)
+        score = int(parsed.get("score", 0))
+        reason = str(parsed.get("reason", ""))[:200]
+        if score < 1 or score > 5:
+            return 0, f"judge returned out-of-range score: {score}"
+        return score, reason
+    except Exception as e:
+        return 0, f"judge output unparseable: {raw[:80]!r}"
+
+
+async def grade_all(metrics: list[TurnMetric]) -> None:
+    """Grade every turn in-place. Runs with bounded concurrency."""
+    from qanot.config import load_config
+    from qanot.providers.anthropic import AnthropicProvider
+
+    cfg = load_config()
+    judge = AnthropicProvider(
+        api_key=cfg.api_key,
+        model=JUDGE_MODEL,
+        thinking_level="off",
+        memory_tool=False,
+        context_editing=False,
+    )
+    sem = asyncio.Semaphore(5)
+
+    async def _grade_one(m: TurnMetric) -> None:
+        async with sem:
+            score, reason = await grade_turn(judge, m)
+            m.score = score
+            m.score_reason = reason
+
+    await asyncio.gather(*(_grade_one(m) for m in metrics))
+
+
 # ── Reporting ──────────────────────────────────────────────────────
 
 def cost(m: TurnMetric) -> float:
@@ -375,6 +476,14 @@ def cost(m: TurnMetric) -> float:
 
 def _summary_row(name: str, metrics: list[TurnMetric]) -> dict:
     latencies = [m.latency_ms for m in metrics if not m.error]
+    graded = [m for m in metrics if m.score > 0]
+    by_cat: dict[str, list[int]] = {}
+    for m in graded:
+        by_cat.setdefault(m.category, []).append(m.score)
+    cat_means = {
+        cat: round(sum(scores) / len(scores), 2)
+        for cat, scores in by_cat.items()
+    }
     return {
         "config": name,
         "turns": len(metrics),
@@ -392,6 +501,12 @@ def _summary_row(name: str, metrics: list[TurnMetric]) -> dict:
             if len(latencies) >= 20 else
             (round(max(latencies), 0) if latencies else 0)
         ),
+        "mean_score": (
+            round(sum(m.score for m in graded) / len(graded), 2)
+            if graded else 0.0
+        ),
+        "graded_count": len(graded),
+        "by_category_score": cat_means,
     }
 
 
@@ -408,6 +523,7 @@ def _print_comparison(summaries: dict[str, dict]) -> None:
         ("total_cost_usd",   14),
         ("p50_latency_ms",   14),
         ("p95_latency_ms",   14),
+        ("mean_score",       10),
     ]
     header = " | ".join(f"{k:<{w}}" for k, w in cols)
     print("\n" + header)
@@ -415,6 +531,23 @@ def _print_comparison(summaries: dict[str, dict]) -> None:
     for name, s in summaries.items():
         row = " | ".join(f"{str(s.get(k, '')):<{w}}" for k, w in cols)
         print(row)
+
+    # Per-category score breakdown if grading ran
+    cat_table_rows = []
+    for name, s in summaries.items():
+        cats = s.get("by_category_score") or {}
+        if cats:
+            cat_table_rows.append((name, cats))
+    if cat_table_rows:
+        all_cats = sorted({c for _, cats in cat_table_rows for c in cats})
+        header2 = "config            | " + " | ".join(f"{c:<8}" for c in all_cats)
+        print("\n" + header2)
+        print("-" * len(header2))
+        for name, cats in cat_table_rows:
+            row = f"{name:<17} | " + " | ".join(
+                f"{cats.get(c, '-'):<8}" for c in all_cats
+            )
+            print(row)
     print()
 
 
@@ -438,6 +571,15 @@ async def amain(args: argparse.Namespace) -> int:
             all_metrics[name] = await run_config(
                 name, CONFIGS[name], turn_set, ws,
             )
+
+    # Grading pass (optional, parallel across turns, judge=Haiku).
+    if args.grade:
+        for name, metrics in all_metrics.items():
+            log.info("Grading %d responses for config=%s (judge=%s)…",
+                     len(metrics), name, JUDGE_MODEL)
+            await grade_all(metrics)
+            n_ok = sum(1 for m in metrics if m.score >= 4)
+            log.info("  %d/%d responses scored ≥4", n_ok, len(metrics))
 
     # Summary + JSON dump
     summaries = {name: _summary_row(name, ms) for name, ms in all_metrics.items()}
@@ -466,5 +608,6 @@ if __name__ == "__main__":
     ap.add_argument("--turns", type=int, default=0, help="Limit to first N turns (default: all)")
     ap.add_argument("--configs", type=str, default="", help="Comma-sep subset of: baseline,production")
     ap.add_argument("--source-workspace", type=str, default="", help="Workspace to seed bench from (defaults to /data/workspace)")
+    ap.add_argument("--grade", action="store_true", help="Grade answer quality per turn with Haiku (1-5)")
     args = ap.parse_args()
     sys.exit(asyncio.run(amain(args)))
