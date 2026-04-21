@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -42,6 +43,32 @@ PLAYBACK_INTERVAL = 0.02  # seconds
 
 # Rate limit: minimum seconds between processing speech segments
 MIN_TURN_INTERVAL = 2.0
+
+# Characters/patterns that make TTS providers (notably KotibAI) return 400.
+# We strip markdown formatting and emoji/symbol ranges that aren't speakable.
+_MARKDOWN_RE = re.compile(r"(\*\*|__|\*|_|`+|~~|#+\s|>\s|\[|\]|\(|\)|\|)")
+_EMOJI_RE = re.compile(
+    r"[\U0001F300-\U0001FAFF]"   # pictographs, emoticons, symbols
+    r"|[\U00002600-\U000027BF]"  # misc symbols, dingbats
+    r"|[\U0001F1E6-\U0001F1FF]"  # flags
+    r"|[←-⇿]"           # arrows
+    r"|[☀-⛿]"           # misc symbols
+)
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def sanitize_for_tts(text: str) -> str:
+    """Strip markdown syntax, emoji, and collapse whitespace for TTS input.
+
+    Kotib/Muxlisa/Aisha reject or mis-speak raw model output containing
+    **bold**, `code`, pipe tables, or non-speakable pictographs. The
+    agent thinks it's answering in chat markdown; the TTS needs plain
+    speakable text.
+    """
+    text = _EMOJI_RE.sub("", text)
+    text = _MARKDOWN_RE.sub("", text)
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    return text
 
 
 @dataclass
@@ -230,12 +257,19 @@ class AudioPipeline:
 
             logger.info("VC LLM [%d]: %s", self._session.chat_id, response[:100])
 
-            # 4. TTS: convert response to audio
+            # 4. TTS: convert response to audio. Sanitize first — providers
+            #    (Kotib returns HTTP 400) reject markdown + emojis.
+            tts_text = sanitize_for_tts(response)[:2000]
+            if not tts_text:
+                logger.info("VC skipping TTS [%d]: empty after sanitize", self._session.chat_id)
+                return
             from qanot.voice import text_to_speech
-            logger.info("VC TTS request [%d]: provider=%s len=%d", self._session.chat_id, provider, len(response))
+            logger.info(
+                "VC TTS request [%d]: provider=%s len=%d (raw=%d)",
+                self._session.chat_id, provider, len(tts_text), len(response),
+            )
             tts_result = await text_to_speech(
-                response[:2000],  # Cap TTS input length
-                api_key,
+                tts_text, api_key,
                 provider=provider,
                 language=self._config.voice_language or "uz",
                 voice=self._config.voice_name or None,
