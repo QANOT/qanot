@@ -125,6 +125,9 @@ class AudioPipeline:
             event = self._vad.process_chunk(chunk)
 
             if event == VADEvent.SPEECH_START:
+                logger.info(
+                    "voicecall: SPEECH_START in chat %d", self._session.chat_id,
+                )
                 self._session.last_speech_at = time.monotonic()
                 # Barge-in: if bot is speaking, interrupt it
                 if self._session.is_speaking and self._config.voicecall_barge_in:
@@ -147,10 +150,15 @@ class AudioPipeline:
 
                 # Check minimum speech length and rate limiting
                 now = time.monotonic()
-                if (
-                    len(speech_data) >= MIN_SPEECH_BYTES
-                    and now - self._last_turn_time >= MIN_TURN_INTERVAL
-                ):
+                meets_min = len(speech_data) >= MIN_SPEECH_BYTES
+                meets_rate = now - self._last_turn_time >= MIN_TURN_INTERVAL
+                logger.info(
+                    "voicecall: SPEECH_END in chat %d — %d bytes "
+                    "(min=%s, rate_ok=%s)",
+                    self._session.chat_id, len(speech_data),
+                    meets_min, meets_rate,
+                )
+                if meets_min and meets_rate:
                     self._last_turn_time = now
                     # Process in background — don't block audio thread
                     self._session._tts_cancel.clear()
@@ -378,12 +386,24 @@ class VoiceCallManager:
         from pytgcalls.types import ChatUpdate, Direction, Device, StreamFrames
 
         # ── Inbound audio frames (CRITICAL: without this, bot can't hear) ──
+        # Diagnostic counter: log every N frames so we can see at a
+        # glance whether py-tgcalls is delivering audio at all (vs
+        # something between stream_frame → on_audio_frame being broken).
+        # 50 frames ≈ 1 second at 20ms pacing, so we get ~1 line/sec.
+        self._frame_counters: dict[int, int] = {}
         try:
             @self._tgcalls.on_update(
                 tg_filters.stream_frame(Direction.INCOMING, Device.MICROPHONE)
             )
             async def on_audio_frame(_: object, update: StreamFrames) -> None:
                 chat_id = update.chat_id
+                count = self._frame_counters.get(chat_id, 0) + len(update.frames or [])
+                self._frame_counters[chat_id] = count
+                if count == 1 or count % 50 == 0:
+                    logger.info(
+                        "voicecall: %d inbound frames received in chat %d",
+                        count, chat_id,
+                    )
                 pipeline = self._pipelines.get(chat_id)
                 if pipeline and update.frames:
                     for frame in update.frames:
