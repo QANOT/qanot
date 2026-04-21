@@ -151,19 +151,19 @@ class SettingsHandlersMixin:
 
         current = self.config.voice_provider
         providers = [
-            ("muxlisa", "Muxlisa", "O'zbek, OGG native"),
-            ("kotib", "Kotib AI", "6 ovoz, ko'p tilli"),
-            ("aisha", "Aisha", "O'zbek, kayfiyat boshqaruvi"),
-            ("whisper", "Whisper", "OpenAI, ko'p tilli"),
+            ("muxlisa", "Muxlisa"),
+            ("kotib", "Kotib AI"),
+            ("aisha", "Aisha"),
+            ("whisper", "Whisper"),
         ]
 
         buttons = []
-        for prov_id, label, desc in providers:
+        for prov_id, label in providers:
             check = "\u2705 " if prov_id == current else ""
             has_key = bool(self.config.get_voice_api_key(prov_id))
             key_icon = "\U0001f511" if has_key else "\U0001f512"
             buttons.append([InlineKeyboardButton(
-                text=f"{check}{key_icon} {label} \u2014 {desc}",
+                text=f"{check}{key_icon} {label}",
                 callback_data=f"vprov:{prov_id}",
             )])
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
