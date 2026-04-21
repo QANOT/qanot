@@ -13,6 +13,7 @@ Stages:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import replace
@@ -155,7 +156,12 @@ class ClipperPipeline:
         return self.moments
 
     async def render(self) -> list[Clip]:
-        """Stage 4+5: cut + reframe + burn captions for each moment."""
+        """Stage 4+5: cut + reframe + (jumpcut) + (captions) for each moment.
+
+        Per-moment stages are sequential (each needs the previous file), but
+        moments themselves render concurrently up to `render_concurrency`.
+        ffmpeg is the hot path and is CPU-bound, so concurrency ~= CPUs/2.
+        """
         if self.source is None or self.transcript is None:
             raise RuntimeError("Call load() and transcribe() first")
         if not self.moments:
@@ -166,157 +172,185 @@ class ClipperPipeline:
         clips_dir = self.config.output_dir / "clips"
         clips_dir.mkdir(parents=True, exist_ok=True)
 
-        self.clips = []
-        for i, moment in enumerate(self.moments, start=1):
-            clip_t0 = time.monotonic()
-            stem = f"clip_{i:02d}_score{moment.virality_score}"
-            cut_path = clips_dir / f"{stem}_raw.mp4"
-            jumpcut_path = clips_dir / f"{stem}_jumpcut.mp4"
-            hooked_path = clips_dir / f"{stem}_hooked.mp4"
-            final_path = clips_dir / f"{stem}.mp4"
-            thumb_path = clips_dir / f"{stem}.jpg"
+        concurrency = max(1, self.config.render_concurrency)
+        sem = asyncio.Semaphore(concurrency)
+        total = len(self.moments)
 
-            # Stage 4: cut + reframe
-            try:
-                await cut_clip(
-                    self.source, moment, cut_path,
-                    target_width=self.config.target_width,
-                    target_height=self.config.target_height,
-                    reframe_mode=self.config.reframe_mode,
-                )
-            except Exception as e:
-                logger.error("Failed to cut clip %d: %s", i, e)
-                continue
+        async def _gated(i: int, moment: Moment) -> Clip | None:
+            async with sem:
+                return await self._render_one_moment(i, total, moment, clips_dir)
 
-            # Words local to this clip (relative to 0 = moment.start_s).
-            local_words = clip_local_words(
-                self.transcript.words, moment.start_s, moment.end_s
-            )
-            clip_duration = max(0.0, moment.end_s - moment.start_s)
-
-            # Stage 4a: jump-cut (silence compression, not deletion).
-            # Pauses longer than long_gap_threshold_s are TRIMMED down to a
-            # natural target length — not removed entirely. Keeps meaning
-            # intact while eliminating dead air.
-            stage_input = cut_path
-            if self.config.jumpcut and local_words:
-                try:
-                    # Build sentence-boundary times in clip-local seconds.
-                    clip_local_segments = [
-                        Segment(
-                            text=seg.text,
-                            start_s=seg.start_s - moment.start_s,
-                            end_s=seg.end_s - moment.start_s,
-                            words=[
-                                replace(w, start_s=w.start_s - moment.start_s,
-                                        end_s=w.end_s - moment.start_s)
-                                for w in seg.words
-                            ],
-                            speaker=seg.speaker,
-                        )
-                        for seg in self.transcript.segments
-                        if seg.end_s > moment.start_s and seg.start_s < moment.end_s
-                    ]
-                    boundary_times = _sentence_boundary_times(clip_local_segments)
-
-                    keep_segments = compute_keep_segments(
-                        local_words,
-                        clip_duration,
-                        long_gap_threshold_s=self.config.long_gap_threshold_s,
-                        target_mid_sentence_gap_s=self.config.target_mid_sentence_gap_s,
-                        target_sentence_boundary_gap_s=self.config.target_sentence_boundary_gap_s,
-                        sentence_boundary_times=boundary_times,
-                    )
-                    removed = clip_duration - total_kept_duration(keep_segments)
-                    if removed > 0.2 and len(keep_segments) >= 1:
-                        await apply_jumpcut(
-                            cut_path, jumpcut_path, keep_segments,
-                            has_audio=self.source.has_audio,
-                        )
-                        local_words = remap_words(local_words, keep_segments)
-                        try:
-                            cut_path.unlink()
-                        except OSError:
-                            pass
-                        stage_input = jumpcut_path
-                        logger.info(
-                            "Clip %d jumpcut: %d segments kept, %.1fs removed (%.0f%%)",
-                            i, len(keep_segments), removed,
-                            100.0 * removed / max(clip_duration, 0.001),
-                        )
-                    else:
-                        logger.info(
-                            "Clip %d jumpcut: nothing to trim (removed=%.2fs)",
-                            i, removed,
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "Jumpcut failed for clip %d (keeping raw): %s", i, e,
-                    )
-
-            # Stage 4b: hook overlay (optional)
-            if self.config.add_hook_overlay and moment.hook:
-                try:
-                    await burn_hook_overlay(
-                        stage_input, moment.hook, hooked_path,
-                        canvas_width=self.config.target_width,
-                        canvas_height=self.config.target_height,
-                    )
-                    try:
-                        stage_input.unlink()
-                    except OSError:
-                        pass
-                    stage_input = hooked_path
-                except Exception as e:
-                    logger.warning("Hook overlay failed for clip %d (skipping hook): %s", i, e)
-
-            # Stage 5: burn captions
-            if self.config.caption_style != "off" and local_words:
-                try:
-                    await burn_captions(
-                        stage_input, local_words, final_path,
-                        style_name=self.config.caption_style,
-                        canvas_width=self.config.target_width,
-                        canvas_height=self.config.target_height,
-                    )
-                    try:
-                        stage_input.unlink()
-                    except OSError:
-                        pass
-                except Exception as e:
-                    logger.warning("Caption burn failed for clip %d (keeping hook/raw): %s", i, e)
-                    stage_input.rename(final_path)
-            else:
-                stage_input.rename(final_path)
-
-            # Thumbnail (midpoint frame from source, not clip, for quality)
-            try:
-                await extract_thumbnail(self.source, moment, thumb_path)
-            except Exception as e:
-                logger.debug("Thumbnail extraction failed (non-fatal): %s", e)
-                thumb_path = None
-
-            self.clips.append(Clip(
-                path=final_path,
-                moment=moment,
-                words=local_words,
-                thumbnail_path=thumb_path,
-                metadata={
-                    "source": str(self.source.path),
-                    "source_url": self.source.original_url,
-                    "source_title": self.source.title,
-                    "reframe_mode": self.config.reframe_mode,
-                    "caption_style": self.config.caption_style,
-                },
-            ))
-
-            logger.info(
-                "[4-5/5] Clip %d/%d rendered: %s (%.1fs)",
-                i, len(self.moments), final_path.name, time.monotonic() - clip_t0,
-            )
-
-        logger.info("Rendered %d clips in %.1fs total", len(self.clips), time.monotonic() - t0)
+        logger.info(
+            "[4-5/5] Rendering %d clips (concurrency=%d)…", total, concurrency,
+        )
+        results = await asyncio.gather(
+            *(_gated(i, m) for i, m in enumerate(self.moments, start=1)),
+            return_exceptions=False,
+        )
+        self.clips = [c for c in results if c is not None]
+        logger.info(
+            "Rendered %d/%d clips in %.1fs total",
+            len(self.clips), total, time.monotonic() - t0,
+        )
         return self.clips
+
+    async def _render_one_moment(
+        self,
+        i: int,
+        total: int,
+        moment: Moment,
+        clips_dir: Path,
+    ) -> Clip | None:
+        """Render a single clip: cut → jumpcut → hook → captions → thumb.
+
+        Returns None if the initial cut fails (later stages degrade gracefully
+        to the previous stage's output).
+        """
+        clip_t0 = time.monotonic()
+        stem = f"clip_{i:02d}_score{moment.virality_score}"
+        cut_path = clips_dir / f"{stem}_raw.mp4"
+        jumpcut_path = clips_dir / f"{stem}_jumpcut.mp4"
+        hooked_path = clips_dir / f"{stem}_hooked.mp4"
+        final_path = clips_dir / f"{stem}.mp4"
+        thumb_path: Path | None = clips_dir / f"{stem}.jpg"
+
+        # Stage 4: cut + reframe
+        try:
+            await cut_clip(
+                self.source, moment, cut_path,
+                target_width=self.config.target_width,
+                target_height=self.config.target_height,
+                reframe_mode=self.config.reframe_mode,
+            )
+        except Exception as e:
+            logger.error("Failed to cut clip %d: %s", i, e)
+            return None
+
+        # Words local to this clip (relative to 0 = moment.start_s).
+        local_words = clip_local_words(
+            self.transcript.words, moment.start_s, moment.end_s
+        )
+        clip_duration = max(0.0, moment.end_s - moment.start_s)
+
+        # Stage 4a: jump-cut (silence compression, not deletion).
+        stage_input = cut_path
+        if self.config.jumpcut and local_words:
+            try:
+                clip_local_segments = [
+                    Segment(
+                        text=seg.text,
+                        start_s=seg.start_s - moment.start_s,
+                        end_s=seg.end_s - moment.start_s,
+                        words=[
+                            replace(
+                                w,
+                                start_s=w.start_s - moment.start_s,
+                                end_s=w.end_s - moment.start_s,
+                            )
+                            for w in seg.words
+                        ],
+                        speaker=seg.speaker,
+                    )
+                    for seg in self.transcript.segments
+                    if seg.end_s > moment.start_s and seg.start_s < moment.end_s
+                ]
+                boundary_times = _sentence_boundary_times(clip_local_segments)
+
+                keep_segments = compute_keep_segments(
+                    local_words,
+                    clip_duration,
+                    long_gap_threshold_s=self.config.long_gap_threshold_s,
+                    target_mid_sentence_gap_s=self.config.target_mid_sentence_gap_s,
+                    target_sentence_boundary_gap_s=self.config.target_sentence_boundary_gap_s,
+                    sentence_boundary_times=boundary_times,
+                )
+                removed = clip_duration - total_kept_duration(keep_segments)
+                if removed > 0.2 and len(keep_segments) >= 1:
+                    await apply_jumpcut(
+                        cut_path, jumpcut_path, keep_segments,
+                        has_audio=self.source.has_audio,
+                    )
+                    local_words = remap_words(local_words, keep_segments)
+                    try:
+                        cut_path.unlink()
+                    except OSError:
+                        pass
+                    stage_input = jumpcut_path
+                    logger.info(
+                        "Clip %d jumpcut: %d segments kept, %.1fs removed (%.0f%%)",
+                        i, len(keep_segments), removed,
+                        100.0 * removed / max(clip_duration, 0.001),
+                    )
+                else:
+                    logger.info(
+                        "Clip %d jumpcut: nothing to trim (removed=%.2fs)",
+                        i, removed,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Jumpcut failed for clip %d (keeping raw): %s", i, e,
+                )
+
+        # Stage 4b: hook overlay (optional, off by default)
+        if self.config.add_hook_overlay and moment.hook:
+            try:
+                await burn_hook_overlay(
+                    stage_input, moment.hook, hooked_path,
+                    canvas_width=self.config.target_width,
+                    canvas_height=self.config.target_height,
+                )
+                try:
+                    stage_input.unlink()
+                except OSError:
+                    pass
+                stage_input = hooked_path
+            except Exception as e:
+                logger.warning("Hook overlay failed for clip %d (skipping hook): %s", i, e)
+
+        # Stage 5: burn captions (optional, off by default)
+        if self.config.caption_style != "off" and local_words:
+            try:
+                await burn_captions(
+                    stage_input, local_words, final_path,
+                    style_name=self.config.caption_style,
+                    canvas_width=self.config.target_width,
+                    canvas_height=self.config.target_height,
+                )
+                try:
+                    stage_input.unlink()
+                except OSError:
+                    pass
+            except Exception as e:
+                logger.warning("Caption burn failed for clip %d (keeping hook/raw): %s", i, e)
+                stage_input.rename(final_path)
+        else:
+            stage_input.rename(final_path)
+
+        # Thumbnail (non-fatal)
+        try:
+            await extract_thumbnail(self.source, moment, thumb_path)
+        except Exception as e:
+            logger.debug("Thumbnail extraction failed (non-fatal): %s", e)
+            thumb_path = None
+
+        logger.info(
+            "[4-5/5] Clip %d/%d rendered: %s (%.1fs)",
+            i, total, final_path.name, time.monotonic() - clip_t0,
+        )
+
+        return Clip(
+            path=final_path,
+            moment=moment,
+            words=local_words,
+            thumbnail_path=thumb_path,
+            metadata={
+                "source": str(self.source.path),
+                "source_url": self.source.original_url,
+                "source_title": self.source.title,
+                "reframe_mode": self.config.reframe_mode,
+                "caption_style": self.config.caption_style,
+            },
+        )
 
     async def run(self, source: str | Path) -> list[Clip]:
         """Run the full pipeline end-to-end."""
@@ -341,6 +375,7 @@ async def clip_video(
     long_gap_threshold_s: float = 0.5,
     target_mid_sentence_gap_s: float = 0.25,
     target_sentence_boundary_gap_s: float = 0.45,
+    render_concurrency: int = 3,
     diarize: bool = False,
     output_dir: Path | None = None,
     elevenlabs_key: str | None = None,
@@ -361,6 +396,7 @@ async def clip_video(
         long_gap_threshold_s=long_gap_threshold_s,
         target_mid_sentence_gap_s=target_mid_sentence_gap_s,
         target_sentence_boundary_gap_s=target_sentence_boundary_gap_s,
+        render_concurrency=render_concurrency,
         diarize=diarize,
         output_dir=output_dir or (Path(__file__).parent.parent / "output"),
         virality_threshold=virality_threshold,

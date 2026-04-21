@@ -129,6 +129,9 @@ class ClipperConfig:
     long_gap_threshold_s: float = 0.5
     target_mid_sentence_gap_s: float = 0.25
     target_sentence_boundary_gap_s: float = 0.45
+    # Max number of clips rendered in parallel. ffmpeg is CPU-bound so tune
+    # ~= vCPUs/2. Default 3 matches the default `count=5` but caps RAM.
+    render_concurrency: int = 3
     output_dir: Path = field(default_factory=lambda: Path("output"))
     transcribe_provider: str = "faster-whisper"  # faster-whisper | elevenlabs
     # large-v3-turbo: ~1.5GB RAM, 3x faster than large-v3, minimal accuracy loss
