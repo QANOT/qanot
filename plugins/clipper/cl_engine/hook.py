@@ -16,8 +16,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from engine.captions import _get_font
-from engine.source import _run
+from cl_engine.captions import _get_font
+from cl_engine.source import _run
 
 logger = logging.getLogger(__name__)
 

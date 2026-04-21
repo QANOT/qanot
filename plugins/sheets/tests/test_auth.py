@@ -1,4 +1,4 @@
-"""Unit tests for engine.auth TokenManager.
+"""Unit tests for sh_engine.auth TokenManager.
 
 We stub aiohttp.ClientSession so no network call is made.
 """
@@ -17,7 +17,7 @@ import pytest
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from engine.auth import TokenManager, TokenRefreshError  # noqa: E402
+from sh_engine.auth import TokenManager, TokenRefreshError  # noqa: E402
 
 
 class _FakeResp:
@@ -59,7 +59,7 @@ class _FakeSession:
 def _patch_session(resp: _FakeResp):
     """Return a patch context that replaces aiohttp.ClientSession."""
     session = _FakeSession(resp)
-    return patch("engine.auth.aiohttp.ClientSession", return_value=session), session
+    return patch("sh_engine.auth.aiohttp.ClientSession", return_value=session), session
 
 
 def test_refresh_returns_access_token():

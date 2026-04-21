@@ -23,7 +23,7 @@ import logging
 import os
 from pathlib import Path
 
-from engine.models import Transcript, Word
+from cl_engine.models import Transcript, Word
 
 logger = logging.getLogger(__name__)
 

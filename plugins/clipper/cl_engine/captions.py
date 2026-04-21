@@ -22,7 +22,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from engine.models import Word
+from cl_engine.models import Word
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +320,7 @@ async def burn_captions(
         output_path: Output MP4 with captions burned in.
         style_name: Key in STYLES dict.
     """
-    from engine.source import _run
+    from cl_engine.source import _run
 
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not installed")

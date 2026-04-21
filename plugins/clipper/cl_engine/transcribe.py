@@ -15,8 +15,8 @@ import logging
 import os
 from pathlib import Path
 
-from engine.models import Segment, SourceMedia, Transcript, Word
-from engine.source import extract_audio
+from cl_engine.models import Segment, SourceMedia, Transcript, Word
+from cl_engine.source import extract_audio
 
 logger = logging.getLogger(__name__)
 

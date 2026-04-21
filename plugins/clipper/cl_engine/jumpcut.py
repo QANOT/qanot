@@ -34,8 +34,8 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
-from engine.models import Segment, Word
-from engine.source import _run
+from cl_engine.models import Segment, Word
+from cl_engine.source import _run
 
 logger = logging.getLogger(__name__)
 

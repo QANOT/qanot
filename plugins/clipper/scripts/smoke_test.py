@@ -62,7 +62,7 @@ async def main():
     from qanot.providers.anthropic import AnthropicProvider
     provider = AnthropicProvider(api_key=api_key, model="claude-sonnet-4-6")
 
-    from engine.pipeline import clip_video  # noqa: E402
+    from cl_engine.pipeline import clip_video  # noqa: E402
 
     print(f"\n=== Clipper smoke test ===")
     print(f"Source:     {args.source}")

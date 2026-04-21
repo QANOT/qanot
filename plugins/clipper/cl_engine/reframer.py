@@ -24,8 +24,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from engine.models import Moment, SourceMedia
-from engine.source import _run
+from cl_engine.models import Moment, SourceMedia
+from cl_engine.source import _run
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +267,7 @@ async def smart_reframe_cut(
     ok, msg = _check_deps()
     if not ok:
         logger.warning("Smart reframe unavailable (%s) — falling back to center crop", msg)
-        from engine.cutter import cut_clip
+        from cl_engine.cutter import cut_clip
         return await cut_clip(
             source, moment, output_path,
             target_width=target_width, target_height=target_height,
@@ -292,7 +292,7 @@ async def smart_reframe_cut(
 
     if not windows:
         logger.warning("No tracking windows — falling back to center crop")
-        from engine.cutter import cut_clip
+        from cl_engine.cutter import cut_clip
         return await cut_clip(
             source, moment, output_path,
             target_width=target_width, target_height=target_height,
@@ -347,7 +347,7 @@ async def smart_reframe_cut(
 
     if rc != 0:
         logger.warning("Smart reframe ffmpeg failed — falling back to center crop: %s", err[-500:])
-        from engine.cutter import cut_clip
+        from cl_engine.cutter import cut_clip
         return await cut_clip(
             source, moment, output_path,
             target_width=target_width, target_height=target_height,

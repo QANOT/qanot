@@ -28,7 +28,7 @@ _FALLBACK_OUTPUT = PLUGIN_DIR / "output"
 # module, then removes it in a finally block. That removal uses list.remove()
 # which deletes the FIRST occurrence only. So we insert a SECOND copy of our
 # plugin dir so at least one survives after the loader's cleanup — this keeps
-# `from engine.X import Y` working when tool handlers run later.
+# `from cl_engine.X import Y` working when tool handlers run later.
 sys.path.insert(0, str(PLUGIN_DIR))
 
 
@@ -171,7 +171,7 @@ class ClipperPlugin(Plugin):
     )
     async def clip_video(self, params: dict) -> str:
         """Handler for the clip_video tool."""
-        from engine.pipeline import clip_video as run_pipeline
+        from cl_engine.pipeline import clip_video as run_pipeline
 
         provider = self._get_provider()
         if provider is None:
@@ -272,7 +272,7 @@ class ClipperPlugin(Plugin):
         """Quick health probe of all external dependencies used by clip_video."""
         import shutil as _shutil
         import subprocess as _sub
-        from engine.source import _probe_bgutil_provider, _find_cookies_file
+        from cl_engine.source import _probe_bgutil_provider, _find_cookies_file
 
         report: dict = {"ok": True, "checks": {}}
 
@@ -313,7 +313,7 @@ class ClipperPlugin(Plugin):
 
         # End-to-end YouTube probe (small public video)
         try:
-            from engine.source import _try_probe
+            from cl_engine.source import _try_probe
             rc, meta, err = await _try_probe(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",  # classic public video
                 ["--extractor-args", "youtube:player_client=default,-tv_simply"] if pot_ok
@@ -371,7 +371,7 @@ class ClipperPlugin(Plugin):
     )
     async def publish_clip_to_meta(self, params: dict) -> str:
         """Handler for the publish_clip_to_meta tool."""
-        from engine.publisher import publish_clip, build_caption
+        from cl_engine.publisher import publish_clip, build_caption
 
         clip_path_str = (params.get("clip_path") or "").strip()
         if not clip_path_str:

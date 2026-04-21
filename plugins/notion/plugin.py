@@ -36,7 +36,7 @@ PLUGIN_DIR = Path(__file__).parent
 
 # Match clipper's sys.path trick: loader inserts plugin dir and later does
 # list.remove() which drops only the first occurrence. Insert twice so at
-# least one copy survives for later `from engine.X import Y` calls.
+# least one copy survives for later `from nt_engine.X import Y` calls.
 sys.path.insert(0, str(PLUGIN_DIR))
 
 
@@ -76,7 +76,7 @@ class NotionPlugin(Plugin):
             return
 
         try:
-            from engine.client import make_client
+            from nt_engine.client import make_client
             self._client = make_client(self._token)
             logger.info("Notion plugin ready (token configured)")
         except Exception as e:
@@ -108,7 +108,7 @@ class NotionPlugin(Plugin):
         parameters={"type": "object", "properties": {}},
     )
     async def notion_health(self, params: dict) -> str:
-        from engine.errors import map_exception
+        from nt_engine.errors import map_exception
 
         if not self._token:
             return json.dumps({
@@ -276,7 +276,7 @@ class NotionPlugin(Plugin):
 
     async def _fetch_all_children(self, block_id: str, max_blocks: int = 500) -> list[dict]:
         """Paginate through a block's direct children. Does NOT recurse."""
-        from engine.client import iterate_paginated
+        from nt_engine.client import iterate_paginated
         collected: list[dict] = []
 
         async def fetch_page(**kwargs):
@@ -326,7 +326,7 @@ class NotionPlugin(Plugin):
         obj_type = (params.get("object_type") or "all").strip().lower()
         limit = max(1, min(50, int(params.get("limit") or 10)))
 
-        from engine.errors import map_exception
+        from nt_engine.errors import map_exception
         kwargs: dict[str, Any] = {"query": query, "page_size": limit}
         if obj_type in ("page", "database", "data_source"):
             # Notion API 2025-09-03: "database" was renamed to "data_source"
@@ -381,8 +381,8 @@ class NotionPlugin(Plugin):
             return json.dumps({"error": "page_id is required"}, ensure_ascii=False)
         max_blocks = max(1, min(1000, int(params.get("max_blocks") or 200)))
 
-        from engine.errors import map_exception
-        from engine.markdown import blocks_to_markdown
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import blocks_to_markdown
 
         try:
             page = await self._client.pages.retrieve(page_id=page_id)
@@ -429,8 +429,8 @@ class NotionPlugin(Plugin):
         if not md.strip():
             return json.dumps({"error": "markdown is required (non-empty)"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
-        from engine.markdown import markdown_to_blocks
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import markdown_to_blocks
 
         blocks = markdown_to_blocks(md)
         if not blocks:
@@ -498,8 +498,8 @@ class NotionPlugin(Plugin):
                 "error": "Exactly one of parent_page_id or parent_database_id is required",
             }, ensure_ascii=False)
 
-        from engine.errors import map_exception
-        from engine.markdown import markdown_to_blocks, markdown_to_rich_text
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import markdown_to_blocks, markdown_to_rich_text
 
         # Parent — for DBs, API 2025-09-03 requires data_source_id, not database_id.
         properties: dict[str, Any] = {}
@@ -627,7 +627,7 @@ class NotionPlugin(Plugin):
             return json.dumps({"error": "database_id is required"}, ensure_ascii=False)
         limit = max(1, min(100, int(params.get("limit") or 20)))
 
-        from engine.errors import map_exception
+        from nt_engine.errors import map_exception
         try:
             # Notion API 2025-09-03: query goes through data_sources, not
             # databases. Resolve the DB → its first data_source.
@@ -687,8 +687,8 @@ class NotionPlugin(Plugin):
             return json.dumps({"error": "page_id and non-empty properties are required"},
                               ensure_ascii=False)
 
-        from engine.errors import map_exception
-        from engine.markdown import markdown_to_rich_text
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import markdown_to_rich_text
 
         properties: dict[str, Any] = {}
         for name, value in props_in.items():
@@ -745,7 +745,7 @@ class NotionPlugin(Plugin):
         if not db_id:
             return json.dumps({"error": "database_id is required"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
+        from nt_engine.errors import map_exception
         try:
             # 2025-09-03: databases.retrieve returns a *shell* with data_sources[];
             # the real property schema lives on the data source.

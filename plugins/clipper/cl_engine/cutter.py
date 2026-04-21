@@ -18,8 +18,8 @@ import asyncio
 import logging
 from pathlib import Path
 
-from engine.models import Moment, SourceMedia
-from engine.source import _run
+from cl_engine.models import Moment, SourceMedia
+from cl_engine.source import _run
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ async def cut_clip(
         vf = _blur_pad_filter(source.width, source.height, target_width, target_height)
     elif reframe_mode == "smart":
         # Phase 2 — delegate to reframer
-        from engine.reframer import smart_reframe_cut
+        from cl_engine.reframer import smart_reframe_cut
         return await smart_reframe_cut(
             source, moment, output_path,
             target_width=target_width, target_height=target_height,

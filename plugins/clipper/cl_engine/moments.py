@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from engine.models import Moment, Transcript
+from cl_engine.models import Moment, Transcript
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from engine.markdown import (  # noqa: E402
+from nt_engine.markdown import (  # noqa: E402
     _normalise_code_lang,
     blocks_to_markdown,
     markdown_to_blocks,

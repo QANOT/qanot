@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import aiohttp
 
-from engine.auth import TokenManager
+from sh_engine.auth import TokenManager
 
 logger = logging.getLogger(__name__)
 

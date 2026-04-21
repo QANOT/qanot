@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from engine.auth import TokenRefreshError
-from engine.client import SheetsAPIError
+from sh_engine.auth import TokenRefreshError
+from sh_engine.client import SheetsAPIError
 
 
 _FRIENDLY: dict[int, str] = {

@@ -20,17 +20,17 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from engine.captions import burn_captions, clip_local_words
-from engine.cutter import cut_clip, extract_thumbnail
-from engine.hook import burn_hook_overlay
-from engine.jumpcut import (
+from cl_engine.captions import burn_captions, clip_local_words
+from cl_engine.cutter import cut_clip, extract_thumbnail
+from cl_engine.hook import burn_hook_overlay
+from cl_engine.jumpcut import (
     _sentence_boundary_times,
     apply_jumpcut,
     compute_keep_segments,
     remap_words,
     total_kept_duration,
 )
-from engine.models import (
+from cl_engine.models import (
     Clip,
     ClipperConfig,
     Moment,
@@ -38,9 +38,9 @@ from engine.models import (
     SourceMedia,
     Transcript,
 )
-from engine.moments import detect_moments, snap_to_sentence_boundary
-from engine.source import load_source
-from engine.transcribe import transcribe
+from cl_engine.moments import detect_moments, snap_to_sentence_boundary
+from cl_engine.source import load_source
+from cl_engine.transcribe import transcribe
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class ClipperPipeline:
 
         # Optional diarization pass
         if self.config.diarize:
-            from engine.diarize import diarize, summarize_speakers
+            from cl_engine.diarize import diarize, summarize_speakers
             audio_path = self.config.output_dir / "sources" / f"{self.source.path.stem}.wav"
             if audio_path.exists():
                 t1 = time.monotonic()

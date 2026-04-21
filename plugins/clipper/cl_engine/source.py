@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from urllib.parse import urlparse
 
-from engine.models import SourceMedia
+from cl_engine.models import SourceMedia
 
 logger = logging.getLogger(__name__)
 

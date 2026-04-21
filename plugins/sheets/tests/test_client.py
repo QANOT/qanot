@@ -20,7 +20,7 @@ import pytest
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from engine.client import SheetsAPIError, SheetsClient, _encode_range  # noqa: E402
+from sh_engine.client import SheetsAPIError, SheetsClient, _encode_range  # noqa: E402
 
 
 # ── Fake aiohttp session ─────────────────────────────────────────

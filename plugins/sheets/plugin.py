@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_DIR = Path(__file__).parent
 
 # Loader strips one entry after setup, so we insert twice to survive the
-# later `from engine.X import Y` imports. Mirrors notion/clipper.
+# later `from sh_engine.X import Y` imports. Mirrors notion/clipper.
 sys.path.insert(0, str(PLUGIN_DIR))
 
 
@@ -102,8 +102,8 @@ class SheetsPlugin(Plugin):
         )
 
         try:
-            from engine.auth import TokenManager
-            from engine.client import SheetsClient
+            from sh_engine.auth import TokenManager
+            from sh_engine.client import SheetsClient
 
             self._tokens = TokenManager(refresh_token, client_id, client_secret)
             self._client = SheetsClient(self._tokens)
@@ -180,7 +180,7 @@ class SheetsPlugin(Plugin):
         parameters={"type": "object", "properties": {}},
     )
     async def sheets_health(self, params: dict) -> str:
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         if self._client is None or self._tokens is None:
             return json.dumps(
@@ -278,7 +278,7 @@ class SheetsPlugin(Plugin):
         if not title:
             return json.dumps({"error": "title is required"}, ensure_ascii=False)
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             created = await self._client.create_spreadsheet(
@@ -343,7 +343,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             data = await self._client.get_spreadsheet(sid)
@@ -409,7 +409,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             values = await self._client.read_values(sid, range_)
@@ -486,7 +486,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             result = await self._client.append_values(sid, range_, values)
@@ -554,7 +554,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             result = await self._client.update_values(sid, range_, values)
@@ -621,7 +621,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             matches = await self._client.search_values(sid, tab, query, limit=limit)
@@ -685,7 +685,7 @@ class SheetsPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        from engine.errors import map_exception
+        from sh_engine.errors import map_exception
 
         try:
             result = await self._client.share(sid, email, role=role)
