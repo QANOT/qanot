@@ -20,12 +20,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from qanot.audio import (
-    VC_FRAME_BYTES,
     pcm_to_wav_file,
-    resample_16k_mono_to_48k_stereo,
     resample_48k_stereo_to_16k_mono,
-    split_pcm_frames,
-    tts_result_to_vc_pcm,
 )
 from qanot.vad import CHUNK_BYTES, SileroVAD, VADEvent
 
@@ -58,6 +54,32 @@ _EMOJI_RE = re.compile(
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+async def _write_tts_audio_to_temp(tts_result) -> str | None:
+    """Persist TTS output to a temp file for tgcalls.play(audio_path=...).
+
+    Handles both audio_data (bytes, Muxlisa/Aisha) and audio_url
+    (Kotib). Returns the absolute path or None on failure.
+    """
+    import aiohttp
+    from qanot.voice import download_audio
+
+    if tts_result.audio_data:
+        # Muxlisa returns WAV bytes directly. Aisha may return MP3.
+        # Preserve the original extension if recognisable.
+        suffix = ".wav" if tts_result.audio_data[:4] == b"RIFF" else ".mp3"
+        fd, path = tempfile.mkstemp(prefix="qanot_tts_", suffix=suffix)
+        with os.fdopen(fd, "wb") as f:
+            f.write(tts_result.audio_data)
+        return path
+    if tts_result.audio_url:
+        try:
+            return await download_audio(tts_result.audio_url)
+        except Exception as e:
+            logger.error("download_audio failed: %s", e)
+            return None
+    return None
+
+
 def sanitize_for_tts(text: str) -> str:
     """Strip markdown syntax, emoji, and collapse whitespace for TTS input.
 
@@ -84,6 +106,7 @@ class CallSession:
     is_speaking: bool = False  # True when bot TTS is playing
     _tts_cancel: asyncio.Event = field(default_factory=asyncio.Event)
     _llm_task: asyncio.Task | None = field(default=None, repr=False)
+    _pending_tempfiles: list[str] = field(default_factory=list, repr=False)
 
 
 class AudioPipeline:
@@ -112,26 +135,29 @@ class AudioPipeline:
         # VAD chunk accumulation buffer (need 512 samples = 1024 bytes)
         self._vad_buffer = bytearray()
 
-        # Outbound audio queue (48kHz stereo PCM frames)
-        # 2500 frames * 20ms = 50s buffer — enough for a full LLM response,
-        # not so large it pins memory for abandoned calls.
-        self._outbound_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2500)
-        self._playback_task: asyncio.Task | None = None
         self._last_turn_time: float = 0.0
+        self._tempfile_cleanup_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the playback loop."""
-        self._playback_task = asyncio.create_task(
-            self._playback_loop(),
-            name=f"vc_playback_{self._session.chat_id}",
+        """Start background tasks for this pipeline."""
+        self._tempfile_cleanup_task = asyncio.create_task(
+            self._tempfile_cleanup_loop(),
+            name=f"vc_tempfile_cleanup_{self._session.chat_id}",
         )
 
     async def stop(self) -> None:
         """Stop pipeline and cleanup."""
-        if self._playback_task and not self._playback_task.done():
-            self._playback_task.cancel()
+        if self._tempfile_cleanup_task and not self._tempfile_cleanup_task.done():
+            self._tempfile_cleanup_task.cancel()
         self.cancel_playback()
         self._vad.reset()
+        # Flush any remaining temp files
+        for path in list(self._session._pending_tempfiles):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self._session._pending_tempfiles.clear()
 
     def feed_inbound(self, pcm_48k_stereo: bytes) -> None:
         """Feed raw PCM from voice chat. Called from py-tgcalls frame handler.
@@ -287,30 +313,30 @@ class AudioPipeline:
             if self._session._tts_cancel.is_set():
                 return
 
-            # 5. Convert TTS output to 48kHz stereo PCM
-            vc_pcm = await tts_result_to_vc_pcm(tts_result, self._config)
-            logger.info("VC TTS decoded [%d]: pcm_bytes=%d", self._session.chat_id, len(vc_pcm) if vc_pcm else 0)
-            if not vc_pcm:
-                logger.warning("VC TTS conversion failed, sending text fallback")
+            # 5. Write TTS audio to a temp file and hand it to py-tgcalls.
+            #    Manually resampling + frame-by-frame send_frame produced
+            #    slow/glitchy playback; letting ntgcalls' native ffmpeg
+            #    pipeline handle pacing + format conversion is the
+            #    documented production pattern.
+            from pytgcalls.types import MediaStream
+            audio_path = await _write_tts_audio_to_temp(tts_result)
+            if not audio_path:
+                logger.warning("VC TTS conversion failed")
                 return
-
-            # 6. Queue frames for playback
-            self._session.is_speaking = True
-            frames = split_pcm_frames(vc_pcm)
-            queued = 0
-            for frame in frames:
-                if self._session._tts_cancel.is_set():
-                    break
-                try:
-                    self._outbound_queue.put_nowait(frame)
-                    queued += 1
-                except asyncio.QueueFull:
-                    logger.warning("VC outbound queue full, dropping frame")
-                    break
-            logger.info(
-                "VC queued %d/%d frames for playback [%d]",
-                queued, len(frames), self._session.chat_id,
-            )
+            try:
+                self._session.is_speaking = True
+                logger.info(
+                    "VC play_file [%d]: %s", self._session.chat_id, audio_path,
+                )
+                await self._manager._tgcalls.play(
+                    self._session.chat_id,
+                    MediaStream(audio_path, video_flags=MediaStream.Flags.IGNORE),
+                )
+            finally:
+                # Remove file after a grace period; play() returns immediately
+                # but ntgcalls keeps reading the file.  Scheduling cleanup
+                # protects against filesystem fill-up.
+                self._session._pending_tempfiles.append(audio_path)
 
         except asyncio.CancelledError:
             logger.debug("VC turn cancelled (barge-in)")
@@ -323,73 +349,38 @@ class AudioPipeline:
                 except OSError:
                     pass
 
-    async def _playback_loop(self) -> None:
-        """Continuously dequeue 10ms PCM frames and send to voice chat.
-
-        Matches pytgcalls' official frame_sending example byte-for-byte:
-        - 10ms frames (1920 bytes at 48kHz stereo PCM16LE)
-        - Default Frame.Info() (no capture_time — ntgcalls doesn't use it
-          as a pacer; it's purely informational)
-        - Monotonic-deadline sleep so asyncio jitter doesn't drift the
-          playback speed
-        """
-        from pytgcalls.types import Device
-
-        tgcalls = self._manager._tgcalls
-        chat_id = self._session.chat_id
-
-        next_deadline: float | None = None
-
+    async def _tempfile_cleanup_loop(self) -> None:
+        """Periodically remove temp TTS files that ntgcalls has finished
+        reading. ntgcalls opens the file at play() time and releases it
+        when the stream ends or is replaced, so a 60s grace window is
+        plenty — keep the last few to cover back-to-back playbacks."""
         while True:
             try:
-                frame = await asyncio.wait_for(
-                    self._outbound_queue.get(), timeout=1.0,
-                )
-
-                if next_deadline is None:
-                    next_deadline = time.monotonic()
-
-                try:
-                    await tgcalls.send_frame(chat_id, Device.MICROPHONE, frame)
-                    self._sent_count = getattr(self, "_sent_count", 0) + 1
-                    if self._sent_count == 1 or self._sent_count % 100 == 0:
-                        logger.info(
-                            "VC send_frame [%d]: %d frames sent",
-                            chat_id, self._sent_count,
-                        )
-                except Exception as e:
-                    logger.warning("VC send_frame failed [%d]: %r", chat_id, e)
-
-                next_deadline += PLAYBACK_INTERVAL
-                delay = next_deadline - time.monotonic()
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                elif delay < -0.05:
-                    # We fell >50ms behind — reset deadline to avoid
-                    # spiraling catch-up bursts that starve the jitter buffer.
-                    next_deadline = time.monotonic()
-
-                if self._outbound_queue.empty():
-                    self._session.is_speaking = False
-                    next_deadline = None  # restart clock for next utterance
-
-            except asyncio.TimeoutError:
-                next_deadline = None
-                continue
+                await asyncio.sleep(60)
+                # Keep the 2 most recent (currently/just-playing); delete older.
+                paths = self._session._pending_tempfiles
+                if len(paths) > 2:
+                    for path in paths[:-2]:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+                    del paths[:-2]
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("Playback loop error: %s", e)
-                await asyncio.sleep(0.1)
+                logger.warning("Tempfile cleanup error: %s", e)
 
     def cancel_playback(self) -> None:
-        """Barge-in: clear outbound queue immediately."""
-        while not self._outbound_queue.empty():
-            try:
-                self._outbound_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        """Barge-in: interrupt current TTS playback."""
         self._session.is_speaking = False
+        # Ask py-tgcalls to pause — the next play() will replace cleanly.
+        try:
+            tgcalls = self._manager._tgcalls
+            if tgcalls is not None:
+                asyncio.create_task(tgcalls.pause(self._session.chat_id))
+        except Exception as e:
+            logger.debug("pause() during barge-in failed: %s", e)
 
 
 class VoiceCallManager:
