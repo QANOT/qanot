@@ -367,11 +367,18 @@ class VoiceCallManager:
         logger.info("VoiceCallManager started (py-tgcalls + Pyrogram)")
 
     def _register_handlers(self) -> None:
-        """Register py-tgcalls event handlers."""
-        try:
-            from pytgcalls import filters as tg_filters
-            from pytgcalls.types import ChatUpdate, StreamFrames, Direction, Device
+        """Register py-tgcalls event handlers.
 
+        Each handler is registered in its OWN try/except so a failure on
+        one (e.g. chat_update's flag API changed) doesn't silently drop
+        the other (audio frames) — which is the failure mode that
+        previously left the bot in the call but deaf to anyone speaking.
+        """
+        from pytgcalls import filters as tg_filters
+        from pytgcalls.types import ChatUpdate, Direction, Device, StreamFrames
+
+        # ── Inbound audio frames (CRITICAL: without this, bot can't hear) ──
+        try:
             @self._tgcalls.on_update(
                 tg_filters.stream_frame(Direction.INCOMING, Device.MICROPHONE)
             )
@@ -382,19 +389,38 @@ class VoiceCallManager:
                     for frame in update.frames:
                         pipeline.feed_inbound(frame.frame)
 
-            @self._tgcalls.on_update(tg_filters.chat_update())
-            async def on_chat_update(_: object, update: ChatUpdate) -> None:
-                # Handle call ended by remote side
-                if hasattr(update, "status"):
-                    status = update.status
-                    chat_id = update.chat_id
-                    if hasattr(status, "name") and "LEFT" in str(status.name):
-                        if chat_id in self._active_calls:
-                            logger.info("Call ended remotely in chat %d", chat_id)
-                            await self._cleanup_call(chat_id)
-
+            logger.info("voicecall: stream_frame handler registered")
         except Exception as e:
-            logger.warning("Failed to register py-tgcalls handlers: %s", e)
+            logger.error(
+                "voicecall: FAILED to register stream_frame handler "
+                "(bot won't hear anyone): %s", e,
+            )
+
+        # ── Chat updates (so we clean up when the call ends remotely) ──
+        # py-tgcalls 2.x: chat_update() requires a `flags` argument — an
+        # OR'd ChatUpdate.Status mask. We care about leave/close events.
+        try:
+            leave_flags = (
+                ChatUpdate.Status.LEFT_GROUP
+                | ChatUpdate.Status.CLOSED_VOICE_CHAT
+                | ChatUpdate.Status.KICKED
+                | ChatUpdate.Status.DISCARDED_CALL
+            )
+
+            @self._tgcalls.on_update(tg_filters.chat_update(leave_flags))
+            async def on_chat_update(_: object, update: ChatUpdate) -> None:
+                chat_id = update.chat_id
+                if chat_id in self._active_calls:
+                    logger.info("Call ended remotely in chat %d", chat_id)
+                    await self._cleanup_call(chat_id)
+
+            logger.info("voicecall: chat_update handler registered")
+        except Exception as e:
+            # Non-fatal: cleanup just happens on /leavecall or auto-leave
+            # instead of remote-end detection.
+            logger.warning(
+                "voicecall: chat_update handler registration skipped: %s", e,
+            )
 
     async def stop(self) -> None:
         """Leave all calls and shutdown. Called at bot shutdown."""
