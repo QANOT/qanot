@@ -229,14 +229,17 @@ class AnthropicProvider(LLMProvider):
     def _inject_context_editing(self, kwargs: dict[str, Any]) -> None:
         """Attach the context_management spec + beta header when enabled.
 
-        For OAuth clients the beta header is already baked into default_headers
-        at client construction. For API-key clients we pass it per-request via
-        extra_headers, merging with anything else already there.
+        `context_management` is a beta-only top-level field on the Messages
+        request, so we pass it via `extra_body` (the SDK merges it into the
+        request JSON without validation).
+
+        The beta header itself is already in default_headers for OAuth
+        clients; API-key clients get it per-request via extra_headers.
         """
         if not self._context_editing:
             return
         cfg = self._context_editing_cfg
-        kwargs["context_management"] = {
+        context_mgmt = {
             "edits": [
                 {
                     "type": "clear_tool_uses_20250919",
@@ -249,6 +252,10 @@ class AnthropicProvider(LLMProvider):
                 }
             ]
         }
+        extra_body = dict(kwargs.get("extra_body") or {})
+        extra_body["context_management"] = context_mgmt
+        kwargs["extra_body"] = extra_body
+
         if not self._is_oauth:
             # API-key path needs the beta header per-request.
             extra = dict(kwargs.get("extra_headers") or {})
