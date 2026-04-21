@@ -969,6 +969,17 @@ class Agent:
 
         Returns the final text response.
         """
+        # Shutdown check: if the bot is in the middle of a graceful
+        # restart, don't kick off a new LLM turn that'll just get
+        # aborted mid-flight. Tell the user to wait.
+        from qanot.restart import bump_inflight, drop_inflight, is_shutting_down
+
+        if is_shutting_down():
+            return (
+                "⚙️ Bot sozlama o'zgarishi sababli qayta ishga tushmoqda. "
+                "Iltimos, 10 soniyadan keyin qayta urinib ko'ring."
+            )
+
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
             self._current_message_id = message_id
@@ -982,7 +993,11 @@ class Agent:
                         f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
                         f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
                     )
-            return await self._run_turn_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override)
+            bump_inflight()
+            try:
+                return await self._run_turn_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override)
+            finally:
+                drop_inflight()
 
     async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None) -> str:
         """Internal implementation of run_turn (called under lock)."""
@@ -1011,6 +1026,18 @@ class Agent:
         Tool-use iterations are handled internally; text deltas from each
         iteration are yielded as they arrive.
         """
+        from qanot.restart import bump_inflight, drop_inflight, is_shutting_down
+
+        if is_shutting_down():
+            yield StreamEvent(
+                type="done",
+                response=ProviderResponse(content=(
+                    "⚙️ Bot sozlama o'zgarishi sababli qayta ishga tushmoqda. "
+                    "Iltimos, 10 soniyadan keyin qayta urinib ko'ring."
+                )),
+            )
+            return
+
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
             self._current_message_id = message_id
@@ -1026,8 +1053,12 @@ class Agent:
                     )
                     yield StreamEvent(type="done", response=ProviderResponse(content=msg))
                     return
-            async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):
-                yield event
+            bump_inflight()
+            try:
+                async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):
+                    yield event
+            finally:
+                drop_inflight()
 
     async def _run_turn_stream_impl(
         self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None

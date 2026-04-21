@@ -29,7 +29,16 @@ class LifecycleHandlersMixin:
     # ── Config persistence helper ─────────────────────────
 
     def _save_config_field(self, field: str, value) -> None:
-        """Persist a single config field change to config.json (atomic)."""
+        """Persist a single config field change to config.json (atomic).
+
+        For fields that require a process restart to take effect (model,
+        routing_enabled, rag_enabled, plugins list, etc), schedules a
+        graceful restart after writing — the supervisor (Docker /
+        systemd / launchd) will respawn us with the new config. The
+        user is notified via Telegram right before we exit.
+
+        See ``qanot.restart.should_restart`` for the field classification.
+        """
         try:
             from qanot.config import read_config_json, write_config_json
             raw = read_config_json()
@@ -37,6 +46,44 @@ class LifecycleHandlersMixin:
             write_config_json(raw)
         except Exception as e:
             logger.warning("Failed to save config field %s: %s", field, e)
+            return
+
+        from qanot.restart import schedule_restart, should_restart
+
+        if should_restart(field):
+            self._schedule_restart_for_config(field)
+
+    def _schedule_restart_for_config(self, field: str) -> None:
+        """Schedule graceful restart + craft a user-facing notify callback.
+
+        The Telegram chat that should receive the "bot restarting…"
+        message is read from ``agent._current_chat_id`` — it's set on
+        every incoming Telegram message/callback turn, so it reflects
+        the user who just triggered the config change.
+        """
+        from qanot.restart import schedule_restart
+
+        bot = getattr(self, "bot", None)
+        agent = getattr(self, "agent", None)
+        chat_id = getattr(agent, "_current_chat_id", None) if agent else None
+
+        async def _notify() -> None:
+            if chat_id is None or bot is None:
+                return
+            try:
+                await bot.send_message(
+                    chat_id,
+                    (
+                        f"⚙️ Sozlama saqlandi: <b>{field}</b>\n\n"
+                        "Yangi sozlama kuchga kirishi uchun bot qayta ishga "
+                        "tushmoqda — ~10 soniyadan so'ng urinib ko'ring."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.debug("Pre-restart notification failed: %s", e)
+
+        schedule_restart(reason=f"config:{field}", notify=_notify)
 
     # ── /start ────────────────────────────────────────────
 
