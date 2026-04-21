@@ -382,6 +382,20 @@ class VoiceCallManager:
         await self._tgcalls.start()
         self._started = True
 
+        # Warm up VAD *off* the audio hot path. First-call initialisation
+        # pulls in torch + onnxruntime + the Silero model graph — easily
+        # 1-3s of sync work. Doing it here (in the asyncio loop before
+        # any frames arrive) prevents the first audio frame from blocking
+        # the stream_frame handler long enough for py-tgcalls to stall
+        # subsequent frames (observed symptom: "1 inbound frame received"
+        # then silence). Run in an executor so the event loop still ticks.
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._warm_up_vad,
+            )
+        except Exception as e:
+            logger.warning("voicecall: VAD warm-up failed (non-fatal): %s", e)
+
         # Start auto-leave watchdog
         self._auto_leave_task = asyncio.create_task(
             self._auto_leave_loop(),
@@ -389,6 +403,14 @@ class VoiceCallManager:
         )
 
         logger.info("VoiceCallManager started (py-tgcalls + Pyrogram)")
+
+    def _warm_up_vad(self) -> None:
+        """Load the VAD model and run one inference so subsequent frame
+        processing doesn't pay the init cost inline."""
+        silence = bytes(CHUNK_BYTES)
+        self._vad.process_chunk(silence)
+        self._vad.reset()
+        logger.info("voicecall: VAD warmed up")
 
     def _register_handlers(self) -> None:
         """Register py-tgcalls event handlers.
@@ -513,6 +535,14 @@ class VoiceCallManager:
             )
             self._pipelines[chat_id] = pipeline
             await pipeline.start()
+
+            # Warm up this call's VAD off the audio thread. See start()
+            # for the full rationale — silero+torch first-call init can
+            # block ~1-2s, which stalls py-tgcalls frame delivery.
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: (pipeline._vad.process_chunk(bytes(CHUNK_BYTES)),
+                               pipeline._vad.reset()),
+            )
 
             from pytgcalls.types import RecordStream
 
