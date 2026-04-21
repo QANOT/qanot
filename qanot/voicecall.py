@@ -253,6 +253,9 @@ class AudioPipeline:
 
         Paces at real-time rate (20ms per frame) using asyncio.sleep.
         """
+        from pytgcalls.types import Device
+        from pytgcalls.types.stream.frame import Frame
+
         tgcalls = self._manager._tgcalls
         chat_id = self._session.chat_id
 
@@ -261,9 +264,14 @@ class AudioPipeline:
                 frame = await asyncio.wait_for(
                     self._outbound_queue.get(), timeout=1.0,
                 )
-                # Send frame to voice chat
+                # Send frame to voice chat.
+                # py-tgcalls 2.x: send_frame(chat_id, device, data, frame_info)
+                # — device=MICROPHONE for outbound audio, default Frame.Info
+                # is fine for audio (width/height/rotation matter for video only).
                 try:
-                    await tgcalls.send_frame(chat_id, frame)
+                    await tgcalls.send_frame(
+                        chat_id, Device.MICROPHONE, frame, Frame.Info.default,
+                    )
                 except Exception as e:
                     logger.debug("send_frame failed: %s", e)
 
@@ -424,8 +432,6 @@ class VoiceCallManager:
             return f"Maksimal qo'ng'iroq limiti ({self._config.voicecall_max_calls}) ga yetildi."
 
         try:
-            from pytgcalls.types import AudioQuality, MediaStream, RecordStream
-
             # Create session
             conv_key = f"vc_{chat_id}"
             session = CallSession(chat_id=chat_id, user_id=user_id, conv_key=conv_key)
@@ -446,20 +452,18 @@ class VoiceCallManager:
             self._pipelines[chat_id] = pipeline
             await pipeline.start()
 
-            # Join voice chat with recording enabled
-            await self._tgcalls.play(
-                chat_id,
-                MediaStream(
-                    audio_path="",  # No file — we use send_frame
-                    audio_parameters=AudioQuality.HIGH,
-                ),
-            )
+            # Join voice chat.
+            # py-tgcalls 2.x: play(chat_id, stream=None) joins without any
+            # outbound media — we stream our TTS frames manually via
+            # send_frame(Device.MICROPHONE, ...) from the playback_loop.
+            # This replaces the 1.x MediaStream(audio_path="") pattern,
+            # which 2.x rejects with "missing a required argument".
+            await self._tgcalls.play(chat_id)
 
-            # Start recording (to receive incoming audio frames)
-            await self._tgcalls.record(
-                chat_id,
-                RecordStream(audio=True),
-            )
+            # Start recording to receive incoming audio frames.
+            # py-tgcalls 2.x: record(chat_id) defaults are fine. 1.x's
+            # RecordStream(audio=True) arg was removed.
+            await self._tgcalls.record(chat_id)
 
             logger.info("Joined voice chat in %d (user %d)", chat_id, user_id)
             return "Ovozli suhbatga qo'shildim! Gapiring — men tinglayman."
