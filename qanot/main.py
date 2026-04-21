@@ -50,6 +50,10 @@ def _anthropic_thinking_kwargs(provider_type: str, config) -> dict:
             "thinking_budget": config.thinking_budget,
             "code_execution": config.code_execution,
             "memory_tool": config.memory_tool,
+            "context_editing": config.context_editing_enabled,
+            "context_editing_trigger_tokens": config.context_editing_trigger_tokens,
+            "context_editing_keep_tool_uses": config.context_editing_keep_tool_uses,
+            "context_editing_clear_at_least_tokens": config.context_editing_clear_at_least_tokens,
         }
     return {}
 

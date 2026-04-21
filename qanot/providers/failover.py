@@ -52,6 +52,11 @@ class ProviderProfile:
     code_execution: bool = False
     # Memory tool type hint (Anthropic only)
     memory_tool: bool = False
+    # Context editing beta (Anthropic only)
+    context_editing: bool = False
+    context_editing_trigger_tokens: int = 30000
+    context_editing_keep_tool_uses: int = 3
+    context_editing_clear_at_least_tokens: int = 5000
     # Runtime state
     _cooldown_until: float = field(default=0.0, repr=False)
     _failure_count: int = field(default=0, repr=False)
@@ -141,6 +146,10 @@ def _create_single_provider(profile: ProviderProfile) -> LLMProvider:
             thinking_budget=profile.thinking_budget,
             code_execution=profile.code_execution,
             memory_tool=profile.memory_tool,
+            context_editing=profile.context_editing,
+            context_editing_trigger_tokens=profile.context_editing_trigger_tokens,
+            context_editing_keep_tool_uses=profile.context_editing_keep_tool_uses,
+            context_editing_clear_at_least_tokens=profile.context_editing_clear_at_least_tokens,
         )
     elif profile.provider_type == "openai":
         from qanot.providers.openai import OpenAIProvider

@@ -138,8 +138,22 @@ class AnthropicProvider(LLMProvider):
         thinking_budget: int = 10000,
         code_execution: bool = False,
         memory_tool: bool = False,
+        context_editing: bool = False,
+        context_editing_trigger_tokens: int = 30000,
+        context_editing_keep_tool_uses: int = 3,
+        context_editing_clear_at_least_tokens: int = 5000,
     ):
         self._is_oauth = _is_oauth_token(api_key)
+        # Base beta headers — context editing is opt-in because the beta
+        # header appearing in EVERY request invalidates Anthropic's prefix
+        # cache for pre-existing OAuth users the first time it appears.
+        beta_headers = [
+            "claude-code-20250219",
+            "oauth-2025-04-20",
+            "fine-grained-tool-streaming-2025-05-14",
+        ]
+        if context_editing:
+            beta_headers.append("context-management-2025-06-27")
         client_kwargs: dict[str, Any] = {}
         if self._is_oauth:
             # OAuth tokens: Claude Code identity required for Opus/Sonnet access
@@ -147,7 +161,7 @@ class AnthropicProvider(LLMProvider):
             client_kwargs["auth_token"] = api_key
             client_kwargs["default_headers"] = {
                 "anthropic-dangerous-direct-browser-access": "true",
-                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+                "anthropic-beta": ",".join(beta_headers),
                 "user-agent": "claude-cli/1.0.0",
                 "x-app": "cli",
             }
@@ -160,6 +174,19 @@ class AnthropicProvider(LLMProvider):
         self._thinking_budget = thinking_budget
         self._code_execution = code_execution
         self._memory_tool = memory_tool
+        self._context_editing = context_editing
+        self._context_editing_cfg = {
+            "trigger_tokens": context_editing_trigger_tokens,
+            "keep_tool_uses": context_editing_keep_tool_uses,
+            "clear_at_least_tokens": context_editing_clear_at_least_tokens,
+        }
+        if context_editing:
+            logger.info(
+                "Context editing enabled (trigger=%d, keep=%d, clear_at_least=%d)",
+                context_editing_trigger_tokens,
+                context_editing_keep_tool_uses,
+                context_editing_clear_at_least_tokens,
+            )
         # Container ID for cross-turn state persistence
         self._container_id: str | None = None
 
@@ -198,6 +225,40 @@ class AnthropicProvider(LLMProvider):
         kwargs["temperature"] = 1
         # Increase max_tokens to accommodate thinking budget
         kwargs["max_tokens"] = self._thinking_budget + 8192
+
+    def _inject_context_editing(self, kwargs: dict[str, Any]) -> None:
+        """Attach the context_management spec + beta header when enabled.
+
+        For OAuth clients the beta header is already baked into default_headers
+        at client construction. For API-key clients we pass it per-request via
+        extra_headers, merging with anything else already there.
+        """
+        if not self._context_editing:
+            return
+        cfg = self._context_editing_cfg
+        kwargs["context_management"] = {
+            "edits": [
+                {
+                    "type": "clear_tool_uses_20250919",
+                    "trigger": {"type": "input_tokens", "value": cfg["trigger_tokens"]},
+                    "keep": {"type": "tool_uses", "value": cfg["keep_tool_uses"]},
+                    "clear_at_least": {
+                        "type": "input_tokens",
+                        "value": cfg["clear_at_least_tokens"],
+                    },
+                }
+            ]
+        }
+        if not self._is_oauth:
+            # API-key path needs the beta header per-request.
+            extra = dict(kwargs.get("extra_headers") or {})
+            existing = extra.get("anthropic-beta", "")
+            if "context-management-2025-06-27" not in existing:
+                extra["anthropic-beta"] = (
+                    f"{existing},context-management-2025-06-27"
+                    if existing else "context-management-2025-06-27"
+                )
+            kwargs["extra_headers"] = extra
 
     def _inject_server_tools(self, kwargs: dict[str, Any]) -> None:
         """Inject Anthropic server-side tools (code execution, memory type hint)."""
@@ -331,6 +392,7 @@ class AnthropicProvider(LLMProvider):
 
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
+        self._inject_context_editing(kwargs)
 
         for _overflow_attempt in range(2):
             try:
@@ -401,6 +463,7 @@ class AnthropicProvider(LLMProvider):
 
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
+        self._inject_context_editing(kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

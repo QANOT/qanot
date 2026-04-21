@@ -154,6 +154,20 @@ class Config:
     # once /memories/ has adequate content; the files stay on disk and remain
     # retrievable via rag_search + the memory tool.
     inject_legacy_memory: bool = True
+    # Anthropic context editing (context-management-2025-06-27 beta).
+    # Pairs with the memory tool: auto-clears older tool_result blocks from
+    # the request so `memory view` results don't accumulate across turns.
+    # Without this, flipping `inject_legacy_memory=False` costs more than it
+    # saves at scale (measured: 3x memory calls, +60% latency per turn).
+    # Off by default — opt-in pending a canonical benchmark.
+    context_editing_enabled: bool = False
+    # Threshold (input tokens) at which clearing activates.
+    context_editing_trigger_tokens: int = 30000
+    # Number of most-recent tool_use blocks to preserve when clearing fires.
+    context_editing_keep_tool_uses: int = 3
+    # Minimum tokens cleared per activation — amortises the cache invalidation
+    # cost of clearing (without it, clearing 100 tokens would nuke the cache).
+    context_editing_clear_at_least_tokens: int = 5000
     # Execution security
     exec_security: str = "cautious"  # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)  # strict mode: only these commands allowed
