@@ -82,6 +82,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._pending_mcp_removals: dict[str, dict] = {}
         # Config secret-set proposals awaiting user approval (10-min TTL, in-memory only)
         self._pending_config_proposals: dict[str, dict] = {}
+        # Per-user: "I'm waiting for this provider's API key on your next message".
+        # Populated by /voiceprovider tap on a key-less provider; consumed by
+        # the next incoming text message from that user.
+        self._pending_voice_key: dict[str, str] = {}
         from qanot.ratelimit import RateLimiter
         self._rate_limiter = RateLimiter()
         self.voicecall_manager = None  # Set by main.py if voicecall_enabled
@@ -118,6 +122,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         @self.dp.message(F.text.startswith("/voiceprovider"))
         async def handle_voiceprovider(message: Message) -> None:
             await self._handle_voiceprovider(message)
+
+        @self.dp.message(F.text.startswith("/cancel_voice_key"))
+        async def handle_cancel_voice_key(message: Message) -> None:
+            await self._handle_cancel_voice_key(message)
 
         @self.dp.message(F.text.startswith("/voice"))
         async def handle_voice(message: Message) -> None:
@@ -308,6 +316,20 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
     async def _handle_message(self, message: Message, *, is_voice: bool = False) -> None:
         if not message.from_user:
             return
+
+        # Intercept: if this user is mid-flow entering a voice-provider API
+        # key (tapped 🔒 on /voiceprovider), this message is the key — not
+        # a prompt to the agent. Save it, don't forward to the LLM.
+        if (
+            not is_voice
+            and message.text
+            and str(message.from_user.id) in self._pending_voice_key
+        ):
+            try:
+                if await self._handle_pending_voice_key(message):
+                    return
+            except Exception as e:
+                logger.warning("pending voice-key handler failed: %s", e)
 
         # Group orchestration: route messages in the orchestration group
         if (

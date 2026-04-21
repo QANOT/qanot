@@ -631,16 +631,32 @@ class SettingsHandlersMixin:
     # ── Callback: voice provider ──────────────────────────
 
     async def _cb_voiceprovider(self, callback: "CallbackQuery", prov: str) -> None:
-        if not self.config.get_voice_api_key(prov):
-            await callback.answer(
-                f"\u274c {prov} uchun API kalit sozlanmagan. config.json da voice_api_keys ni tekshiring.",
-                show_alert=True,
-            )
-            return
-        self.config.voice_provider = prov
-        self._save_config_field("voice_provider", prov)
         labels = {"muxlisa": "Muxlisa", "kotib": "Kotib AI", "aisha": "Aisha", "whisper": "Whisper"}
         name = labels.get(prov, prov)
+
+        if not self.config.get_voice_api_key(prov):
+            # No key yet \u2014 enter "waiting for key" state instead of a
+            # dead-end alert. Next text message from this user is treated as
+            # the API key (intercepted in _handle_message).
+            user_id = str(callback.from_user.id) if callback.from_user else ""
+            if user_id:
+                self._pending_voice_key[user_id] = prov
+            await callback.answer()
+            try:
+                await callback.message.edit_text(
+                    f"\U0001f511 <b>{name}</b> uchun API kalit kerak.\n\n"
+                    "Keyingi xabarda kalitni yuboring (faqat kalit, boshqa "
+                    "matn qo'shmang). Kalit saqlanadi va xabaringiz xavfsizlik "
+                    "uchun avtomatik o'chiriladi.\n\n"
+                    "Bekor qilish: /cancel_voice_key",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.debug("Failed to edit voiceprovider prompt: %s", e)
+            return
+
+        self.config.voice_provider = prov
+        self._save_config_field("voice_provider", prov)
         await callback.answer(f"\u2705 Voice provider: {name}")
         try:
             await callback.message.edit_text(
@@ -649,6 +665,75 @@ class SettingsHandlersMixin:
             )
         except Exception as e:
             logger.debug("Failed to update vprov message: %s", e)
+
+    async def _handle_pending_voice_key(self, message: "Message") -> bool:
+        """If the sender has a pending voice-key request, consume this message
+        as their API key, save it, and configure the provider. Returns True if
+        handled (caller stops processing); False otherwise.
+        """
+        if not message.from_user:
+            return False
+        user_id = str(message.from_user.id)
+        prov = self._pending_voice_key.pop(user_id, None)
+        if not prov:
+            return False
+
+        key = (message.text or "").strip()
+        # Remove the user's plaintext-key message immediately.
+        try:
+            await self.bot.delete_message(
+                chat_id=message.chat.id, message_id=message.message_id,
+            )
+        except Exception as e:
+            logger.debug("Couldn't delete key message: %s", e)
+
+        if not key or len(key) < 8:
+            await self.bot.send_message(
+                message.chat.id,
+                "\u274c Kalit juda qisqa yoki bo'sh. Bekor qilindi. "
+                "/voiceprovider orqali qaytadan urining.",
+            )
+            return True
+
+        labels = {
+            "muxlisa": "Muxlisa", "kotib": "Kotib AI",
+            "aisha": "Aisha", "whisper": "Whisper",
+        }
+        name = labels.get(prov, prov)
+
+        # Persist into config.voice_api_keys[provider] and set provider.
+        # voice_api_keys isn't restart-required \u2014 get_voice_api_key reads
+        # it from the in-memory Config on every TTS call.
+        if not isinstance(getattr(self.config, "voice_api_keys", None), dict):
+            self.config.voice_api_keys = {}
+        self.config.voice_api_keys[prov] = key
+        self._save_config_field("voice_api_keys", dict(self.config.voice_api_keys))
+
+        # Flip the active provider to the one the user was setting up.
+        self.config.voice_provider = prov
+        self._save_config_field("voice_provider", prov)
+
+        await self.bot.send_message(
+            message.chat.id,
+            f"\u2705 <b>{name}</b> kaliti saqlandi va faol qilindi.\n"
+            f"Endi /voice bilan ovozli rejimga o'ting yoki bot sizga javobni "
+            f"ovozda yuborsin.",
+            parse_mode="HTML",
+        )
+        return True
+
+    async def _handle_cancel_voice_key(self, message: "Message") -> None:
+        """Cancel a pending voice-key prompt."""
+        if not message.from_user:
+            return
+        user_id = str(message.from_user.id)
+        cleared = self._pending_voice_key.pop(user_id, None)
+        if cleared:
+            await message.reply(
+                f"\u2705 Bekor qilindi ({cleared} kaliti yuborilmadi).",
+            )
+        else:
+            await message.reply("Kutilayotgan kalit so'rovi yo'q.")
 
     # ── Callback: language ────────────────────────────────
 
