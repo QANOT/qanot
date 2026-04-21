@@ -117,6 +117,22 @@ class AudioPipeline:
         # Accumulate into VAD buffer
         self._vad_buffer.extend(pcm_16k)
 
+        # Diagnostic: log the audio amplitude every ~1s so we can see
+        # whether the PCM reaching VAD is actually speech (non-zero)
+        # vs silence/noise (~zero). Compute abs-max of int16 samples.
+        self._feed_calls = getattr(self, "_feed_calls", 0) + 1
+        if self._feed_calls % 50 == 0:
+            try:
+                import numpy as _np
+                samples = _np.frombuffer(pcm_16k, dtype=_np.int16)
+                amp = int(_np.abs(samples).max()) if samples.size else 0
+                logger.info(
+                    "voicecall: feed_inbound %d | input=%dB 16k=%dB amp=%d (int16 max 32767)",
+                    self._feed_calls, len(pcm_48k_stereo), len(pcm_16k), amp,
+                )
+            except Exception:
+                pass
+
         # Process complete VAD chunks (512 samples = 1024 bytes each)
         while len(self._vad_buffer) >= CHUNK_BYTES:
             chunk = bytes(self._vad_buffer[:CHUNK_BYTES])
