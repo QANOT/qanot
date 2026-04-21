@@ -59,8 +59,11 @@ WAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Preferences (EN + UZ)
     (re.compile(r"(?:i\s+(?:like|prefer|want|don'?t\s+like|hate|love))", re.IGNORECASE), "preference"),
     (re.compile(r"(?:men\s+(?:yoqtiraman|xohlayman|istardim|yomon\s+ko'raman))", re.IGNORECASE), "preference"),
-    # Decisions (EN + UZ)
-    (re.compile(r"(?:let'?s\s+(?:do|go|use|try)|go\s+with|use\s+)", re.IGNORECASE), "decision"),
+    # Decisions (EN + UZ) — require an intent form ("let's ...", "go with ...", "we'll use ...").
+    # A bare "use " alternative was removed: it fired on any sentence containing "Use X"
+    # (e.g. "Use bullet points." inside the briefing cron prompt), producing daily junk
+    # entries in SESSION-STATE.md.
+    (re.compile(r"(?:let'?s\s+(?:do|go|use|try)|go\s+with|(?:we|i)'?ll\s+use)", re.IGNORECASE), "decision"),
     (re.compile(r"(?:qani|keling|ishlataylik|sinab\s+ko'raylik)", re.IGNORECASE), "decision"),
     # Specific values
     (re.compile(r"(?:\d{4}[-/]\d{2}[-/]\d{2}|https?://\S+|\b\d{5,}\b)", re.IGNORECASE), "specific_value"),

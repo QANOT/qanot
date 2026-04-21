@@ -229,11 +229,15 @@ class Agent:
         from qanot.utils import sanitize_unicode
         user_message = sanitize_unicode(user_message)
 
-        # WAL Protocol: scan user message BEFORE generating response
-        wal_entries = wal_scan(user_message)
-        if wal_entries:
-            wal_write(wal_entries, self.config.workspace_dir, user_id=str(self._current_user_id))
-            logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
+        # WAL Protocol: scan user message BEFORE generating response.
+        # Skip for isolated/cron agents (no user_id) — their prompts are internal
+        # instructions, not user utterances, and would produce junk SESSION-STATE.md
+        # entries (e.g. the daily briefing prompt matching "decision" patterns).
+        if self._current_user_id:
+            wal_entries = wal_scan(user_message)
+            if wal_entries:
+                wal_write(wal_entries, self.config.workspace_dir, user_id=str(self._current_user_id))
+                logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
 
         # RAG context injection: auto-inject relevant memory for dumb models
         # "auto"/"always" = inject, "agentic" = skip (model uses rag_search tool)
