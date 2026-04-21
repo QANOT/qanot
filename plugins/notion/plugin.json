@@ -1,10 +1,17 @@
 {
   "name": "notion",
   "version": "0.1.0",
-  "description": "Notion workspace integration — search, read, create, append, query databases",
+  "description": "Notion workspace integration — search, read, create pages, manage databases, query rows",
   "author": "Sirli AI",
   "dependencies": ["notion-client>=2.2.1"],
   "plugin_deps": [],
   "required_config": ["api_key"],
-  "min_qanot_version": "2.0.0"
+  "min_qanot_version": "2.0.0",
+  "cloud": {
+    "display_name": "Notion",
+    "icon": "📝",
+    "category": "content",
+    "connect_type": "miniapp",
+    "visible": true
+  }
 }

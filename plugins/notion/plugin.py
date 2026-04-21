@@ -796,3 +796,386 @@ class NotionPlugin(Plugin):
         except Exception as e:
             logger.exception("notion_get_database_schema failed")
             return json.dumps({"status": "error", **map_exception(e)}, ensure_ascii=False)
+
+    # ── Create database ──────────────────────────────────────────
+
+    @tool(
+        name="notion_create_database",
+        description=(
+            "Create a new Notion database (table) as a subpage of a parent page. "
+            "The integration must be shared to the parent page first (via Notion "
+            "UI: Add connections → pick Qanot).\n\n"
+            "The `properties` argument defines columns. Accepts AGENT-FRIENDLY "
+            "shortcuts — you don't need to know Notion's nested JSON:\n"
+            "  - \"title\" → title column (every DB needs exactly one)\n"
+            "  - \"text\" or \"rich_text\" → multi-line text\n"
+            "  - \"number\" or {\"type\":\"number\",\"format\":\"dollar\"} → number with optional format\n"
+            "    (formats: number, number_with_commas, percent, dollar, euro, …)\n"
+            "  - {\"type\":\"select\",\"options\":[\"A\",\"B\"]} → single-select\n"
+            "  - {\"type\":\"multi_select\",\"options\":[...]} → multi-select\n"
+            "  - {\"type\":\"status\",\"options\":[...]} → status column\n"
+            "  - \"date\", \"checkbox\", \"url\", \"email\", \"phone_number\", \"people\", \"files\"\n"
+            "\nReturns database_id + data_source_id + URL."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["parent_page_id", "title", "properties"],
+            "properties": {
+                "parent_page_id": {
+                    "type": "string",
+                    "description": "Page UUID that will own the new database (must be shared with the integration).",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Database title (e.g. 'Mijozlar 2026').",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional short description shown under the title.",
+                },
+                "properties": {
+                    "type": "object",
+                    "description": (
+                        "Column definitions as {column_name: type_or_spec}. "
+                        "EXACTLY ONE column must be type 'title'. See tool "
+                        "description for shortcut formats."
+                    ),
+                },
+                "is_inline": {
+                    "type": "boolean",
+                    "description": "Render inline inside the parent page (default true).",
+                },
+            },
+        },
+    )
+    async def notion_create_database(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        parent_page_id = (params.get("parent_page_id") or "").strip()
+        title = (params.get("title") or "").strip()
+        props_in = params.get("properties") or {}
+
+        if not parent_page_id or not title:
+            return json.dumps(
+                {"error": "parent_page_id and title are required"},
+                ensure_ascii=False,
+            )
+        if not isinstance(props_in, dict) or not props_in:
+            return json.dumps(
+                {"error": "properties must be a non-empty object"},
+                ensure_ascii=False,
+            )
+
+        normalized = _normalise_db_properties(props_in)
+        if isinstance(normalized, str):
+            return json.dumps({"error": normalized}, ensure_ascii=False)
+
+        # Validate exactly one title column
+        title_cols = [
+            k for k, v in normalized.items()
+            if isinstance(v, dict) and v.get("type") == "title"
+        ]
+        if len(title_cols) != 1:
+            return json.dumps(
+                {
+                    "error": (
+                        f"Exactly one column must be type 'title', found {len(title_cols)}: "
+                        f"{title_cols}. Add a single 'title' column or remove duplicates."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        from nt_engine.errors import map_exception
+
+        payload: dict[str, Any] = {
+            "parent": {"type": "page_id", "page_id": parent_page_id},
+            "title": [{"type": "text", "text": {"content": title}}],
+            "initial_data_source": {"properties": normalized},
+            "is_inline": bool(params.get("is_inline", True)),
+        }
+        if params.get("description"):
+            payload["description"] = [
+                {"type": "text", "text": {"content": str(params["description"])}},
+            ]
+
+        try:
+            created = await self._client.databases.create(**payload)
+            data_source_id = (
+                (created.get("data_sources") or [{}])[0].get("id")
+            )
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "id": created.get("id"),
+                    "data_source_id": data_source_id,
+                    "title": title,
+                    "url": created.get("url"),
+                    "property_count": len(normalized),
+                    "title_column": title_cols[0],
+                },
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            logger.exception("notion_create_database failed")
+            return json.dumps(
+                {"status": "error", **map_exception(e)}, ensure_ascii=False,
+            )
+
+    # ── Update database schema ───────────────────────────────────
+
+    @tool(
+        name="notion_update_database",
+        description=(
+            "Modify a Notion database: change title/description, add new columns, "
+            "remove columns (set to null), or add options to existing select/"
+            "multi_select/status columns.\n\n"
+            "`add_properties`: columns to add/modify — same shortcut format as "
+            "notion_create_database.\n"
+            "`remove_properties`: array of column names to delete (data in those "
+            "cells is LOST — Notion has no undo).\n\n"
+            "Note: renaming a column in place isn't supported via this tool — "
+            "remove the old column then add a new one (you'll lose the data), or "
+            "rename it in Notion's UI."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["database_id"],
+            "properties": {
+                "database_id": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "add_properties": {
+                    "type": "object",
+                    "description": "Columns to add or modify (same shortcut format as create).",
+                },
+                "remove_properties": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Column names to remove. Irreversible.",
+                },
+            },
+        },
+    )
+    async def notion_update_database(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        db_id = (params.get("database_id") or "").strip()
+        if not db_id:
+            return json.dumps({"error": "database_id is required"}, ensure_ascii=False)
+
+        from nt_engine.errors import map_exception
+
+        # Parts 1 & 2: title/description go on the DATABASE
+        db_updates: dict[str, Any] = {}
+        if params.get("title"):
+            db_updates["title"] = [
+                {"type": "text", "text": {"content": str(params["title"])}},
+            ]
+        if params.get("description"):
+            db_updates["description"] = [
+                {"type": "text", "text": {"content": str(params["description"])}},
+            ]
+
+        # Parts 3 & 4: property changes go on the DATA SOURCE (2025-09-03 API).
+        # Add/modify passes a dict; remove passes null for each key.
+        property_patch: dict[str, Any] = {}
+        add_props = params.get("add_properties") or {}
+        if isinstance(add_props, dict) and add_props:
+            normalised = _normalise_db_properties(add_props)
+            if isinstance(normalised, str):
+                return json.dumps({"error": normalised}, ensure_ascii=False)
+            property_patch.update(normalised)
+
+        remove_props = params.get("remove_properties") or []
+        if isinstance(remove_props, list):
+            for name in remove_props:
+                if isinstance(name, str) and name:
+                    property_patch[name] = None
+
+        if not db_updates and not property_patch:
+            return json.dumps(
+                {"error": "nothing to update: provide title, description, add_properties, or remove_properties"},
+                ensure_ascii=False,
+            )
+
+        try:
+            result: dict[str, Any] = {"status": "ok", "database_id": db_id}
+
+            if db_updates:
+                updated_db = await self._client.databases.update(
+                    database_id=db_id, **db_updates,
+                )
+                result["updated_db_fields"] = list(db_updates.keys())
+                result["title"] = self._extract_title(updated_db) or None
+
+            if property_patch:
+                ds_id = await self._resolve_data_source_id(db_id)
+                await self._client.data_sources.update(
+                    data_source_id=ds_id,
+                    properties=property_patch,
+                )
+                added = [k for k, v in property_patch.items() if v is not None]
+                removed = [k for k, v in property_patch.items() if v is None]
+                result["data_source_id"] = ds_id
+                result["added_or_modified"] = added
+                result["removed"] = removed
+
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("notion_update_database failed")
+            return json.dumps(
+                {"status": "error", **map_exception(e)}, ensure_ascii=False,
+            )
+
+    # ── Archive page (soft-delete) ───────────────────────────────
+
+    @tool(
+        name="notion_archive_page",
+        description=(
+            "Soft-delete a page. Works for any page type: a subpage, a database, "
+            "or a row within a database. Notion has no hard delete via API — the "
+            "page moves to the workspace's Trash and can be restored for 30 days "
+            "from the Notion UI.\n\n"
+            "Set archived=false to RESTORE a previously archived page (as long as "
+            "it hasn't been purged from Trash)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["page_id"],
+            "properties": {
+                "page_id": {"type": "string"},
+                "archived": {
+                    "type": "boolean",
+                    "description": "true = archive (default). false = restore.",
+                },
+            },
+        },
+    )
+    async def notion_archive_page(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        page_id = (params.get("page_id") or "").strip()
+        if not page_id:
+            return json.dumps({"error": "page_id is required"}, ensure_ascii=False)
+        archived = bool(params.get("archived", True))
+
+        from nt_engine.errors import map_exception
+
+        try:
+            result = await self._client.pages.update(
+                page_id=page_id, archived=archived,
+            )
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "id": result.get("id"),
+                    "archived": result.get("archived", archived),
+                    "url": result.get("url"),
+                    "hint": (
+                        "Restorable from Notion Trash for 30 days."
+                        if archived
+                        else "Page restored."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            logger.exception("notion_archive_page failed")
+            return json.dumps(
+                {"status": "error", **map_exception(e)}, ensure_ascii=False,
+            )
+
+
+# ── Module helpers ───────────────────────────────────────────────
+
+
+_SIMPLE_TYPES = frozenset({
+    "title", "rich_text", "date", "checkbox", "url", "email",
+    "phone_number", "people", "files", "created_time", "last_edited_time",
+    "created_by", "last_edited_by",
+})
+
+
+def _normalise_db_properties(props_in: dict) -> dict | str:
+    """Translate shortcut property definitions into Notion's nested JSON.
+
+    Accepts any of:
+      - "title"                                  → {type: title, title: {}}
+      - "rich_text" / "text"                     → {type: rich_text, rich_text: {}}
+      - "number"                                 → {type: number, number: {format: number}}
+      - {"type": "number", "format": "dollar"}   → {type: number, number: {format: dollar}}
+      - {"type": "select", "options": ["A","B"]} → expanded to {options: [{name: "A"}, {name: "B"}]}
+      - raw Notion property object (pass-through if "type" key + matching inner)
+
+    Returns a dict of normalised properties, or a str error message.
+    """
+    out: dict[str, dict] = {}
+    for name, spec in props_in.items():
+        if not isinstance(name, str) or not name.strip():
+            return f"property name must be a non-empty string, got {name!r}"
+
+        # "text" is a common agent alias for "rich_text"
+        if spec == "text":
+            spec = "rich_text"
+
+        # String shortcut: "title", "rich_text", "number", "date", ...
+        if isinstance(spec, str):
+            t = spec.strip()
+            if t == "number":
+                out[name] = {"type": "number", "number": {"format": "number"}}
+                continue
+            if t in _SIMPLE_TYPES:
+                out[name] = {"type": t, t: {}}
+                continue
+            return f"unknown property type {t!r} for column {name!r}"
+
+        if not isinstance(spec, dict):
+            return f"property {name!r} must be a string or object, got {type(spec).__name__}"
+
+        # If spec already looks like a raw Notion schema (has both 'type' and
+        # matching inner key), pass it through unchanged.
+        t = spec.get("type")
+        if t and t in spec and isinstance(spec.get(t), dict):
+            out[name] = spec
+            continue
+
+        if not t:
+            return f"property {name!r} missing 'type' field"
+
+        # Shortcut dict: {"type": "number", "format": "dollar"}
+        if t == "number":
+            fmt = spec.get("format") or "number"
+            out[name] = {"type": "number", "number": {"format": fmt}}
+            continue
+
+        # {"type": "select"|"multi_select"|"status", "options": [...]}
+        if t in ("select", "multi_select", "status"):
+            raw_opts = spec.get("options") or []
+            if not isinstance(raw_opts, list):
+                return f"{name!r}.options must be an array"
+            expanded: list[dict] = []
+            for opt in raw_opts:
+                if isinstance(opt, str):
+                    expanded.append({"name": opt})
+                elif isinstance(opt, dict) and opt.get("name"):
+                    # Accept {name, color?} pass-through
+                    expanded.append({
+                        "name": opt["name"],
+                        **({"color": opt["color"]} if opt.get("color") else {}),
+                    })
+                else:
+                    return f"{name!r}.options[] entries must be string or {{name, color?}}"
+            out[name] = {"type": t, t: {"options": expanded}}
+            continue
+
+        # Simple types passed via dict (e.g. {"type": "date"})
+        if t in _SIMPLE_TYPES:
+            out[name] = {"type": t, t: {}}
+            continue
+
+        return (
+            f"property type {t!r} for {name!r} not supported by the shortcut "
+            "normaliser. Pass a raw Notion property object instead."
+        )
+    return out
