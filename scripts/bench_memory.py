@@ -48,30 +48,78 @@ log.setLevel(logging.INFO)
 
 # ── Canonical turn set ─────────────────────────────────────────────
 
-CANONICAL_TURNS = [
-    # Memory recall (5) — exercises MEMORY.md injection vs memory tool path
+_RAW_TURNS = [
+    # ── Memory recall (15) ─────────────────────────────────────────
     ("recall",    "men nimani yoqtiraman?"),
     ("recall",    "qaysi hujjat formatini afzal ko'raman?"),
     ("recall",    "video uchun qaysi aspect ratio ishlataman?"),
     ("recall",    "what's my name in this bot?"),
     ("recall",    "sevimli rangim nima edi?"),
+    ("recall",    "what do you know about my work preferences?"),
+    ("recall",    "qisqa videolar uchun odatda qancha klip so'rayman?"),
+    ("recall",    "what language do I usually speak in?"),
+    ("recall",    "bozor savollarida qanday ma'lumot kutaman?"),
+    ("recall",    "am I a morning or evening person?"),
+    ("recall",    "qaysi narxlarni doim kuzataman?"),
+    ("recall",    "how do I prefer you to communicate?"),
+    ("recall",    "qaysi formatni afzal ko'rardim hujjat uchun?"),
+    ("recall",    "remember what I told you about python vs javascript?"),
+    ("recall",    "nima ish qilaman odatda?"),
 
-    # Memory write (3) — durable fact capture
+    # ── Memory write (10) ──────────────────────────────────────────
     ("write",     "eslab qol: mening sevimli raqamim 42"),
     ("write",     "remember: i like python more than javascript"),
     ("write",     "eslab qol: har dushanba kuni soat 10 da meeting bor"),
+    ("write",     "to'g'irlash: men keksa emas, 28 yoshdaman"),
+    ("write",     "save this: my office is on the 5th floor"),
+    ("write",     "eslab qol: men dokumentlarni doim WhatsApp emas Telegram orqali olaman"),
+    ("write",     "remember i hate spicy food"),
+    ("write",     "eslab qol: asosiy mijozim AKFA kompaniyasi"),
+    ("write",     "remember: prefer bullet points over paragraphs"),
+    ("write",     "eslab qol: hafta oxirida ish qilmayman"),
 
-    # Tool/task use (4) — light real work
+    # ── Tool/task use (15) ─────────────────────────────────────────
     ("task",      "salom"),
     ("task",      "soat nima?"),
     ("task",      "17 + 23 qancha bo'ladi?"),
     ("task",      "3 ta qisqa gap yoz Uzbekistan haqida"),
+    ("task",      "rahmat"),
+    ("task",      "hozir ob-havo qanday Toshkentda?"),
+    ("task",      "100 ga 7 foiz qo'sh"),
+    ("task",      "list 5 common uzbek names"),
+    ("task",      "ertaga nima qilishim kerak?"),
+    ("task",      "how many days until new year?"),
+    ("task",      "bugun qaysi kun?"),
+    ("task",      "tell me a very short joke in uzbek"),
+    ("task",      "what's 250 * 4?"),
+    ("task",      "hayot mazmuni haqida bir jumla"),
+    ("task",      "give me a random motivational quote"),
 
-    # Follow-ups (3) — exercises conversation cache
+    # ── Follow-ups (10) — references + clarifications ─────────────
     ("followup",  "birinchisini qayta ko'rsatgin"),
     ("followup",  "rahmat"),
     ("followup",  "va yana bitta"),
+    ("followup",  "oldingisiga o'xshash"),
+    ("followup",  "ok tushundim"),
+    ("followup",  "that's correct"),
+    ("followup",  "keyingi"),
+    ("followup",  "yaxshi, davom et"),
+    ("followup",  "qaytarib ber"),
+    ("followup",  "noto'g'ri, qaytadan"),
 ]
+
+
+def _canonical_turns(seed: int = 42) -> list[tuple[str, str]]:
+    """Shuffle turns with a fixed seed so the order is realistic-interleaved
+    (recall / write / task / followup mixed) but reproducible across runs."""
+    import random
+    rng = random.Random(seed)
+    shuffled = list(_RAW_TURNS)
+    rng.shuffle(shuffled)
+    return shuffled
+
+
+CANONICAL_TURNS = _canonical_turns()
 
 
 # ── Configs under test ─────────────────────────────────────────────
