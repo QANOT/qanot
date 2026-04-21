@@ -232,6 +232,7 @@ class AudioPipeline:
 
             # 4. TTS: convert response to audio
             from qanot.voice import text_to_speech
+            logger.info("VC TTS request [%d]: provider=%s len=%d", self._session.chat_id, provider, len(response))
             tts_result = await text_to_speech(
                 response[:2000],  # Cap TTS input length
                 api_key,
@@ -239,12 +240,19 @@ class AudioPipeline:
                 language=self._config.voice_language or "uz",
                 voice=self._config.voice_name or None,
             )
+            logger.info(
+                "VC TTS response [%d]: audio_data=%s audio_url=%s",
+                self._session.chat_id,
+                (len(tts_result.audio_data) if tts_result and tts_result.audio_data else 0),
+                (tts_result.audio_url if tts_result else None),
+            )
 
             if self._session._tts_cancel.is_set():
                 return
 
             # 5. Convert TTS output to 48kHz stereo PCM
             vc_pcm = await tts_result_to_vc_pcm(tts_result, self._config)
+            logger.info("VC TTS decoded [%d]: pcm_bytes=%d", self._session.chat_id, len(vc_pcm) if vc_pcm else 0)
             if not vc_pcm:
                 logger.warning("VC TTS conversion failed, sending text fallback")
                 return
