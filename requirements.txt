@@ -22,3 +22,6 @@ pydantic>=2.0.0
 # Production YouTube bypass — PO (Proof-of-Origin) token provider plugin.
 # Talks to the bgutil-pot sidecar on http://127.0.0.1:4416.
 bgutil-ytdlp-pot-provider>=0.8.0
+
+# Notion plugin — official Notion Python SDK (async, with built-in 429 backoff).
+notion-client>=2.2.1
