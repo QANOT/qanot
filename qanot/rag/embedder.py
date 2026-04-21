@@ -209,22 +209,28 @@ def create_embedder(config) -> Embedder | None:
     providers = _collect_provider_keys(config)
     errors: list[str] = []
 
-    # Priority 0: FastEmbed (CPU) — best for Ollama/local setups (no VRAM conflict)
-    is_ollama = any(
-        "ollama" in info.get("api_key", "").lower() or "11434" in info.get("base_url", "")
-        for info in providers.values()
-    )
-    if is_ollama:
-        try:
-            embedder = FastEmbedEmbedder()
-            logger.info("RAG embedder: using FastEmbed CPU (no VRAM conflict with Ollama)")
-            return embedder
-        except ImportError:
-            errors.append("fastembed: not installed (pip install fastembed)")
-            logger.info("FastEmbed not installed — falling back to Ollama embedding")
-        except Exception as e:
-            errors.append(f"fastembed: {e}")
-            logger.warning("FastEmbed init failed: %s — trying next", e)
+    # Priority 0: FastEmbed (CPU) — default for all setups.
+    # Anthropic/Groq/(etc.) don't ship embedding APIs, so the most common
+    # qanot deployment (Anthropic-only) has no remote embedder to borrow.
+    # FastEmbed is pure-CPU, pre-installed in requirements.txt, free, and
+    # keeps all vector search local — matches qanot's self-hosted philosophy.
+    # If a user has Gemini/OpenAI configured they'll still fall through to
+    # those paths only if FastEmbed isn't installed or fails to init.
+    try:
+        embedder = FastEmbedEmbedder()
+        is_ollama = any(
+            "ollama" in info.get("api_key", "").lower() or "11434" in info.get("base_url", "")
+            for info in providers.values()
+        )
+        note = " (no VRAM conflict with Ollama)" if is_ollama else " (local, no external API)"
+        logger.info("RAG embedder: using FastEmbed CPU%s", note)
+        return embedder
+    except ImportError:
+        errors.append("fastembed: not installed (pip install fastembed)")
+        logger.info("FastEmbed not installed — falling back to remote embedders")
+    except Exception as e:
+        errors.append(f"fastembed: {e}")
+        logger.warning("FastEmbed init failed: %s — trying next", e)
 
     # Priority 1: Gemini (free embedding tier)
     if info := providers.get("gemini"):

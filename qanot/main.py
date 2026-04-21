@@ -170,6 +170,26 @@ async def main() -> None:
         # Index existing memory files
         await rag_indexer.index_workspace()
 
+        # Wire real-time indexing: every WAL / daily-note / SESSION-STATE write
+        # fires memory._notify_hooks(content, source). We re-ingest on each
+        # write so rag_search returns fresh data without waiting for restart.
+        # NOTE: the Anthropic memory_20250818 tool has its own hook (below);
+        # this one covers qanot's built-in memory.py writes.
+        from qanot.memory import add_write_hook
+
+        def _rag_index_on_memory_write(content: str, source: str) -> None:
+            if not rag_indexer:
+                return
+            task = asyncio.create_task(
+                rag_indexer.index_text(content, source=source)
+            )
+            task.add_done_callback(
+                lambda t: logger.warning("RAG index on memory write failed: %s", t.exception())
+                if not t.cancelled() and t.exception() else None
+            )
+
+        add_write_hook(_rag_index_on_memory_write)
+
         if embedder:
             logger.info("RAG engine initialized with %s (hybrid: vector + %s)", type(embedder).__name__, rag_engine.fts_mode)
         else:
