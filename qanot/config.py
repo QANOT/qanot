@@ -134,6 +134,9 @@ class Config:
     # Daily briefing
     briefing_enabled: bool = True  # Enable/disable daily morning briefing
     briefing_schedule: str = "0 8 * * *"  # Default: 8:00 AM daily
+    # Memory consolidation (Auto Dream-style weekly pass)
+    consolidation_enabled: bool = True
+    consolidation_schedule: str = "0 4 * * 0"  # Default: Sunday 04:00 local
     # Memory injection budget
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
     # Session history replay
@@ -145,6 +148,12 @@ class Config:
     code_execution: bool = False  # Enable Claude's sandboxed code execution
     # Anthropic memory tool (persistent /memories directory)
     memory_tool: bool = True  # Enable memory tool for all providers (Anthropic gets trained behavior)
+    # Legacy MEMORY.md / SESSION-STATE.md passive injection into system prompt.
+    # When `memory_tool` is on, Claude can `view` /memories/ on demand — the
+    # injection becomes redundant and wastes ~1400 tokens/turn. Flip to False
+    # once /memories/ has adequate content; the files stay on disk and remain
+    # retrievable via rag_search + the memory tool.
+    inject_legacy_memory: bool = True
     # Execution security
     exec_security: str = "cautious"  # "open" | "cautious" | "strict"
     exec_allowlist: list[str] = field(default_factory=list)  # strict mode: only these commands allowed

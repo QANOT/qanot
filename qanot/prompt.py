@@ -72,6 +72,7 @@ def build_system_prompt(
     user_id: str = "",
     skill_index: str = "",
     active_skills_content: str = "",
+    inject_legacy_memory: bool = True,
 ) -> str:
     """Build the full system prompt from workspace files.
 
@@ -171,13 +172,18 @@ def build_system_prompt(
     parts.append(_CACHE_BOUNDARY)
 
     if mode == "full":
-        # SESSION-STATE.md — changes on every WAL write (DYNAMIC)
-        if state := _read_file(ws / "SESSION-STATE.md"):
-            _add(f"# Current Session State\n\n{state}")
+        # Legacy memory injection: SESSION-STATE.md + MEMORY.md in the prompt.
+        # When disabled (the production setting once the memory tool is
+        # adopted), the agent must `memory view /memories/` or `rag_search`
+        # to retrieve facts. Saves ~1400 tokens/turn.
+        if inject_legacy_memory:
+            # SESSION-STATE.md — changes on every WAL write (DYNAMIC)
+            if state := _read_file(ws / "SESSION-STATE.md"):
+                _add(f"# Current Session State\n\n{state}")
 
-        # MEMORY.md — changes when durable facts saved (DYNAMIC)
-        if memory := _read_file(ws / "MEMORY.md"):
-            _add(f"# Your Long-Term Memory\n\n{memory}")
+            # MEMORY.md — changes when durable facts saved (DYNAMIC)
+            if memory := _read_file(ws / "MEMORY.md"):
+                _add(f"# Your Long-Term Memory\n\n{memory}")
 
         # Skill index — may change per turn
         if skill_index:

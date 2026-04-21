@@ -218,6 +218,7 @@ class Agent:
             user_id=str(self._current_user_id) if self._current_user_id else "",
             skill_index=skill_index,
             active_skills_content=active_skills_content,
+            inject_legacy_memory=self.config.inject_legacy_memory,
         )
 
     async def _prepare_turn(self, user_message: str, messages: list[dict], *, images: list[dict] | None = None) -> str:

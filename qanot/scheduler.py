@@ -117,6 +117,19 @@ class CronScheduler:
             })
             changed = True
 
+        if "memory-consolidation" not in existing_names:
+            # Auto Dream-style: weekly pass to extract durable facts from
+            # daily notes into /memories/ topic files and archive old notes.
+            from qanot.tools.memory_consolidate import CONSOLIDATION_PROMPT
+            jobs.append({
+                "name": "memory-consolidation",
+                "schedule": self.config.consolidation_schedule,
+                "mode": "isolated",
+                "prompt": CONSOLIDATION_PROMPT,
+                "enabled": self.config.consolidation_enabled,
+            })
+            changed = True
+
         if changed:
             save_jobs(self._jobs_path, jobs)
         return jobs
