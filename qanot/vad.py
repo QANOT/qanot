@@ -1,9 +1,10 @@
 """Voice Activity Detection (VAD) wrapper for real-time speech boundary detection.
 
-Uses Silero VAD via the official ``silero-vad`` pip package, which bundles
-the ONNX model and runs on ``onnxruntime`` — no torch dependency. This is
-the production pattern used by Pipecat, LiveKit, and Modal voice pipelines
-(torch.hub's silero flavour needs a 600MB+ install and is ~2x slower).
+Uses Silero VAD via the official ``silero-vad`` pip package. Inference runs
+on ``onnxruntime`` (not torch), but the ``OnnxWrapper.__call__`` shim still
+uses torch for input validation and state concatenation, so torch is a
+transitive runtime dependency of this module. Production pattern used by
+Pipecat, LiveKit, and Modal voice pipelines.
 
 Processes 16kHz mono PCM in 512-sample (32ms) chunks.
 Returns SPEECH_START/SPEECH_END events for turn boundary detection.
@@ -96,28 +97,27 @@ class SileroVAD:
         """
         self._ensure_model()
 
-        # Convert PCM bytes to float32 array [-1, 1]. silero-vad's ONNX
-        # model accepts either a torch tensor OR a numpy float32 array;
-        # we use numpy to avoid pulling torch in.
+        # Convert PCM bytes to a 1-D torch float32 tensor in [-1, 1].
+        # silero-vad's OnnxWrapper.__call__ routes through torch ops
+        # (_validate_input uses .dim()/.unsqueeze, then torch.cat with
+        # internal state). Numpy inputs raise "no attribute 'dim'".
+        # Torch is pulled in transitively by the silero-vad package, so
+        # we use it directly here.
+        import torch  # local import — keeps vad.py importable even if
+                     # silero-vad/torch are missing at collection time.
+
         samples = np.frombuffer(pcm_16k_mono[:CHUNK_BYTES], dtype=np.int16)
         if len(samples) < CHUNK_SAMPLES:
             samples = np.pad(samples, (0, CHUNK_SAMPLES - len(samples)))
-        audio = samples.astype(np.float32) / 32768.0
+        audio = torch.from_numpy(samples.astype(np.float32) / 32768.0)
 
-        # Run inference. The package internally wraps onnxruntime and
-        # returns either a torch tensor (if available) or a numpy array
-        # with .item() / float-coercible shape.
         try:
             result = self._model(audio, SAMPLE_RATE)
         except Exception as e:
             logger.error("VAD model inference failed: %s", e)
             return None
-        # Normalise to a float. silero returns torch.Tensor when torch is
-        # installed, else a numpy array — both expose .item().
-        if hasattr(result, "item"):
-            confidence = float(result.item())
-        else:
-            confidence = float(result)
+        # Result is a torch tensor of shape [1, 1]; .item() unwraps to float.
+        confidence = float(result.item()) if hasattr(result, "item") else float(result)
         is_speech = confidence >= self._threshold
 
         # Diagnostic: log every 30th chunk (~1s) with confidence so we
