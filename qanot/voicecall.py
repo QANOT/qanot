@@ -147,7 +147,6 @@ class CallSession:
     last_speech_at: float = field(default_factory=time.monotonic)
     is_speaking: bool = False  # True when bot TTS is playing
     _tts_cancel: asyncio.Event = field(default_factory=asyncio.Event)
-    _llm_task: asyncio.Task | None = field(default=None, repr=False)
     _pending_tempfiles: list[str] = field(default_factory=list, repr=False)
 
 
@@ -180,6 +179,12 @@ class AudioPipeline:
         self._last_turn_time: float = 0.0
         self._tempfile_cleanup_task: asyncio.Task | None = None
 
+        # Turn concurrency control. Only one _process_speech runs at a
+        # time per call. A new SPEECH_END cancels the previous turn so
+        # the user isn't heard twice and playback doesn't collide.
+        self._turn_lock: asyncio.Lock = asyncio.Lock()
+        self._current_turn_task: asyncio.Task | None = None
+
     async def start(self) -> None:
         """Start background tasks for this pipeline."""
         self._tempfile_cleanup_task = asyncio.create_task(
@@ -189,6 +194,8 @@ class AudioPipeline:
 
     async def stop(self) -> None:
         """Stop pipeline and cleanup."""
+        if self._current_turn_task and not self._current_turn_task.done():
+            self._current_turn_task.cancel()
         if self._tempfile_cleanup_task and not self._tempfile_cleanup_task.done():
             self._tempfile_cleanup_task.cancel()
         self.cancel_playback()
@@ -243,14 +250,11 @@ class AudioPipeline:
                     "voicecall: SPEECH_START in chat %d", self._session.chat_id,
                 )
                 self._session.last_speech_at = time.monotonic()
-                # Barge-in: if bot is speaking, interrupt it
-                if self._session.is_speaking and self._config.voicecall_barge_in:
-                    logger.info("Barge-in detected in chat %d", self._session.chat_id)
-                    self.cancel_playback()
-                    self._session.is_speaking = False
-                    if self._session._llm_task and not self._session._llm_task.done():
-                        self._session._llm_task.cancel()
-                    self._session._tts_cancel.set()
+                # Barge-in: if bot is speaking OR still processing the
+                # previous turn, cancel everything so we commit to the
+                # new utterance without overlap.
+                if self._config.voicecall_barge_in:
+                    self._barge_in()
                 # Start accumulating speech
                 self._speech_buffer = bytearray()
 
@@ -274,17 +278,55 @@ class AudioPipeline:
                 )
                 if meets_min and meets_rate:
                     self._last_turn_time = now
-                    # Process in background — don't block audio thread
-                    self._session._tts_cancel.clear()
-                    self._session._llm_task = asyncio.create_task(
-                        self._process_speech(speech_data),
-                        name=f"vc_turn_{self._session.chat_id}",
-                    )
+                    self._dispatch_turn(speech_data)
+
+    def _barge_in(self) -> None:
+        """Cancel any in-flight turn and stop current playback.
+
+        Called from the audio thread when new speech is detected while
+        the bot is still speaking or processing. Cooperatively cancels
+        the pending STT/LLM/TTS chain and pauses playback immediately.
+        """
+        self._session._tts_cancel.set()
+        task = self._current_turn_task
+        if task is not None and not task.done():
+            task.cancel()
+        if self._session.is_speaking:
+            logger.info("Barge-in: pausing playback in chat %d",
+                        self._session.chat_id)
+            self.cancel_playback()
+        self._session.is_speaking = False
+
+    def _dispatch_turn(self, speech_data: bytes) -> None:
+        """Schedule a new turn. Replaces any in-flight turn atomically."""
+        prev = self._current_turn_task
+        if prev is not None and not prev.done():
+            prev.cancel()
+        self._current_turn_task = asyncio.create_task(
+            self._run_turn(speech_data),
+            name=f"vc_turn_{self._session.chat_id}",
+        )
+
+    async def _run_turn(self, pcm_16k_mono: bytes) -> None:
+        """Serialise turns through the turn lock. Waits for any prior
+        turn to finish its cancellation teardown before running."""
+        try:
+            async with self._turn_lock:
+                # Clear the cancel flag now that we own the turn — any
+                # prior barge-in set() is stale once we've acquired the
+                # lock (the prior task is done).
+                self._session._tts_cancel.clear()
+                await self._process_speech(pcm_16k_mono)
+        except asyncio.CancelledError:
+            logger.info("Turn cancelled in chat %d (barge-in)",
+                        self._session.chat_id)
+            raise
 
     async def _process_speech(self, pcm_16k_mono: bytes) -> None:
         """Full pipeline: speech PCM → STT → LLM → TTS → outbound.
 
-        Runs as an asyncio task. Cancellable via barge-in.
+        Runs under _turn_lock via _run_turn; guarantees only one turn
+        at a time per call. Cancellable at every await boundary.
         """
         wav_path: str | None = None
         try:
@@ -416,13 +458,19 @@ class AudioPipeline:
     def cancel_playback(self) -> None:
         """Barge-in: interrupt current TTS playback."""
         self._session.is_speaking = False
-        # Ask py-tgcalls to pause — the next play() will replace cleanly.
-        try:
-            tgcalls = self._manager._tgcalls
-            if tgcalls is not None:
-                asyncio.create_task(tgcalls.pause(self._session.chat_id))
-        except Exception as e:
-            logger.debug("pause() during barge-in failed: %s", e)
+        tgcalls = self._manager._tgcalls
+        if tgcalls is None:
+            return
+        chat_id = self._session.chat_id
+
+        async def _pause() -> None:
+            try:
+                await tgcalls.pause(chat_id)
+            except Exception as e:
+                # Common: "userbot is not in a call" if call already ended.
+                logger.debug("pause() during barge-in failed: %r", e)
+
+        asyncio.create_task(_pause(), name=f"vc_barge_pause_{chat_id}")
 
 
 class VoiceCallManager:

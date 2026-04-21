@@ -98,6 +98,32 @@ def _create_provider(config):
     return _create_single_provider(profile)
 
 
+def _get_container_memory_limit_bytes() -> int | None:
+    """Return the container's effective memory limit in bytes, or None.
+
+    Reads cgroup v2 (/sys/fs/cgroup/memory.max) first, then v1
+    (/sys/fs/cgroup/memory/memory.limit_in_bytes). Returns None when
+    we're not containerised or no limit is set ("max").
+    """
+    try:
+        with open("/sys/fs/cgroup/memory.max") as f:
+            raw = f.read().strip()
+        if raw == "max":
+            return None
+        return int(raw)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+            value = int(f.read().strip())
+        # Kernel reports an absurdly large value when no limit is set.
+        if value >= 1 << 62:
+            return None
+        return value
+    except (OSError, ValueError):
+        return None
+
+
 async def main() -> None:
     """Main entry point."""
     # Load config
@@ -543,6 +569,25 @@ async def main() -> None:
 
     # Start voice call manager (Pyrogram + py-tgcalls userbot)
     voicecall_manager = None
+    if config.voicecall_enabled:
+        # Voice call pipeline (torch + silero + faster-whisper + ntgcalls)
+        # routinely peaks above 800MB of RSS. In a container with 256MB
+        # limit (free tier) the Linux OOM killer trips mid-audio-load
+        # and the process restart-loops, leaving the bot in a broken
+        # half-joined state. Gate explicitly so operators see a clear
+        # refusal rather than mysterious crashes.
+        _VOICECALL_MIN_BYTES = 1_000_000_000  # ~1 GB
+        try:
+            limit = _get_container_memory_limit_bytes()
+        except Exception:
+            limit = None
+        if limit is not None and limit < _VOICECALL_MIN_BYTES:
+            logger.warning(
+                "Voice call disabled — container memory limit %.0f MB is "
+                "below the required 1 GB (upgrade plan to enable).",
+                limit / 1_000_000,
+            )
+            config.voicecall_enabled = False
     if config.voicecall_enabled:
         try:
             from qanot.voicecall import VoiceCallManager
