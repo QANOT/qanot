@@ -91,6 +91,16 @@ class Config:
     # primary owner.
     admin_chat_ids: list[int] = field(default_factory=list)
     bot_name: str = ""
+    # Optional tool-category gates. Default True preserves existing behaviour.
+    # Can be flipped per bot to trim the tool manifest (see
+    # docs/tool-count-tradeoffs.md). Disabling skips registration entirely,
+    # but the code under qanot/tools/ stays intact — flip back on when the
+    # tenant's workload needs those tools.
+    document_tools_enabled: bool = True      # docx / xlsx / pdf / pptx (12 tools)
+    skill_tools_enabled: bool = True         # create/list/run/delete/install skill (5)
+    mcp_management_enabled: bool = True      # mcp_list/propose/remove/test (4)
+    config_management_enabled: bool = True   # delete_message / config_set_secret / config_toggle (3)
+    local_business_tools_enabled: bool = True  # currency/ikpu/payment/tax/generate_document/weather (6)
     timezone: str = "Asia/Tashkent"
     max_concurrent: int = 4
     compaction_mode: str = "safeguard"

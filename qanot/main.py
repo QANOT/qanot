@@ -281,15 +281,23 @@ async def main() -> None:
             on_write=_memory_write_hook if rag_indexer else None,
         )
 
-    # Register document generation tools (Word, Excel)
-    register_document_tools(tool_registry, config.workspace_dir)
+    # Register document generation tools (Word, Excel, PDF, PPTX) — 12 tools.
+    # Gated: disable on bots that don't need them to stay under the tool-count
+    # classifier threshold on OAuth paths.
+    if config.document_tools_enabled:
+        register_document_tools(tool_registry, config.workspace_dir)
+    else:
+        logger.info("Document tools disabled via document_tools_enabled=false")
 
     # Register doctor diagnostics tool
     register_doctor_tool(tool_registry, config, context)
 
-    # Register Uzbekistan business tools (currency, IKPU, payments, tax calculator)
-    from qanot.tools.local import register_local_tools
-    register_local_tools(tool_registry)
+    # Register Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
+    if config.local_business_tools_enabled:
+        from qanot.tools.local import register_local_tools
+        register_local_tools(tool_registry)
+    else:
+        logger.info("Local business tools disabled via local_business_tools_enabled=false")
 
     # Connect MCP servers (Model Context Protocol)
     mcp_manager = None
@@ -332,12 +340,15 @@ async def main() -> None:
     # Register cron tools (pass scheduler ref for reload notifications)
     register_cron_tools(tool_registry, config.cron_dir, scheduler_ref=scheduler)
 
-    # Register skill management tools (create, list, run, delete)
-    from qanot.tools.skill_tools import register_skill_tools
-    register_skill_tools(
-        tool_registry, config.workspace_dir,
-        reload_callback=lambda: _agent_ref[0].load_skills(config.workspace_dir) if _agent_ref else None,
-    )
+    # Register skill management tools (create, list, run, delete, install) — 5 tools.
+    if config.skill_tools_enabled:
+        from qanot.tools.skill_tools import register_skill_tools
+        register_skill_tools(
+            tool_registry, config.workspace_dir,
+            reload_callback=lambda: _agent_ref[0].load_skills(config.workspace_dir) if _agent_ref else None,
+        )
+    else:
+        logger.info("Skill tools disabled via skill_tools_enabled=false")
 
     # Load plugins
     await load_plugins(config, tool_registry)
@@ -429,33 +440,34 @@ async def main() -> None:
     if mcp_manager:
         telegram._mcp_manager = mcp_manager
 
-    # Register agent-initiated MCP management tools (mcp_test/propose/list/remove).
-    # Register even when no servers are currently connected — the agent must be
-    # able to propose the very first one. The tools themselves return a helpful
-    # error if the `mcp` package is not installed.
-    from qanot.tools.mcp_manage import register_mcp_tools
-    register_mcp_tools(
-        tool_registry,
-        config,
-        mcp_manager,
-        telegram,
-        get_user_id=lambda: agent.current_user_id or "",
-        get_chat_id=lambda: agent.current_chat_id,
-    )
+    # Register agent-initiated MCP management tools (mcp_test/propose/list/remove) — 4 tools.
+    if config.mcp_management_enabled:
+        from qanot.tools.mcp_manage import register_mcp_tools
+        register_mcp_tools(
+            tool_registry,
+            config,
+            mcp_manager,
+            telegram,
+            get_user_id=lambda: agent.current_user_id or "",
+            get_chat_id=lambda: agent.current_chat_id,
+        )
+    else:
+        logger.info("MCP management tools disabled via mcp_management_enabled=false")
 
-    # Register config-secret management tools (delete_message, config_set_secret).
-    # Agent-initiated: proposes change → user approves via Telegram button →
-    # atomic write to /data/secrets.env + SecretRef in config.json → restart.
-    from qanot.tools.config_manage import register_config_tools
-    register_config_tools(
-        tool_registry,
-        config,
-        telegram,
-        get_user_id=lambda: agent.current_user_id or "",
-        get_chat_id=lambda: agent.current_chat_id,
-        get_message_id=lambda: agent.current_message_id,
-        get_bot=lambda: telegram.bot,
-    )
+    # Register config-secret management tools (delete_message, config_set_secret, config_toggle) — 3 tools.
+    if config.config_management_enabled:
+        from qanot.tools.config_manage import register_config_tools
+        register_config_tools(
+            tool_registry,
+            config,
+            telegram,
+            get_user_id=lambda: agent.current_user_id or "",
+            get_chat_id=lambda: agent.current_chat_id,
+            get_message_id=lambda: agent.current_message_id,
+            get_bot=lambda: telegram.bot,
+        )
+    else:
+        logger.info("Config management tools disabled via config_management_enabled=false")
 
     # Register orchestrator tools (unified delegation + sub-agents)
     # Only when explicitly enabled — prevents model from over-delegating simple tasks
