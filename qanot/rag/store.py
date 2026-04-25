@@ -59,8 +59,14 @@ class VectorStore(ABC):
         ...
 
     @abstractmethod
-    def search_fts(self, query: str, *, top_k: int = 5) -> list[SearchResult]:
-        """Full-text search using FTS5."""
+    def search_fts(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        user_id: str | None = None,
+    ) -> list[SearchResult]:
+        """Full-text search using FTS5. Filters by user_id when provided."""
         ...
 
     @abstractmethod
@@ -461,8 +467,14 @@ class SqliteVecStore(VectorStore):
         query: str,
         *,
         top_k: int = 5,
+        user_id: str | None = None,
     ) -> list[SearchResult]:
-        """Full-text search using FTS5 with BM25 ranking."""
+        """Full-text search using FTS5 with BM25 ranking.
+
+        When ``user_id`` is provided, results are restricted to chunks owned
+        by that user — closing the cross-user keyword search leak that
+        existed when only the vector path enforced isolation.
+        """
         if not self._fts_available:
             return []
 
@@ -473,15 +485,24 @@ class SqliteVecStore(VectorStore):
         if not fts_query:
             return []
 
+        # Switch to INNER JOIN when filtering so chunks with no matching
+        # row in the canonical table cannot leak through. Always parameterize
+        # user_id to guard against SQL injection.
+        sql = (
+            "SELECT f.id, f.text, f.source, bm25(chunks_fts) as rank, c.created_at "
+            "FROM chunks_fts f JOIN chunks c ON f.id = c.id "
+            "WHERE chunks_fts MATCH ?"
+        )
+        params: list[object] = [fts_query]
+        if user_id is not None:
+            sql += " AND c.user_id = ?"
+            params.append(user_id)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(top_k)
+
         try:
             with self._lock:
-                rows = conn.execute(
-                    "SELECT f.id, f.text, f.source, bm25(chunks_fts) as rank, c.created_at "
-                    "FROM chunks_fts f LEFT JOIN chunks c ON f.id = c.id "
-                    "WHERE chunks_fts MATCH ? "
-                    "ORDER BY rank LIMIT ?",
-                    (fts_query, top_k),
-                ).fetchall()
+                rows = conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError as e:
             logger.debug("FTS5 query failed: %s", e)
             return []

@@ -680,8 +680,9 @@ class TestEngineEdgeCases:
         for r in result.results:
             assert r.metadata.get("source") == "alpha.md"
 
-    def test_shared_memory_across_users(self, tmp_path):
-        """OpenClaw-style: all users share the same memory (no isolation)."""
+    def test_user_isolation_blocks_cross_user_query(self, tmp_path):
+        """Per-user isolation: userB MUST NOT see userA's data via either
+        the vector path or the FTS5 keyword path."""
         engine = self._make_engine(tmp_path)
         asyncio.run(
             engine.ingest("Shared data from user A", source="a.md", user_id="userA")
@@ -689,8 +690,7 @@ class TestEngineEdgeCases:
         result = asyncio.run(
             engine.query("Shared data", top_k=5, user_id="userB")
         )
-        # OpenClaw-style: userB CAN see userA's data (shared per-agent)
-        assert len(result.results) > 0
+        assert result.results == []
 
 
 class TestMemoryHooks:
@@ -972,6 +972,52 @@ class TestFTS5Search:
         assert len(results) >= 2
         # First result should have higher score (more Python occurrences)
         assert results[0].score >= results[1].score
+
+    def test_fts5_user_id_filter_blocks_cross_user_leak(self, tmp_path):
+        """Regression: search_fts must only return chunks owned by the
+        requesting user when user_id is provided. Previously the FTS path
+        ignored user_id and leaked across users."""
+        store = self._make_store(tmp_path)
+        texts_a = ["alpha unique keyword sandcastle"]
+        texts_b = ["beta unique keyword sandcastle"]
+        embs_a = self._embed_sync(texts_a)
+        embs_b = self._embed_sync(texts_b)
+        store.add(texts_a, embs_a, user_id="a", source="a.md")
+        store.add(texts_b, embs_b, user_id="b", source="b.md")
+
+        # Without filter: both rows match (sanity check that data is there).
+        all_hits = store.search_fts("sandcastle", top_k=10)
+        assert len(all_hits) == 2
+
+        # As user "a": must only see alpha's chunk.
+        a_hits = store.search_fts("sandcastle", top_k=10, user_id="a")
+        assert len(a_hits) == 1
+        assert "alpha" in a_hits[0].text
+        assert "beta" not in a_hits[0].text
+
+        # As user "b": must only see beta's chunk.
+        b_hits = store.search_fts("sandcastle", top_k=10, user_id="b")
+        assert len(b_hits) == 1
+        assert "beta" in b_hits[0].text
+        assert "alpha" not in b_hits[0].text
+
+        # Unknown user: zero results.
+        none_hits = store.search_fts("sandcastle", top_k=10, user_id="ghost")
+        assert none_hits == []
+
+    def test_fts5_user_id_param_is_parameterized(self, tmp_path):
+        """SQL injection guard: a user_id containing SQL syntax must be
+        treated as a literal value, not interpolated into the query."""
+        store = self._make_store(tmp_path)
+        texts = ["target keyword bunyan"]
+        embs = self._embed_sync(texts)
+        store.add(texts, embs, user_id="legit", source="t.md")
+
+        # Classic injection attempt — should match nothing because the
+        # entire string is compared as a user_id literal.
+        injected = "legit' OR '1'='1"
+        hits = store.search_fts("bunyan", top_k=10, user_id=injected)
+        assert hits == []
 
 
 # ---------------------------------------------------------------------------

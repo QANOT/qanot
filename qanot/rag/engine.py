@@ -265,7 +265,11 @@ class RAGEngine:
         keyword_hits: list[tuple[str, float]] = []
         if self._use_fts5:
             assert isinstance(self.store, SqliteVecStore)
-            fts_results = self.store.search_fts(query, top_k=top_k * 2)
+            fts_results = self.store.search_fts(
+                query,
+                top_k=top_k * 2,
+                user_id=user_id,
+            )
             keyword_hits = [(r.chunk_id, r.score) for r in fts_results]
             # Also populate result_map from FTS results
             for r in fts_results:
