@@ -49,6 +49,8 @@
 
   "image_api_key": "",
   "image_model": "gemini-3-pro-image-preview",
+  "web_search_per_user_hourly": 20,
+  "image_gen_per_user_hourly": 10,
 
   "heartbeat_enabled": true,
   "heartbeat_interval": "0 */4 * * *",

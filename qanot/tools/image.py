@@ -10,6 +10,7 @@ from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 
+from qanot.ratelimit import RateLimiter
 from qanot.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -107,8 +108,17 @@ def register_image_tools(
     *,
     model: str = DEFAULT_IMAGE_MODEL,
     get_user_id: Callable[[], str | None] | None = None,
+    per_user_hourly: int = 0,
 ) -> None:
-    """Register image generation and editing tools."""
+    """Register image generation and editing tools.
+
+    Args:
+        per_user_hourly: Max ``generate_image`` calls per user per hour.
+            0 disables rate limiting (preserves legacy behavior). Only
+            applied to ``generate_image`` — editing is gated by the user
+            sending a fresh photo so its bill-leak risk is naturally
+            bounded.
+    """
     _client = None
 
     def _get_client():
@@ -119,6 +129,44 @@ def register_image_tools(
         return _client
 
     images_dir = Path(workspace_dir) / "generated"
+
+    # Per-user-per-tool sliding window. Window == lockout == 3600s so the
+    # retry-after we expose to the LLM matches the configured cap exactly.
+    image_gen_limiter: RateLimiter | None = None
+    if per_user_hourly > 0:
+        image_gen_limiter = RateLimiter(
+            max_requests=per_user_hourly,
+            window_seconds=3600,
+            lockout_seconds=3600,
+        )
+
+    def _check_image_rate_limit() -> str | None:
+        """Return rate-limit error JSON if user is over cap, else None.
+
+        Fails OPEN when user_id is unavailable (system callers / tests).
+        """
+        if image_gen_limiter is None or get_user_id is None:
+            return None
+        user_id = get_user_id()
+        if user_id is None:
+            return None
+        user_id = str(user_id)
+        allowed, _reason = image_gen_limiter.check(user_id)
+        if not allowed:
+            retry = image_gen_limiter.retry_after(user_id)
+            logger.warning(
+                "generate_image rate-limited for user %s (cap %d/hour)",
+                user_id, per_user_hourly,
+            )
+            return json.dumps({
+                "error": "rate_limited",
+                "reason": (
+                    f"generate_image hourly limit ({per_user_hourly}) reached"
+                ),
+                "retry_after_seconds": retry,
+            })
+        image_gen_limiter.record(user_id)
+        return None
 
     def _validate_params(params: dict, prompt_error: str) -> tuple[str | None, str | None, str | None]:
         """Validate prompt and model. Returns (prompt, img_model, error_json)."""
@@ -159,6 +207,12 @@ def register_image_tools(
         prompt, img_model, err = _validate_params(params, "prompt is required")
         if err:
             return err
+
+        # Per-user hourly cap (bill-leak protection). Run before any
+        # network call — Nano Banana Pro is ~$0.04/image and the agent
+        # loop runs up to 25 iterations per turn.
+        if (rl_err := _check_image_rate_limit()) is not None:
+            return rl_err
 
         try:
             from google.genai import types

@@ -214,6 +214,14 @@ class Config:
     # Image generation (Nano Banana / Gemini)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
     image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro (highest quality)
+    # Per-user hourly caps on expensive tools (bill-leak protection).
+    # 0 = unlimited (opt out). Counted per-user-per-tool, not shared.
+    # web_search hits Brave (~$0.01/query), generate_image hits Gemini
+    # Nano Banana Pro (~$0.04/image). The agent loop runs up to 25 iterations
+    # per turn so a malicious prompt or injection can drive a $100+ bill in
+    # minutes without these caps.
+    web_search_per_user_hourly: int = 20
+    image_gen_per_user_hourly: int = 10
     # Multi-agent definitions
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group

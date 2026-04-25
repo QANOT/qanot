@@ -9,12 +9,14 @@ import logging
 import re
 import socket
 import time
+from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 
+from qanot.ratelimit import RateLimiter
 from qanot.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -485,8 +487,30 @@ def _format_results(data: dict, query: str) -> str:
 def register_web_tools(
     registry: ToolRegistry,
     brave_api_key: str,
+    *,
+    get_user_id: Callable[[], str | None] | None = None,
+    per_user_hourly: int = 0,
 ) -> None:
-    """Register web search tools."""
+    """Register web search tools.
+
+    Args:
+        registry: ToolRegistry to register into.
+        brave_api_key: Brave Search API subscription key.
+        get_user_id: Callable returning the current Telegram user_id. Used
+            to scope per-user rate limits. If None, rate limiting is
+            disabled (system-caller fallback).
+        per_user_hourly: Max ``web_search`` calls per user per hour.
+            0 disables rate limiting (preserves legacy behavior).
+    """
+    # Per-user-per-tool sliding window. Window == lockout == 3600s so the
+    # retry-after we expose to the LLM matches the configured cap exactly.
+    web_search_limiter: RateLimiter | None = None
+    if per_user_hourly > 0:
+        web_search_limiter = RateLimiter(
+            max_requests=per_user_hourly,
+            window_seconds=3600,
+            lockout_seconds=3600,
+        )
 
     async def web_search(params: dict) -> str:
         """Search the web using Brave Search API."""
@@ -502,12 +526,35 @@ def register_web_tools(
             return json.dumps({"error": "count must be an integer"})
         count = max(1, min(count, 10))
 
-        # Check cache
+        # Check cache first — cached results don't hit Brave so they
+        # shouldn't count against the user's hourly cap.
         cache_key = f"{query.lower()}:{count}"
         cached = await _cache_get(cache_key)
         if cached:
             logger.debug("Web search cache hit: %s", query)
             return cached
+
+        # Per-user hourly cap (bill-leak protection). Fail OPEN when no
+        # user_id is available so system callers / tests aren't broken.
+        if web_search_limiter is not None and get_user_id is not None:
+            user_id = get_user_id()
+            if user_id is not None:
+                user_id = str(user_id)
+                allowed, _reason = web_search_limiter.check(user_id)
+                if not allowed:
+                    retry = web_search_limiter.retry_after(user_id)
+                    logger.warning(
+                        "web_search rate-limited for user %s (cap %d/hour)",
+                        user_id, per_user_hourly,
+                    )
+                    return json.dumps({
+                        "error": "rate_limited",
+                        "reason": (
+                            f"web_search hourly limit ({per_user_hourly}) reached"
+                        ),
+                        "retry_after_seconds": retry,
+                    })
+                web_search_limiter.record(user_id)
 
         try:
             async with aiohttp.ClientSession() as session:

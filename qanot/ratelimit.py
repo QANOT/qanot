@@ -75,6 +75,23 @@ class RateLimiter:
         """Record a successful request."""
         self._requests.setdefault(user_id, []).append(time.monotonic())
 
+    def retry_after(self, user_id: str) -> int:
+        """Seconds until the user can next make a request.
+
+        Returns 0 if not currently rate-limited. Used by tools that want
+        to surface a retry hint to the LLM in their error JSON.
+        """
+        now = time.monotonic()
+        unlock_time = self._locked_until.get(user_id)
+        if unlock_time is not None and now < unlock_time:
+            return max(1, int(unlock_time - now))
+        # Not locked: estimate based on oldest request in window.
+        timestamps = self._requests.get(user_id, [])
+        if len(timestamps) < self.max_requests:
+            return 0
+        oldest = min(timestamps)
+        return max(1, int(oldest + self.window - now))
+
     def reset(self, user_id: str) -> None:
         """Reset rate limit for a user."""
         self._requests.pop(user_id, None)

@@ -318,10 +318,17 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Browser tools failed to register: %s", e)
 
-    # Register web search tools (only if Brave API key is configured)
+    # Register web search tools (only if Brave API key is configured).
+    # get_user_id resolves through _agent_ref so per-user rate limiting
+    # works once the agent is built.
     if config.brave_api_key:
         from qanot.tools.web import register_web_tools
-        register_web_tools(tool_registry, config.brave_api_key)
+        register_web_tools(
+            tool_registry,
+            config.brave_api_key,
+            get_user_id=lambda: _agent_ref[0].current_user_id if _agent_ref else None,
+            per_user_hourly=config.web_search_per_user_hourly,
+        )
         logger.info("Web search enabled (Brave API)")
 
     # Find Gemini API key for image generation (registered after agent creation)
@@ -434,6 +441,7 @@ async def main() -> None:
             tool_registry, gemini_api_key, config.workspace_dir,
             model=config.image_model,
             get_user_id=get_user_id,
+            per_user_hourly=config.image_gen_per_user_hourly,
         )
         logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
