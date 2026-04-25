@@ -37,8 +37,10 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from qanot.plugins.base import Plugin, ToolDef, tool
 
@@ -80,6 +82,12 @@ class UserbotPlugin(Plugin):
         # Lazy aiogram.Bot for posting preview messages in the calling chat.
         # Built on first need from config.bot_token.
         self._preview_bot: Any = None
+        # Display timezone for message timestamps. Set during setup() from
+        # ``Config.timezone``. The agent reads ISO strings and quotes times
+        # back to the operator — those must be in the operator's local zone,
+        # not pyrogram's UTC default, or a 5-hour Tashkent shift looks like
+        # "messages from the future" / "from last night".
+        self._tz: Any = timezone.utc
 
     # ── Lifecycle ────────────────────────────────────────────────
 
@@ -121,6 +129,14 @@ class UserbotPlugin(Plugin):
             hourly_global=int(self._config.userbot_send_hourly_global),
         )
         self._audit = AuditLog(self._workspace_dir)
+
+        tz_name = (getattr(self._config, "timezone", None) or "UTC").strip() or "UTC"
+        try:
+            self._tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            logger.warning("userbot: unknown timezone %r, falling back to UTC", tz_name)
+            self._tz = timezone.utc
+
         self._disabled = False
         logger.info(
             "Userbot plugin ready (per_recipient=%ds, hourly=%d, whitelist=%d)",
@@ -277,6 +293,32 @@ class UserbotPlugin(Plugin):
             return None
         self._preview_bot = Bot(token=token)
         return self._preview_bot
+
+    def _format_date(self, date: Any) -> str:
+        """Render a pyrogram Message.date as an ISO string in the operator's
+        local timezone.
+
+        Pyrogram emits UTC-aware datetimes by default. The agent reads the
+        ISO string and quotes the wall-clock back to the operator, so we
+        must shift to ``Config.timezone`` here — otherwise an Asia/Tashkent
+        operator sees "03:13" for a message that arrived at 08:13 local."""
+        if date is None:
+            return ""
+        if not hasattr(date, "isoformat"):
+            return str(date)
+        # Defensive: a naive datetime is unspecified in the docs but has
+        # showed up in older pyrogram builds. Treat it as UTC.
+        if getattr(date, "tzinfo", None) is None:
+            try:
+                date = date.replace(tzinfo=timezone.utc)
+            except Exception:
+                return str(date)
+        try:
+            return date.astimezone(self._tz).isoformat()
+        except Exception:
+            # Whatever weird datetime subclass this is, fall back to the
+            # original isoformat rather than dropping the timestamp.
+            return date.isoformat()
 
     @staticmethod
     def _chat_type(chat: Any) -> str:
@@ -712,11 +754,7 @@ class UserbotPlugin(Plugin):
                 text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
                 if not text:
                     text = "<media>"
-                date = getattr(m, "date", None)
-                if hasattr(date, "isoformat"):
-                    date_str = date.isoformat()
-                else:
-                    date_str = str(date or "")
+                date_str = self._format_date(getattr(m, "date", None))
                 messages.append({
                     "from": sender_label,
                     "text": text,
@@ -868,8 +906,7 @@ class UserbotPlugin(Plugin):
                 text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
                 if not text:
                     text = "<media>"
-                date = getattr(m, "date", None)
-                date_str = date.isoformat() if hasattr(date, "isoformat") else str(date or "")
+                date_str = self._format_date(getattr(m, "date", None))
                 messages.append({
                     "from": sender_label,
                     "text": text,
@@ -1041,8 +1078,7 @@ class UserbotPlugin(Plugin):
                         sender_label = getattr(sender, "first_name", None) or str(
                             getattr(sender, "id", "?"),
                         )
-                date = getattr(m, "date", None)
-                date_str = date.isoformat() if hasattr(date, "isoformat") else str(date or "")
+                date_str = self._format_date(getattr(m, "date", None))
 
                 mentions.append({
                     "recipient_id": chat_token,

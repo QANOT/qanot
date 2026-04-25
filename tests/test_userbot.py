@@ -151,6 +151,7 @@ class FakeClient:
 def plugin(plugin_mod, ratelimit_mod, audit_mod, tmp_path):
     """Construct the plugin with manually-injected dependencies, skipping
     setup() (which requires the framework Config + pyrofork)."""
+    from zoneinfo import ZoneInfo
     p = plugin_mod.UserbotPlugin()
     p._workspace_dir = str(tmp_path)
     p._config = SimpleNamespace(
@@ -159,11 +160,13 @@ def plugin(plugin_mod, ratelimit_mod, audit_mod, tmp_path):
         userbot_send_per_recipient_seconds=10,
         userbot_send_hourly_global=20,
         bot_token="",  # disables preview post
+        timezone="Asia/Tashkent",
     )
     p._rate_limiter = ratelimit_mod.RateLimiter(
         per_recipient_seconds=10, hourly_global=20,
     )
     p._audit = audit_mod.AuditLog(str(tmp_path))
+    p._tz = ZoneInfo("Asia/Tashkent")
     p._disabled = False
     return p
 
@@ -573,6 +576,50 @@ def test_find_mentions_picks_up_flag_and_substring(plugin, fake_client):
         assert reasons[1] == "mention"
         assert reasons[2] == "substring"
         assert reasons[3] == "reply"
+    asyncio.run(go())
+
+
+def test_dates_are_converted_to_configured_timezone(plugin, fake_client):
+    """Regression: pyrogram emits UTC, the agent must see Tashkent local
+    or it quotes wall-clock 5 hours behind."""
+    async def go():
+        chat = FakeChat(chat_id=10, first_name="Umid", username="umid",
+                        type_name="PRIVATE")
+        # 03:13 UTC == 08:13 Asia/Tashkent on the same calendar day.
+        msg_dt_utc = datetime(2026, 4, 25, 3, 13, 0, tzinfo=timezone.utc)
+        fake_client.dialogs = [FakeDialog(chat=chat, unread=1)]
+        fake_client.history = {10: [
+            FakeMessage(message_id=1, text="ssh ishlamayapti",
+                        from_user=FakeUser(user_id=10, username="umid"),
+                        date=msg_dt_utc),
+        ]}
+        out = await plugin.tg_scan_unread({})
+        result = json.loads(out)
+        assert result["count"] == 1
+        date_str = result["dialogs"][0]["messages"][0]["date"]
+        # Expect the offset to be +05:00, not +00:00, and the wall-clock
+        # to read 08:13 (the local time the message was actually sent).
+        assert "+05:00" in date_str, date_str
+        assert "T08:13" in date_str, date_str
+    asyncio.run(go())
+
+
+def test_dates_naive_treated_as_utc(plugin, fake_client):
+    async def go():
+        chat = FakeChat(chat_id=10, first_name="Umid", username="umid",
+                        type_name="PRIVATE")
+        naive = datetime(2026, 4, 25, 3, 13, 0)  # no tzinfo
+        fake_client.dialogs = [FakeDialog(chat=chat, unread=1)]
+        fake_client.history = {10: [
+            FakeMessage(message_id=1, text="x",
+                        from_user=FakeUser(user_id=1, username="u"),
+                        date=naive),
+        ]}
+        out = await plugin.tg_scan_unread({})
+        result = json.loads(out)
+        date_str = result["dialogs"][0]["messages"][0]["date"]
+        assert "T08:13" in date_str
+        assert "+05:00" in date_str
     asyncio.run(go())
 
 
