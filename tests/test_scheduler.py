@@ -239,6 +239,109 @@ class TestHeartbeatSkipConditions:
             # Should have called spawn since file doesn't exist
 
 
+class TestHeartbeatFollowupSweep:
+    """The heartbeat is the safety net for follow-ups whose one-shot cron
+    job got dropped (server downtime, manual jobs.json edit, etc.)."""
+
+    def _seed_overdue(self, tmp_path, ids):
+        """Write a followups.json with the given ids, all due in the past."""
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        items = []
+        for fid in ids:
+            items.append({
+                "id": fid,
+                "status": "open",
+                "topic": f"topic for {fid}",
+                "due": "2020-01-01T00:00:00+00:00",  # well in the past
+                "created": "2020-01-01T00:00:00+00:00",
+            })
+        (ws / "followups.json").write_text(
+            json.dumps({"version": 1, "items": items}),
+            encoding="utf-8",
+        )
+
+    @pytest.mark.asyncio
+    async def test_runs_when_only_overdue_followups_present(self, tmp_path):
+        """Empty HEARTBEAT.md must NOT short-circuit when there are
+        overdue follow-ups — that's the whole point of the sweep."""
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        (ws / "HEARTBEAT.md").write_text("# only comments\n")
+        self._seed_overdue(tmp_path, ["ftk_aaaa1111"])
+
+        config = make_config(tmp_path)
+        sched = CronScheduler(
+            config=config,
+            provider=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+        sched._is_user_idle = MagicMock(return_value=True)
+
+        with patch(
+            "qanot.agent.spawn_isolated_agent",
+            new_callable=AsyncMock, return_value="HEARTBEAT_OK",
+        ) as mock_spawn:
+            await sched._run_isolated(job_name="heartbeat", prompt="HB_BASE")
+            mock_spawn.assert_called_once()
+            sent_prompt = mock_spawn.call_args.kwargs.get("prompt") or \
+                mock_spawn.call_args.args[0] if mock_spawn.call_args.args else \
+                mock_spawn.call_args.kwargs["prompt"]
+            assert "ftk_aaaa1111" in sent_prompt
+            assert "HB_BASE" in sent_prompt
+
+    @pytest.mark.asyncio
+    async def test_skip_when_no_actionable_and_no_overdue(self, tmp_path):
+        """Both gates must agree to skip."""
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        (ws / "HEARTBEAT.md").write_text("# only comments\n")
+        # No followups.json at all — nothing overdue.
+
+        config = make_config(tmp_path)
+        sched = CronScheduler(
+            config=config,
+            provider=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+        sched._is_user_idle = MagicMock(return_value=True)
+
+        with patch("qanot.agent.spawn_isolated_agent") as mock_spawn:
+            await sched._run_isolated(job_name="heartbeat", prompt="x")
+            mock_spawn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_overdue_capped_at_three(self, tmp_path):
+        """A backlog must never blow up the heartbeat token budget."""
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        (ws / "HEARTBEAT.md").write_text("- check logs\n")
+        self._seed_overdue(tmp_path, [
+            "ftk_111", "ftk_222", "ftk_333", "ftk_444", "ftk_555",
+        ])
+
+        config = make_config(tmp_path)
+        sched = CronScheduler(
+            config=config,
+            provider=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+        sched._is_user_idle = MagicMock(return_value=True)
+
+        ids = sched._overdue_followup_ids()
+        assert len(ids) == 3
+
+    def test_helper_returns_empty_when_disabled(self, tmp_path):
+        self._seed_overdue(tmp_path, ["ftk_aaa"])
+        config = make_config(tmp_path, followup_enabled=False)
+        sched = CronScheduler(
+            config=config,
+            provider=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+        assert sched._overdue_followup_ids() == []
+
+
 # ── Scheduler Load Jobs ──────────────────────────────────────
 
 

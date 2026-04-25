@@ -88,6 +88,30 @@ class CronScheduler:
             return True  # No activity recorded yet
         return asyncio.get_event_loop().time() - self._last_user_activity >= self._idle_threshold
 
+    def _overdue_followup_ids(self, cap: int = 3) -> list[str]:
+        """Return up to ``cap`` open follow-ups whose due time has passed.
+
+        Used by the heartbeat to act as a safety net: if a one-shot cron
+        job fails to fire (server downtime spanning the due time, jobs.json
+        manually edited), the entry stays in followups.json and the next
+        heartbeat picks it up. Cap is small so a backlog can't blow up
+        the heartbeat token budget — older items simply wait for the
+        next 4-hour tick.
+        """
+        if not self.config.followup_enabled:
+            return []
+        try:
+            from qanot.tools.followup import overdue_followups
+            items = overdue_followups(self.config.workspace_dir)
+        except Exception as e:
+            # The sweep is best-effort; never let it break heartbeat.
+            logger.warning("followup overdue sweep failed: %s", e)
+            return []
+        # Soonest-overdue first (oldest due date) so chronic stragglers
+        # eventually get picked up instead of starving behind newer items.
+        items.sort(key=lambda it: it.get("due") or "")
+        return [it["id"] for it in items[:cap] if it.get("id")]
+
     def _load_jobs(self) -> list[dict]:
         """Load jobs from JSON file."""
         return load_jobs(self._jobs_path)
@@ -221,20 +245,38 @@ class CronScheduler:
             logger.info("%s skipped — user is active", job_name)
             return
 
-        # Check if HEARTBEAT.md is empty (skip API call to save tokens)
+        # On heartbeat: combine the HEARTBEAT.md emptiness gate with the
+        # follow-up sweep. The gate exists to skip API calls when there's
+        # nothing to do; an overdue follow-up IS something to do, so it
+        # forces a run even on an "empty" HEARTBEAT.md. Conversely, when
+        # we DO run, append the overdue ids so the agent re-evaluates them
+        # as part of the same turn.
         if job_name == "heartbeat":
+            hb_actionable = False
             hb_path = Path(self.config.workspace_dir) / "HEARTBEAT.md"
             if hb_path.exists():
                 content = hb_path.read_text(encoding="utf-8").strip()
-                # Skip if file is empty or contains only comments
-                has_actionable = any(
+                hb_actionable = any(
                     not stripped.startswith("#")
                     for line in content.splitlines()
                     if (stripped := line.strip())
                 )
-                if not has_actionable:
-                    logger.info("Heartbeat skipped — HEARTBEAT.md is empty")
-                    return
+
+            overdue_ids = self._overdue_followup_ids()
+            if not hb_actionable and not overdue_ids:
+                logger.info("Heartbeat skipped — nothing actionable")
+                return
+
+            if overdue_ids:
+                prompt = (
+                    f"{prompt}\n\n"
+                    f"OVERDUE FOLLOW-UPS detected: {', '.join(overdue_ids)}\n"
+                    "Re-evaluate each one: read the entry from followups.json, "
+                    "check the current state with available tools, then either "
+                    "close_followup with a resolution or write a brief proactive-"
+                    "outbox.md note. Cap at 3 items per heartbeat to stay fast — "
+                    "older ones can wait for the next heartbeat."
+                )
 
         logger.info("Running isolated cron job: %s", job_name)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
