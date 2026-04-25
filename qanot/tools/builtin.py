@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -109,6 +110,17 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # --- History/log tampering ---
     (re.compile(r"\bhistory\s+-c\b"), "shell history clearing"),
     (re.compile(r">\s*/var/log\b"), "log file truncation"),
+
+    # --- Encoded payloads piped to shell (defeats argv inspection by design) ---
+    (re.compile(r"\bbase64\s+(-d|--decode|--d)\b[^|;]*\|\s*(ba)?sh\b"),
+     "base64-decoded shell execution"),
+    (re.compile(r"\bxxd\s+-r\b[^|;]*\|\s*(ba)?sh\b"), "xxd-decoded shell execution"),
+    (re.compile(r"\b(echo|printf)\b[^|;]*\|\s*base64\s+(-d|--decode)\b[^|;]*\|\s*(ba)?sh\b"),
+     "echo+base64 piped to shell"),
+    (re.compile(r"\$\([^)]*\bbase64\s+(-d|--decode|--d)\b"),
+     "base64 decode in command substitution"),
+    (re.compile(r"\$\([^)]*\bxxd\s+-r\b"),
+     "xxd decode in command substitution"),
 ]
 
 
@@ -120,6 +132,73 @@ def _first_match(command: str, patterns: list[tuple[re.Pattern[str], str]]) -> s
     return None
 
 
+# Interpreters whose inline-eval flags (-c / -e / -E) execute attacker-supplied
+# code. Ported pattern from OpenClaw's argv-aware safety model: regex on shell
+# strings is unreliable, so we tokenise with shlex and inspect argv shape.
+_INLINE_EVAL_INTERPRETERS = frozenset({
+    "python", "python2", "python3",
+    "ruby", "perl", "php", "node", "deno",
+    "bash", "sh", "zsh", "fish", "ksh", "csh", "tcsh", "dash",
+    "lua", "tclsh",
+})
+
+# argv tokens treated as shell operators when traversing a command's tokens.
+_SHELL_OPERATORS = frozenset({"|", "||", "&&", ";", "&", "|&"})
+
+
+def _detect_inline_eval(command: str) -> str | None:
+    """Return interpreter basename if any chained segment uses inline-eval.
+
+    Walks tokenised argv chains separated by shell operators. For each
+    segment, if argv[0] is an interpreter and any later arg is `-c`, `-e`,
+    `-E`, `-c=...`, `-e=...`, or the concat form `-cFOO` / `-eFOO`, we treat
+    that segment as inline-eval. Catches the bypasses regex-on-shell-strings
+    misses (`python3 -c "..."`, `bash -c "$(... | base64 -d)"`,
+    `git log && python -c "evil"`).
+    """
+    # Use shlex.shlex with explicit punctuation so `;` `|` `&` `&&` `||` come
+    # back as separate operator tokens — `shlex.split` glues `;` to adjacent
+    # words, which would hide chained interpreter eval after a benign first
+    # segment (e.g. `ls; bash -c 'evil'`).
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars="|&;")
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        # Unparseable / unbalanced quotes — let the regex layer + cautious
+        # default-deny handle it.
+        return None
+
+    def _check_segment(argv: list[str]) -> str | None:
+        if not argv:
+            return None
+        binary = os.path.basename(argv[0])
+        if binary not in _INLINE_EVAL_INTERPRETERS:
+            return None
+        for arg in argv[1:]:
+            if arg in {"-c", "-e", "-E", "--command", "--eval"}:
+                return binary
+            if arg.startswith(("-c=", "-e=", "-E=", "--command=", "--eval=")):
+                return binary
+            # Concatenated form: `-cFOO` or `-eFOO`
+            if len(arg) > 2 and arg[0] == "-" and arg[1] in ("c", "e", "E"):
+                return binary
+        return None
+
+    argv: list[str] = []
+    for tok in tokens:
+        # `punctuation_chars` returns runs as a single token, so `&&` / `||`
+        # arrive intact alongside single `;` `|` `&`.
+        if tok in _SHELL_OPERATORS:
+            hit = _check_segment(argv)
+            if hit:
+                return hit
+            argv = []
+        else:
+            argv.append(tok)
+    return _check_segment(argv)
+
+
 def _is_dangerous_command(command: str) -> str | None:
     """Return description if command matches a dangerous pattern, else None."""
     return _first_match(command, _DANGEROUS_PATTERNS)
@@ -127,7 +206,13 @@ def _is_dangerous_command(command: str) -> str | None:
 
 def _needs_approval(command: str) -> str | None:
     """Return description if command needs user approval in cautious mode, else None."""
-    return _first_match(command, _CAUTIOUS_PATTERNS)
+    pattern_hit = _first_match(command, _CAUTIOUS_PATTERNS)
+    if pattern_hit:
+        return pattern_hit
+    interpreter = _detect_inline_eval(command)
+    if interpreter:
+        return f"interpreter inline-eval ({interpreter} -c/-e)"
+    return None
 
 
 def _matches_allowlist(command: str, allowlist: list[str]) -> bool:
