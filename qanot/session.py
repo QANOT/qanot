@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-try:
-    import fcntl
-except ImportError:
-    fcntl = None  # Windows — file locking not available
+import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+import portalocker
 
 from qanot.providers.base import Usage
 
@@ -44,10 +44,10 @@ class SessionWriter:
         self._msg_counter += 1
         return f"msg_{self._msg_counter:06d}"
 
-    def log_user_message(self, text: str, parent_id: str = "", user_id: str = "") -> str:
-        """Log a user message. Returns the message ID."""
+    def _build_user_entry(self, text: str, parent_id: str, user_id: str) -> tuple[str, dict]:
+        """Construct (msg_id, entry dict) for a user message without writing it."""
         msg_id = self._next_id()
-        entry = {
+        entry: dict = {
             "type": "message",
             "id": msg_id,
             "parentId": parent_id,
@@ -59,19 +59,18 @@ class SessionWriter:
         }
         if user_id:
             entry["user_id"] = user_id
-        self._append(entry)
-        return msg_id
+        return msg_id, entry
 
-    def log_assistant_message(
+    def _build_assistant_entry(
         self,
         text: str,
-        tool_uses: list[dict] | None = None,
-        usage: Usage | None = None,
-        parent_id: str = "",
-        model: str = "",
-        user_id: str = "",
-    ) -> str:
-        """Log an assistant message. Returns the message ID."""
+        tool_uses: list[dict] | None,
+        usage: Usage | None,
+        parent_id: str,
+        model: str,
+        user_id: str,
+    ) -> tuple[str, dict]:
+        """Construct (msg_id, entry dict) for an assistant message without writing it."""
         msg_id = self._next_id()
 
         content: list[dict] = []
@@ -115,20 +114,86 @@ class SessionWriter:
                 "cost": {"total": usage.cost},
             }
 
-        self._append(entry)
+        return msg_id, entry
+
+    def log_user_message(self, text: str, parent_id: str = "", user_id: str = "") -> str:
+        """Log a user message synchronously. Returns the message ID."""
+        msg_id, entry = self._build_user_entry(text, parent_id, user_id)
+        self._append_sync(entry)
         return msg_id
 
-    def _append(self, entry: dict) -> None:
-        """Append a JSON entry to the session file with file locking."""
+    def log_assistant_message(
+        self,
+        text: str,
+        tool_uses: list[dict] | None = None,
+        usage: Usage | None = None,
+        parent_id: str = "",
+        model: str = "",
+        user_id: str = "",
+    ) -> str:
+        """Log an assistant message synchronously. Returns the message ID."""
+        msg_id, entry = self._build_assistant_entry(
+            text, tool_uses, usage, parent_id, model, user_id,
+        )
+        self._append_sync(entry)
+        return msg_id
+
+    async def log_user_message_async(
+        self, text: str, parent_id: str = "", user_id: str = "",
+    ) -> str:
+        """Async variant of log_user_message — does I/O off the event loop."""
+        msg_id, entry = self._build_user_entry(text, parent_id, user_id)
+        await self._append(entry)
+        return msg_id
+
+    async def log_assistant_message_async(
+        self,
+        text: str,
+        tool_uses: list[dict] | None = None,
+        usage: Usage | None = None,
+        parent_id: str = "",
+        model: str = "",
+        user_id: str = "",
+    ) -> str:
+        """Async variant of log_assistant_message — does I/O off the event loop."""
+        msg_id, entry = self._build_assistant_entry(
+            text, tool_uses, usage, parent_id, model, user_id,
+        )
+        await self._append(entry)
+        return msg_id
+
+    async def _append(self, entry: dict) -> None:
+        """Async append: offloads disk I/O to a thread to avoid blocking the loop."""
+        await asyncio.to_thread(self._append_sync, entry)
+
+    def _append_sync(self, entry: dict) -> None:
+        """Append a JSON entry to the session file with cross-platform exclusive locking.
+
+        Uses portalocker for Linux/macOS/Windows-uniform advisory locking.
+        Holds the lock for the entire write+flush+fsync window so concurrent
+        writers cannot produce torn JSONL lines, and so a crash mid-write
+        cannot leave a partially-written line behind.
+        """
         line = json.dumps(entry, ensure_ascii=False) + "\n"
-        with open(self.session_path, "a", encoding="utf-8") as f:
-            if fcntl is not None:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        # portalocker.Lock acquires an exclusive lock on entry and releases on exit.
+        # mode="a" → append; LOCK_EX is blocking — fine here because session writes
+        # are tiny and short-lived, and we'd rather queue than drop messages.
+        with portalocker.Lock(
+            str(self.session_path),
+            mode="a",
+            encoding="utf-8",
+            flags=portalocker.LOCK_EX,
+        ) as f:
+            f.write(line)
+            f.flush()
             try:
-                f.write(line)
-            finally:
-                if fcntl is not None:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                os.fsync(f.fileno())
+            except OSError:
+                # fsync may legitimately fail on some filesystems (e.g. tmpfs
+                # in containers, certain network mounts). The lock+flush still
+                # guarantees no torn lines for concurrent writers; we just lose
+                # the durability promise on a hard crash.
+                logger.debug("fsync skipped for %s", self.session_path)
 
     def new_session(self, session_id: str | None = None) -> None:
         """Start a new session with an optional custom ID."""

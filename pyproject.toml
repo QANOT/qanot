@@ -35,6 +35,7 @@ dependencies = [
     "apscheduler>=3.10",
     "cryptography>=42.0",
     "Pillow>=10.0",
+    "portalocker>=2.7",
 ]
 
 [project.optional-dependencies]
