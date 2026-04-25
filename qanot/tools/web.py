@@ -38,9 +38,16 @@ FETCH_USER_AGENT = (
 # Blocked hostnames for SSRF protection
 _BLOCKED_HOSTNAMES = frozenset({
     "localhost",
+    "localhost.localdomain",
     "metadata.google.internal",
     "metadata.google.internal.",
+    "metadata",  # short form sometimes resolved on cloud VMs
 })
+
+# Hostname suffixes treated as internal (any *.localhost, *.local, *.internal)
+_BLOCKED_HOSTNAME_SUFFIXES = (
+    ".localhost", ".local", ".internal", ".lan", ".intranet", ".corp", ".home",
+)
 
 # Blocked ports for SSRF protection (common internal services)
 _BLOCKED_PORTS = frozenset({
@@ -56,15 +63,26 @@ _BLOCKED_PORTS = frozenset({
     2375,  # Docker daemon
 })
 
-# Private/reserved IP networks to block
+# Private/reserved IP networks to block. is_private/is_loopback/is_link_local
+# from the stdlib catches most cases, but we keep an explicit list for the
+# ranges where Python's flags are version-dependent or absent.
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),     # CGNAT (RFC 6598)
+    ipaddress.ip_network("0.0.0.0/8"),         # "this network"
+    ipaddress.ip_network("224.0.0.0/4"),       # multicast
+    ipaddress.ip_network("240.0.0.0/4"),       # reserved class E
     ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
+    ipaddress.ip_network("fc00::/7"),          # IPv6 ULA (RFC 4193)
+    ipaddress.ip_network("::ffff:0:0/96"),     # IPv4-mapped IPv6
+    ipaddress.ip_network("64:ff9b::/96"),      # NAT64 well-known prefix
+    ipaddress.ip_network("2001:db8::/32"),     # IPv6 documentation
+    ipaddress.ip_network("ff00::/8"),          # IPv6 multicast
 ]
 
 # In-memory cache (thread-safe via lock)
@@ -112,48 +130,171 @@ _cache = _ThreadSafeCache()
 # ── SSRF protection ──────────────────────────────────────────────
 
 def _is_ip_blocked(ip_str: str) -> bool:
-    """Check if an IP address belongs to a private/reserved network."""
+    """Check if an IP belongs to a private/reserved/internal network.
+
+    Uses both stdlib flags (is_private, is_loopback, is_link_local,
+    is_reserved, is_multicast, is_unspecified) and an explicit
+    _BLOCKED_NETWORKS list for ranges Python's flags don't cover (CGNAT
+    on older Pythons, IPv6 ULA, IPv4-mapped IPv6, NAT64, doc range).
+    Recursively checks the IPv4 inside an IPv4-mapped IPv6 address.
+    """
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
         return True  # Unparseable = blocked
-    return any(addr in net for net in _BLOCKED_NETWORKS)
+    if addr.is_private or addr.is_loopback or addr.is_link_local:
+        return True
+    if addr.is_reserved or addr.is_multicast or addr.is_unspecified:
+        return True
+    if any(addr in net for net in _BLOCKED_NETWORKS):
+        return True
+    # IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254): unwrap and re-check.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return _is_ip_blocked(str(addr.ipv4_mapped))
+    return False
 
 
-def _validate_url(url: str) -> str | None:
-    """Validate URL for SSRF safety. Returns error message or None if safe."""
+def _is_blocked_hostname(hostname: str) -> bool:
+    """Match hostname against literal blocklist + suffix patterns."""
+    h = hostname.lower().rstrip(".")
+    if not h:
+        return True
+    if h in _BLOCKED_HOSTNAMES:
+        return True
+    for suffix in _BLOCKED_HOSTNAME_SUFFIXES:
+        if h.endswith(suffix):
+            return True
+    return False
+
+
+def _resolve_safe_addrs(
+    hostname: str,
+) -> tuple[str | None, list[dict[str, Any]] | None]:
+    """Resolve a hostname and validate every returned IP.
+
+    Returns (error, addr_list). On success the addr_list is suitable for
+    feeding into _PinnedResolver — every entry has been checked against
+    _is_ip_blocked. The connection later happens against these pinned IPs,
+    so a low-TTL DNS rebinding can no longer pivot to a private target
+    between validation and connect.
+    """
+    try:
+        addr_infos = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except socket.gaierror:
+        return f"DNS resolution failed for {hostname}", None
+
+    safe: list[dict[str, Any]] = []
+    for family, _socktype, proto, _, sockaddr in addr_infos:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        ip_str = sockaddr[0]
+        if _is_ip_blocked(ip_str):
+            return "URL blocked: private/internal network address", None
+        # Strip IPv6 zone-id if present ("fe80::1%eth0" -> "fe80::1")
+        if "%" in ip_str:
+            ip_str = ip_str.split("%", 1)[0]
+        safe.append(
+            {
+                "hostname": hostname,
+                "host": ip_str,
+                "port": 0,
+                "family": family,
+                "proto": proto,
+                "flags": 0,
+            }
+        )
+    if not safe:
+        return f"No safe addresses for {hostname}", None
+    return None, safe
+
+
+def _validate_url_metadata(url: str) -> tuple[str | None, str | None]:
+    """Check scheme, port, and hostname text without doing DNS.
+
+    Returns (error, hostname). On success error is None.
+    """
     try:
         parsed = urlparse(url)
     except Exception:
-        return "Invalid URL"
-
+        return "Invalid URL", None
     if parsed.scheme not in ("http", "https"):
-        return "Invalid URL scheme — only http:// and https:// allowed"
-
+        return "Invalid URL scheme — only http:// and https:// allowed", None
     hostname = parsed.hostname
     if not hostname:
-        return "Invalid URL — no hostname"
-
-    if hostname.lower() in _BLOCKED_HOSTNAMES:
-        return "URL blocked: private/internal network address"
-
-    # Block common internal service ports
+        return "Invalid URL — no hostname", None
+    if _is_blocked_hostname(hostname):
+        return "URL blocked: private/internal network address", None
     port = parsed.port
     if port is not None and port in _BLOCKED_PORTS:
-        return f"URL blocked: port {port} is not allowed"
-
-    # DNS resolution to check actual IP
+        return f"URL blocked: port {port} is not allowed", None
+    # Reject literal IP-address URLs that resolve to blocked ranges (a user
+    # could also bypass DNS entirely by passing http://169.254.169.254/...).
     try:
-        addr_infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror:
-        return f"DNS resolution failed for {hostname}"
+        ip_literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip_literal = None
+    if ip_literal is not None and _is_ip_blocked(str(ip_literal)):
+        return "URL blocked: private/internal network address", None
+    return None, hostname
 
-    for family, _, _, _, sockaddr in addr_infos:
-        ip_str = sockaddr[0]
-        if _is_ip_blocked(ip_str):
-            return "URL blocked: private/internal network address"
 
-    return None
+def _validate_url(url: str) -> str | None:
+    """Back-compat wrapper. Validate URL + resolve all IPs. Returns error or None."""
+    err, hostname = _validate_url_metadata(url)
+    if err:
+        return err
+    # Skip DNS for literal IPs (already checked above)
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return None
+    err, _addrs = _resolve_safe_addrs(hostname)
+    return err
+
+
+class _PinnedResolver:
+    """aiohttp resolver that returns pre-validated IPs only.
+
+    Bridges the TOCTOU between validate-time DNS lookup and connect-time
+    DNS lookup: aiohttp's default resolver re-queries DNS, opening the
+    rebinding window. With this resolver, aiohttp can ONLY connect to
+    addresses we already validated — no further DNS happens.
+
+    Hostnames not pre-pinned are rejected, so a redirect to a different
+    host fails closed at the resolver layer.
+    """
+
+    def __init__(self, pin: dict[str, list[dict[str, Any]]]):
+        # Lower-case keys so case-variant Host headers still match.
+        self._pin = {k.lower(): v for k, v in pin.items()}
+
+    def add(self, hostname: str, addrs: list[dict[str, Any]]) -> None:
+        self._pin[hostname.lower()] = addrs
+
+    async def resolve(
+        self, host: str, port: int = 0, family: int = socket.AF_INET
+    ) -> list[dict[str, Any]]:
+        key = host.lower().rstrip(".")
+        if key not in self._pin:
+            raise OSError(
+                f"hostname {host!r} is not pre-pinned for SSRF safety"
+            )
+        results = []
+        for entry in self._pin[key]:
+            if family == socket.AF_UNSPEC or entry["family"] == family:
+                results.append({**entry, "port": port})
+        if not results:
+            raise OSError(
+                f"no pinned address for {host!r} matching family={family}"
+            )
+        return results
+
+    async def close(self) -> None:
+        return None
 
 
 # ── HTML text extraction ─────────────────────────────────────────
@@ -292,6 +433,24 @@ async def _cache_set(key: str, result: str) -> None:
     await _cache.set(key, result)
 
 
+async def _read_capped(resp: aiohttp.ClientResponse) -> bytes | str:
+    """Read response body up to FETCH_MAX_BODY. Returns bytes or an error JSON
+    string if the cap is exceeded. Checks Content-Length first to fail fast."""
+    content_length = resp.content_length
+    if content_length is not None and content_length > FETCH_MAX_BODY:
+        return json.dumps(
+            {"error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)"}
+        )
+    body = b""
+    async for chunk in resp.content.iter_chunked(8192):
+        body += chunk
+        if len(body) > FETCH_MAX_BODY:
+            return json.dumps(
+                {"error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)"}
+            )
+    return body
+
+
 def _format_results(data: dict, query: str) -> str:
     """Format Brave API response into clean text for the LLM."""
     web = data.get("web", {})
@@ -411,7 +570,15 @@ def register_web_tools(
     # ── web_fetch ──────────────────────────────────────────────────
 
     async def web_fetch(params: dict) -> str:
-        """Fetch and extract readable content from a web page URL."""
+        """Fetch and extract readable content from a web page URL.
+
+        SSRF safety: hostname is resolved once, every returned IP is
+        validated against the private/internal/cloud-metadata blocklist,
+        and the actual connection happens through a pinned-IP resolver
+        that rejects any hostname not pre-validated. This closes the
+        DNS-rebinding window between validate-time and connect-time
+        lookups.
+        """
         url = params.get("url", "").strip()
         if not url:
             return json.dumps({"error": "url is required"})
@@ -421,61 +588,104 @@ def register_web_tools(
         except (TypeError, ValueError):
             max_chars = FETCH_DEFAULT_MAX_CHARS
 
-        # Validate URL scheme
-        ssrf_error = await asyncio.to_thread(_validate_url, url)
-        if ssrf_error:
-            return json.dumps({"error": ssrf_error})
-
-        # Check cache
+        # Cache check (keyed on the requested URL)
         cache_key = f"fetch:{url}:{max_chars}"
         cached = await _cache_get(cache_key)
         if cached:
             logger.debug("web_fetch cache hit: %s", url)
             return cached
 
+        # Validate the requested URL and pre-resolve every IP. The
+        # connector below will use only these addresses.
+        meta_err, hostname = await asyncio.to_thread(_validate_url_metadata, url)
+        if meta_err:
+            return json.dumps({"error": meta_err})
+
+        # If the hostname is a literal IP, the metadata check already
+        # validated it. Otherwise we need DNS-resolved pins.
+        try:
+            ipaddress.ip_address(hostname)
+            is_literal_ip = True
+        except ValueError:
+            is_literal_ip = False
+
+        resolver: _PinnedResolver | None = None
+        if not is_literal_ip:
+            dns_err, addrs = await asyncio.to_thread(_resolve_safe_addrs, hostname)
+            if dns_err:
+                return json.dumps({"error": dns_err})
+            resolver = _PinnedResolver({hostname: addrs or []})
+
         try:
             timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT)
+            connector = aiohttp.TCPConnector(resolver=resolver) if resolver else None
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 headers={"User-Agent": FETCH_USER_AGENT},
+                connector=connector,
             ) as session:
-                async with session.get(
-                    url,
-                    max_redirects=FETCH_MAX_REDIRECTS,
-                    allow_redirects=True,
-                ) as resp:
-                    # Check final URL after redirects for SSRF
-                    final_url = str(resp.url)
-                    if final_url != url:
-                        redirect_error = await asyncio.to_thread(_validate_url, final_url)
-                        if redirect_error:
-                            return json.dumps({"error": redirect_error})
+                # Manually walk redirects so each hop re-validates and
+                # re-pins. aiohttp's auto-redirect can't be safely combined
+                # with a strict pinned resolver across hostnames.
+                current_url = url
+                final_url = url
+                hops = 0
+                while True:
+                    async with session.get(
+                        current_url, allow_redirects=False
+                    ) as resp:
+                        if resp.status in (301, 302, 303, 307, 308) and hops < FETCH_MAX_REDIRECTS:
+                            location = resp.headers.get("Location", "")
+                            if not location:
+                                # No Location header — treat as terminal
+                                final_url = str(resp.url)
+                                content_type_local = resp.content_type or ""
+                                charset_local = resp.charset or "utf-8"
+                                body_bytes = await _read_capped(resp)
+                                if isinstance(body_bytes, str):
+                                    return body_bytes  # already an error JSON
+                                break
+                            from urllib.parse import urljoin
+                            next_url = urljoin(current_url, location)
+                            err, next_host = await asyncio.to_thread(
+                                _validate_url_metadata, next_url
+                            )
+                            if err:
+                                return json.dumps({"error": err})
+                            if next_host and resolver is not None:
+                                try:
+                                    ipaddress.ip_address(next_host)
+                                except ValueError:
+                                    derr, daddrs = await asyncio.to_thread(
+                                        _resolve_safe_addrs, next_host
+                                    )
+                                    if derr:
+                                        return json.dumps({"error": derr})
+                                    resolver.add(next_host, daddrs or [])
+                            current_url = next_url
+                            final_url = next_url
+                            hops += 1
+                            continue
+                        # Terminal response — read body
+                        final_url = str(resp.url)
+                        content_type_local = resp.content_type or ""
+                        charset_local = resp.charset or "utf-8"
+                        body_bytes = await _read_capped(resp)
+                        if isinstance(body_bytes, str):
+                            return body_bytes  # error JSON
+                        break
 
-                    # Check content length before reading
-                    content_length = resp.content_length
-                    if content_length is not None and content_length > FETCH_MAX_BODY:
-                        return json.dumps({
-                            "error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)",
-                        })
+                if hops >= FETCH_MAX_REDIRECTS and current_url != final_url:
+                    return json.dumps(
+                        {"error": f"Too many redirects (max {FETCH_MAX_REDIRECTS})"}
+                    )
 
-                    # Read body with size limit
-                    body_bytes = b""
-                    async for chunk in resp.content.iter_chunked(8192):
-                        body_bytes += chunk
-                        if len(body_bytes) > FETCH_MAX_BODY:
-                            return json.dumps({
-                                "error": f"Response too large (>{FETCH_MAX_BODY_MB}MB)",
-                            })
+                try:
+                    body = body_bytes.decode(charset_local, errors="replace")
+                except (LookupError, UnicodeDecodeError):
+                    body = body_bytes.decode("utf-8", errors="replace")
 
-                    content_type = resp.content_type or ""
-                    charset = resp.charset or "utf-8"
-
-                    try:
-                        body = body_bytes.decode(charset, errors="replace")
-                    except (LookupError, UnicodeDecodeError):
-                        body = body_bytes.decode("utf-8", errors="replace")
-
-            # Extract content based on type
+            content_type = content_type_local
             title = ""
             if "html" in content_type:
                 content, title = _extract_html(body)
@@ -486,16 +696,13 @@ def register_web_tools(
                 except json.JSONDecodeError:
                     content = body
             else:
-                # Plain text, markdown, XML, etc.
                 content = body
 
-            # Apply output limit
             total_len = len(content)
             truncated = False
             if total_len > max_chars:
                 content = content[:max_chars]
                 truncated = True
-
             if truncated:
                 content += f"\n\n[... truncated, {total_len} total chars]"
 
@@ -521,6 +728,11 @@ def register_web_tools(
             return json.dumps({"error": f"Request failed: {type(e).__name__}"})
         except asyncio.TimeoutError:
             return json.dumps({"error": f"Request timed out ({FETCH_TIMEOUT}s)"})
+        except OSError as e:
+            # Pinned resolver refused (hostname not pre-resolved) or kernel
+            # connection error — treat as SSRF block.
+            logger.warning("web_fetch resolver/connect rejected %s: %s", url, e)
+            return json.dumps({"error": f"URL blocked or unreachable: {e}"})
         except Exception as e:
             logger.error("web_fetch error for %s: %s", url, e)
             return json.dumps({"error": str(e)})

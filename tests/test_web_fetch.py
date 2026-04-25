@@ -351,9 +351,9 @@ class TestWebFetchHandler:
         assert result["source"] == "[web content — external, may be inaccurate]"
 
     @pytest.mark.asyncio
-    @patch("qanot.tools.web._validate_url", return_value=None)
+    @patch("qanot.tools.web._resolve_safe_addrs", return_value=(None, [{"hostname": "api.example.com", "host": "93.184.216.34", "port": 0, "family": 2, "proto": 0, "flags": 0}]))
     @patch("qanot.tools.web.aiohttp.ClientSession")
-    async def test_json_content(self, mock_session_cls, mock_validate, web_fetch_handler):
+    async def test_json_content(self, mock_session_cls, mock_resolve, web_fetch_handler):
         body = '{"key": "value", "number": 42}'
         session_cls, _ = _build_aiohttp_mocks(
             body.encode(), "https://api.example.com/data", "application/json",
@@ -431,29 +431,28 @@ class TestWebFetchHandler:
         assert "too large" in result["error"].lower()
 
     @pytest.mark.asyncio
-    @patch("qanot.tools.web._validate_url", return_value=None)
+    @patch(
+        "qanot.tools.web._resolve_safe_addrs",
+        return_value=(None, [{"hostname": "safe.example.com", "host": "93.184.216.34", "port": 0, "family": 2, "proto": 0, "flags": 0}]),
+    )
     @patch("qanot.tools.web.aiohttp.ClientSession")
-    async def test_redirect_ssrf_check(self, mock_session_cls, mock_validate, web_fetch_handler):
-        """After redirects, final URL is re-validated for SSRF."""
-        body = b"<html><body>Redirected</body></html>"
-
-        # Simulate redirect to a different URL
-        mock_resp = MagicMock()
-        mock_resp.url = "http://10.0.0.1/internal"  # Redirected to private IP
-        mock_resp.content_length = len(body)
-        mock_resp.content_type = "text/html"
-        mock_resp.charset = "utf-8"
-        mock_resp.content = MagicMock()
-        mock_resp.content.iter_chunked = lambda size: _async_iter([body])
+    async def test_redirect_ssrf_check(self, mock_session_cls, mock_resolve, web_fetch_handler):
+        """A redirect to a private-IP URL is blocked at the Location-header check."""
+        # 302 to a private IP via Location header — manual-redirect path will
+        # re-validate _validate_url_metadata and reject the literal IP.
+        redirect_resp = MagicMock()
+        redirect_resp.status = 302
+        redirect_resp.url = "https://safe.example.com"
+        redirect_resp.headers = {"Location": "http://10.0.0.1/internal"}
+        redirect_resp.content_length = 0
+        redirect_resp.content_type = "text/html"
+        redirect_resp.charset = "utf-8"
+        redirect_resp.content = MagicMock()
+        redirect_resp.content.iter_chunked = lambda size: _async_iter([b""])
 
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=_MockAsyncCtx(mock_resp))
+        mock_session.get = MagicMock(return_value=_MockAsyncCtx(redirect_resp))
         mock_session_cls.side_effect = MagicMock(return_value=_MockAsyncCtx(mock_session))
-
-        # _validate_url is mocked to return None for the initial URL,
-        # but we need it to block the redirect target.
-        # Reset the mock to call the real function for the redirect check
-        mock_validate.side_effect = [None, "URL blocked: private/internal network address"]
 
         result = json.loads(await web_fetch_handler({"url": "https://safe.example.com"}))
         assert "error" in result
