@@ -7,9 +7,11 @@ Uses aiohttp (already a dependency) — no extra packages needed.
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from aiohttp import web
 
@@ -20,6 +22,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DASHBOARD_PORT = 8765
+
+# Routes registered by webhook/webchat handlers — they have their own auth
+# (Telegram secret_token, webchat session token) and must not be gated by
+# the dashboard token.
+_PUBLIC_PREFIXES = ("/api/webhook", "/webchat", "/ws/")
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback_bind(host: str) -> bool:
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
 
 
 class Dashboard:
@@ -35,16 +47,49 @@ class Dashboard:
 
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler) -> web.Response:
-        """Token-based auth for dashboard API. Skips if no token configured."""
+        """Token + Origin gate for dashboard routes. Skips public prefixes."""
+        path = request.path
+        if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+            return await handler(request)
+
         token = self.config.dashboard_token
         if not token:
-            return await handler(request)
-        # Check Authorization header or ?token= query param
+            # start() refuses to launch on non-loopback without a token, and
+            # auto-generates one on loopback. Reaching here means a misconfig
+            # (e.g. token cleared at runtime) — fail closed.
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        origin = request.headers.get("Origin")
+        if origin is not None and not self._origin_allowed(origin, request):
+            return web.json_response({"error": "origin not allowed"}, status=403)
+
         auth = request.headers.get("Authorization", "")
         query_token = request.query.get("token", "")
-        if auth == f"Bearer {token}" or query_token == token:
+        expected = f"Bearer {token}"
+        if secrets.compare_digest(auth, expected) or secrets.compare_digest(
+            query_token, token
+        ):
             return await handler(request)
         return web.json_response({"error": "Unauthorized"}, status=401)
+
+    def _origin_allowed(self, origin: str, request: web.Request) -> bool:
+        """Validate Origin header against allowlist + loopback exemption."""
+        parsed = urlparse(origin)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if host in _LOOPBACK_HOSTS or host.startswith("127."):
+            return True
+        allowed = list(getattr(self.config, "dashboard_allowed_origins", []) or [])
+        if "*" in allowed or origin in allowed:
+            return True
+        # Same-host fallback: Origin host equals Host header host. The token
+        # is already a shared secret, so this is defense-in-depth against
+        # CSRF from another origin landing on the same browser.
+        request_host = request.headers.get("Host", "").split(":")[0].lower()
+        if request_host and host == request_host:
+            return True
+        return False
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self._handle_index)
@@ -175,9 +220,21 @@ class Dashboard:
     # ── Start/Stop ──
 
     async def start(self, port: int = DASHBOARD_PORT, host: str = "") -> None:
+        bind = host or getattr(self.config, "dashboard_host", "127.0.0.1")
+        if not _is_loopback_bind(bind) and not self.config.dashboard_token:
+            raise RuntimeError(
+                f"Dashboard refusing to start on non-loopback host {bind!r} "
+                "without dashboard_token set. Either bind to 127.0.0.1, set "
+                "dashboard_token in config, or disable dashboard."
+            )
+        if not self.config.dashboard_token:
+            self.config.dashboard_token = secrets.token_hex(24)
+            logger.warning(
+                "Dashboard auto-generated token (loopback only): %s",
+                self.config.dashboard_token,
+            )
         runner = web.AppRunner(self.app)
         await runner.setup()
-        bind = host or getattr(self.config, "dashboard_host", "127.0.0.1")
         site = web.TCPSite(runner, bind, port)
         await site.start()
         logger.info("Dashboard running at http://%s:%d", bind, port)

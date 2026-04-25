@@ -198,7 +198,12 @@ class Config:
     dashboard_enabled: bool = True  # Enable web dashboard
     dashboard_port: int = 8765  # Dashboard port
     dashboard_host: str = "127.0.0.1"  # Bind address (use 0.0.0.0 for Docker)
-    dashboard_token: str = ""  # Auth token for dashboard API (empty = no auth)
+    # Auth token for dashboard API. Empty + loopback host: auto-generated and
+    # logged at startup. Empty + non-loopback host: dashboard refuses to start.
+    dashboard_token: str = ""
+    # Allowed Origin headers for browser requests. Loopback origins always pass.
+    # Use ["*"] only for trusted deployments behind another auth layer.
+    dashboard_allowed_origins: list[str] = field(default_factory=list)
     # Backup
     backup_enabled: bool = True  # Enable startup backups
     # Model routing (cost optimization)
