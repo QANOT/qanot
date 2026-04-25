@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BLANK = "_______________"
+
+# Documents are stamped with the *operator's* local calendar date.
+# Using naive datetime.now() inherits the host TZ — which is UTC inside
+# most containers, so a contract generated at 02:00 Tashkent (21:00 UTC
+# previous day) would carry yesterday's date. Pin to the codebase's
+# universal Uzbekistan tz; deployments outside Tashkent can override
+# by setting their host TZ and we'll still produce a sane local date.
+try:
+    _LOCAL_TZ = ZoneInfo("Asia/Tashkent")
+except ZoneInfoNotFoundError:  # pragma: no cover — tzdata missing
+    _LOCAL_TZ = timezone.utc
+
+
+def _today_local() -> str:
+    """Today's calendar date in dd.mm.yyyy, in operator's local tz."""
+    return datetime.now(timezone.utc).astimezone(_LOCAL_TZ).strftime("%d.%m.%Y")
 
 
 def _rekvizit(name: str, stir: str, addr: str, bnk: str, acc: str, mf: str, dir_name: str) -> str:
@@ -45,7 +62,7 @@ def _common_fields(params: dict) -> dict:
         "counterparty_mfo": params.get("counterparty_mfo", ""),
         "amount": params.get("amount", 0),
         "description": params.get("description", ""),
-        "date": params.get("date", datetime.now().strftime("%d.%m.%Y")),
+        "date": params.get("date", _today_local()),
         "number": params.get("number", "1"),
         "city": params.get("city", "Toshkent"),
     }

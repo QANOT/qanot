@@ -73,6 +73,24 @@ class TestHelpers:
         assert fields["city"] == "Toshkent"
         assert fields["number"] == "1"
 
+    def test_default_date_uses_tashkent_local_calendar(self, monkeypatch):
+        """Regression: at 21:00 UTC it's already next-day Tashkent (+5h).
+        A contract generated then must carry the next-day date, not today
+        UTC — otherwise the host's container TZ silently corrupts dates."""
+        from datetime import datetime as _dt, timezone as _tz
+        from qanot.tools.doc_templates import helpers as _helpers
+
+        class _FrozenDateTime(_dt):
+            @classmethod
+            def now(cls, tz=None):
+                # 25 Apr 2026 21:00 UTC == 26 Apr 2026 02:00 Tashkent.
+                fixed = _dt(2026, 4, 25, 21, 0, 0, tzinfo=_tz.utc)
+                return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
+        monkeypatch.setattr(_helpers, "datetime", _FrozenDateTime)
+        fields = _common_fields({})
+        assert fields["date"] == "26.04.2026"
+
     def test_tier1_generators_registry(self):
         assert len(TIER1_GENERATORS) == 15  # 6 TIER1 + 9 TIER2
         assert "oldi_sotdi" in TIER1_GENERATORS

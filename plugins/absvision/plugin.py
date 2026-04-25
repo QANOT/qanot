@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 
@@ -17,9 +18,17 @@ logger = logging.getLogger(__name__)
 TOOLS_MD = (Path(__file__).parent / "TOOLS.md").read_text(encoding="utf-8") if (Path(__file__).parent / "TOOLS.md").exists() else ""
 SOUL_APPEND = (Path(__file__).parent / "SOUL_APPEND.md").read_text(encoding="utf-8") if (Path(__file__).parent / "SOUL_APPEND.md").exists() else ""
 
+# ABS HR API expects the *local* business date (Tashkent). Using UTC here
+# is wrong on the boundary: between 19:00 UTC and midnight UTC we'd be
+# requesting the previous day's HR data while the office is already open.
+try:
+    _LOCAL_TZ = ZoneInfo("Asia/Tashkent")
+except ZoneInfoNotFoundError:  # pragma: no cover — tzdata missing
+    _LOCAL_TZ = timezone.utc
+
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).astimezone(_LOCAL_TZ).strftime("%Y-%m-%d")
 
 
 class AbsVisionClient:
