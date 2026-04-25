@@ -182,63 +182,70 @@ class TestTypes:
 
 
 class TestRegistry:
-    def test_register_and_get(self):
+    @pytest.mark.asyncio
+    async def test_register_and_get(self):
         reg = SubagentRegistry()
         run = _make_run()
-        reg.register(run)
+        await reg.register(run)
         assert reg.get(run.run_id) is run
 
-    def test_update(self):
+    @pytest.mark.asyncio
+    async def test_update(self):
         reg = SubagentRegistry()
         run = _make_run()
-        reg.register(run)
-        reg.update(run.run_id, status=STATUS_COMPLETED)
+        await reg.register(run)
+        await reg.update(run.run_id, status=STATUS_COMPLETED)
         assert reg.get(run.run_id).status == STATUS_COMPLETED
 
-    def test_update_nonexistent(self):
+    @pytest.mark.asyncio
+    async def test_update_nonexistent(self):
         reg = SubagentRegistry()
-        assert reg.update("nonexistent", status="x") is None
+        assert await reg.update("nonexistent", status="x") is None
 
-    def test_active_for_user(self):
+    @pytest.mark.asyncio
+    async def test_active_for_user(self):
         reg = SubagentRegistry()
         r1 = _make_run(parent_user_id="u1")
         r2 = _make_run(parent_user_id="u1", status=STATUS_COMPLETED)
         r3 = _make_run(parent_user_id="u2")
-        reg.register(r1)
-        reg.register(r2)
-        reg.register(r3)
+        await reg.register(r1)
+        await reg.register(r2)
+        await reg.register(r3)
         assert reg.count_active_for_user("u1") == 1
         assert reg.count_active_for_user("u2") == 1
 
-    def test_recent_for_user(self):
+    @pytest.mark.asyncio
+    async def test_recent_for_user(self):
         reg = SubagentRegistry()
         for i in range(5):
             r = _make_run(parent_user_id="u1")
             r.created_at = time.time() + i
-            reg.register(r)
+            await reg.register(r)
         recent = reg.get_recent_for_user("u1", limit=3)
         assert len(recent) == 3
         # Should be sorted by created_at descending
         assert recent[0].created_at >= recent[1].created_at
 
-    def test_cleanup_stale(self):
+    @pytest.mark.asyncio
+    async def test_cleanup_stale(self):
         reg = SubagentRegistry()
         old = _make_run(status=STATUS_COMPLETED)
         old.created_at = time.time() - 7200  # 2 hours ago
-        reg.register(old)
+        await reg.register(old)
         new = _make_run()
-        reg.register(new)
-        removed = reg.cleanup_stale(max_age=3600)
+        await reg.register(new)
+        removed = await reg.cleanup_stale(max_age=3600)
         assert removed == 1
         assert reg.get(old.run_id) is None
         assert reg.get(new.run_id) is not None
 
-    def test_persist_and_restore(self):
+    @pytest.mark.asyncio
+    async def test_persist_and_restore(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "reg.json")
             reg = SubagentRegistry(path)
             run = _make_run(status=STATUS_COMPLETED)
-            reg.register(run)
+            await reg.register(run)
 
             reg2 = SubagentRegistry(path)
             reg2.restore()
@@ -246,12 +253,13 @@ class TestRegistry:
             assert r is not None
             assert r.status == STATUS_COMPLETED
 
-    def test_restore_orphaned_runs(self):
+    @pytest.mark.asyncio
+    async def test_restore_orphaned_runs(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "reg.json")
             reg = SubagentRegistry(path)
             run = _make_run(status=STATUS_RUNNING)
-            reg.register(run)
+            await reg.register(run)
 
             reg2 = SubagentRegistry(path)
             reg2.restore()
@@ -742,59 +750,64 @@ class TestLoopDetection:
         result = mgr._check_loop("u1", "researcher", "Do something")
         assert result is None
 
-    def test_detects_too_many_active(self):
+    @pytest.mark.asyncio
+    async def test_detects_too_many_active(self):
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         # Register 3 active runs for same agent
         for _ in range(3):
             run = _make_run(parent_user_id="u1", agent_id="researcher", status=STATUS_RUNNING)
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Do something")
         assert result is not None
         assert "loop detected" in result
 
-    def test_detects_similar_completed_task(self):
+    @pytest.mark.asyncio
+    async def test_detects_similar_completed_task(self):
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(
             parent_user_id="u1", agent_id="researcher",
             status=STATUS_COMPLETED, task="Research Python features",
         )
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Research Python features")
         assert result is not None
         assert "similar" in result
 
-    def test_no_loop_different_task(self):
+    @pytest.mark.asyncio
+    async def test_no_loop_different_task(self):
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(
             parent_user_id="u1", agent_id="researcher",
             status=STATUS_COMPLETED, task="Research JavaScript",
         )
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Analyze database performance")
         assert result is None
 
-    def test_no_loop_different_agent(self):
+    @pytest.mark.asyncio
+    async def test_no_loop_different_agent(self):
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(
             parent_user_id="u1", agent_id="coder",
             status=STATUS_COMPLETED, task="Research Python features",
         )
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Research Python features")
         assert result is None
 
-    def test_no_loop_different_user(self):
+    @pytest.mark.asyncio
+    async def test_no_loop_different_user(self):
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(
             parent_user_id="u2", agent_id="researcher",
             status=STATUS_COMPLETED, task="Research Python features",
         )
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = mgr._check_loop("u1", "researcher", "Research Python features")
         assert result is None
 
@@ -989,7 +1002,7 @@ class TestAgentHistory:
                 result_text=f"Result {i}",
             )
             run.created_at = time.time() + i
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
 
         result = json.loads(await reg.execute("agent_history", {}))
         assert result["total"] == 3
@@ -1004,7 +1017,7 @@ class TestAgentHistory:
 
         for aid in ["researcher", "coder", "researcher"]:
             run = _make_run(parent_user_id="default", agent_id=aid, status=STATUS_COMPLETED)
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
 
         result = json.loads(await reg.execute("agent_history", {"agent_id": "researcher"}))
         assert result["total"] == 2
@@ -1020,7 +1033,7 @@ class TestAgentHistory:
         for i in range(10):
             run = _make_run(parent_user_id="default", status=STATUS_COMPLETED)
             run.created_at = time.time() + i
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
 
         result = json.loads(await reg.execute("agent_history", {"limit": 3}))
         assert result["total"] == 3
@@ -1086,7 +1099,7 @@ class TestSpawnValidation:
         # Fill up concurrency
         for _ in range(MAX_CONCURRENT_PER_USER):
             run = _make_run(parent_user_id="u1", status=STATUS_RUNNING)
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
         result = await mgr.spawn(SpawnParams(task="test"), user_id="u1")
         assert isinstance(result, str)
         assert "concurrent" in result
@@ -1128,7 +1141,7 @@ class TestCancelOperations:
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(status=STATUS_COMPLETED)
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = await mgr.cancel(run.run_id)
         assert result is False
 
@@ -1137,7 +1150,7 @@ class TestCancelOperations:
         config = _make_config()
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         run = _make_run(status=STATUS_RUNNING)
-        mgr.registry.register(run)
+        await mgr.registry.register(run)
         result = await mgr.cancel(run.run_id)
         assert result is True
         assert mgr.registry.get(run.run_id).status == STATUS_CANCELLED
@@ -1148,9 +1161,9 @@ class TestCancelOperations:
         mgr = SubagentManager(config, MagicMock(), _make_registry())
         for _ in range(3):
             run = _make_run(parent_user_id="u1", status=STATUS_RUNNING)
-            mgr.registry.register(run)
+            await mgr.registry.register(run)
         run_other = _make_run(parent_user_id="u2", status=STATUS_RUNNING)
-        mgr.registry.register(run_other)
+        await mgr.registry.register(run_other)
 
         count = await mgr.cancel_all_for_user("u1")
         assert count == 3

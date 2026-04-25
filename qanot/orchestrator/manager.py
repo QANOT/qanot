@@ -224,7 +224,7 @@ class SubagentManager:
             timeout=params.timeout or agent_info.get("timeout", DEFAULT_TIMEOUT),
             max_iterations=params.max_iterations,
         )
-        self.registry.register(run)
+        await self.registry.register(run)
 
         # Build child agent
         child_registry = build_child_registry(
@@ -281,7 +281,7 @@ class SubagentManager:
         task = self._tasks.get(run_id)
         if task and not task.done():
             task.cancel()
-            self.registry.update(
+            await self.registry.update(
                 run_id,
                 status=STATUS_CANCELLED,
                 ended_at=time.time(),
@@ -294,7 +294,7 @@ class SubagentManager:
         # Even if no task, mark as cancelled if still active
         run = self.registry.get(run_id)
         if run and not run.is_terminal:
-            self.registry.update(
+            await self.registry.update(
                 run_id,
                 status=STATUS_CANCELLED,
                 ended_at=time.time(),
@@ -323,7 +323,7 @@ class SubagentManager:
         if all_tasks:
             await asyncio.gather(*all_tasks, return_exceptions=True)
         self._tasks.clear()
-        self.registry.persist()
+        await self.registry.persist()
         logger.info("SubagentManager shut down (%d tasks cancelled)", len(all_tasks))
 
     def get_board(self, user_id: str) -> list[dict]:
@@ -370,7 +370,7 @@ class SubagentManager:
         """Synchronous: parent blocks until child completes."""
         run.status = STATUS_RUNNING
         run.started_at = time.time()
-        self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
+        await self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
 
         # Mirror to monitoring group
         await mirror_to_group(
@@ -403,7 +403,7 @@ class SubagentManager:
         finally:
             run.ended_at = time.time()
             self._collect_stats(run, agent)
-            self._finalize_run(run)
+            await self._finalize_run(run)
             # Mirror result to monitoring group
             await mirror_to_group(
                 self.config, run.agent_id, "main",
@@ -415,7 +415,7 @@ class SubagentManager:
         async def _run():
             run.status = STATUS_RUNNING
             run.started_at = time.time()
-            self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
+            await self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
 
             try:
                 result = await asyncio.wait_for(
@@ -439,7 +439,7 @@ class SubagentManager:
             finally:
                 run.ended_at = time.time()
                 self._collect_stats(run, agent)
-                self._finalize_run(run)
+                await self._finalize_run(run)
                 self._tasks.pop(run.run_id, None)
 
             # Announce result (including cancellation/failure)
@@ -475,7 +475,7 @@ class SubagentManager:
         """
         run.status = STATUS_RUNNING
         run.started_at = time.time()
-        self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
+        await self.registry.update(run.run_id, status=run.status, started_at=run.started_at)
 
         conversation_log: list[dict] = []
         final_result = ""
@@ -527,7 +527,7 @@ class SubagentManager:
         finally:
             run.ended_at = time.time()
             self._collect_stats(run, agent)
-            self._finalize_run(run)
+            await self._finalize_run(run)
 
         logger.info(
             "Conversation agent '%s' %s in %.1fs (%d turns)",
@@ -536,9 +536,9 @@ class SubagentManager:
 
     # ── Internal helpers ────────────────────────────────────
 
-    def _finalize_run(self, run: SubagentRun) -> None:
+    async def _finalize_run(self, run: SubagentRun) -> None:
         """Update registry and post to board after run completion."""
-        self.registry.update(
+        await self.registry.update(
             run.run_id,
             status=run.status,
             ended_at=run.ended_at,
