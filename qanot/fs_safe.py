@@ -1,17 +1,24 @@
 """Safe file operations — jail writes to workspace root.
 
-OpenClaw-inspired: writeFileWithinRoot with symlink/traversal protection.
+Pattern ported from OpenClaw's sandbox FS guards
+(src/agents/sandbox/validate-sandbox-security.ts): hardcoded denylist of
+host system dirs + per-user credential subpaths, plus filename patterns
+covering keys/credentials. Symlinks resolved canonically before checks.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import uuid
 
-# System directories that should NEVER be written to
+# System directories that should NEVER be read or written
 _SYSTEM_DIRS = frozenset({
-    "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64",
-    "/boot", "/proc", "/sys", "/dev", "/var/run", "/run",
+    "/etc", "/private/etc",
+    "/usr", "/bin", "/sbin", "/lib", "/lib64",
+    "/boot", "/proc", "/sys", "/dev",
+    "/var/run", "/private/var/run", "/run",
+    "/var/lib",
     "/System", "/Library",  # macOS
     "C:\\Windows", "C:\\Program Files",  # Windows
 })
@@ -21,6 +28,66 @@ _SYSTEM_DIRS = frozenset({
 _BLOCKED_FILENAMES = frozenset({
     "config.json",
 })
+
+# Per-user credential directories — block reads and writes anywhere they
+# appear under a home dir (~, /Users/<u>, /home/<u>, /root)
+_BLOCKED_HOME_SUBPATHS = frozenset({
+    ".aws", ".cargo", ".config", ".docker", ".gnupg",
+    ".kube", ".netrc", ".npm", ".pgpass", ".ssh",
+    ".terraform.d",
+})
+
+# Filename patterns (fnmatch-style) that always indicate sensitive material
+_BLOCKED_FILENAME_PATTERNS = (
+    "id_*",          # SSH private keys (id_rsa, id_ed25519, id_ecdsa, id_dsa)
+    "*.pem", "*.key", "*.pfx", "*.p12", "*.crt", "*.cer",
+    "credentials",
+    ".env", ".env.*",
+    "kubeconfig",
+    ".pgpass", ".netrc", ".npmrc",
+    "*.kdbx",        # KeePass DB
+    "*_rsa", "*_dsa", "*_ed25519", "*_ecdsa",  # alt SSH key naming
+)
+
+
+def _is_in_blocked_home_subpath(resolved: str) -> bool:
+    """Return True if resolved path is inside a blocked home subdirectory.
+
+    Walks the path components looking for `<home>/<blocked_dir>` shapes:
+    - /Users/<user>/.ssh/...
+    - /home/<user>/.aws/...
+    - /root/.gnupg/...
+    - $HOME/.docker/...
+    """
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        for sub in _BLOCKED_HOME_SUBPATHS:
+            blocked_root = os.path.join(home, sub)
+            if resolved == blocked_root or resolved.startswith(blocked_root + os.sep):
+                return True
+
+    parts = resolved.split(os.sep)
+    home_parents = {"Users", "home"}
+    for i, part in enumerate(parts):
+        # /Users/<u>/<sub>/... or /home/<u>/<sub>/...
+        if part in home_parents and i + 2 < len(parts):
+            if parts[i + 2] in _BLOCKED_HOME_SUBPATHS:
+                return True
+        # /root/<sub>/... (no user segment between /root and the subdir)
+        if part == "root" and i + 1 < len(parts):
+            if parts[i + 1] in _BLOCKED_HOME_SUBPATHS:
+                return True
+    return False
+
+
+def _basename_blocked(basename: str) -> bool:
+    """Match basename against credential-style patterns."""
+    if not basename:
+        return False
+    for pat in _BLOCKED_FILENAME_PATTERNS:
+        if fnmatch.fnmatchcase(basename, pat):
+            return True
+    return False
 
 
 class SafeWriteError(Exception):
@@ -75,7 +142,8 @@ def resolve_workspace_path(path: str, workspace_dir: str) -> tuple[str, str | No
 def validate_read_path(path: str) -> str | None:
     """Validate a file path for reading.
 
-    Blocks reads from system directories and sensitive locations.
+    Blocks reads from system directories, credential dirs (~/.ssh, ~/.aws,
+    etc.), and credential-style filenames (id_rsa, *.pem, .env, kubeconfig).
 
     Returns:
         Error message if blocked, None if allowed.
@@ -88,10 +156,13 @@ def validate_read_path(path: str) -> str | None:
     for sys_dir in _SYSTEM_DIRS:
         if _is_under(resolved, sys_dir):
             return f"System directory blocked: {sys_dir}"
-    # Block well-known sensitive files
+    if _is_in_blocked_home_subpath(resolved):
+        return f"Credential directory blocked: {resolved}"
     basename = os.path.basename(resolved)
-    if basename in (".env", "config.json", ".netrc", ".npmrc"):
-        return f"Sensitive file blocked: {basename}"
+    if basename == "config.json":
+        return "Sensitive file blocked: config.json"
+    if _basename_blocked(basename):
+        return f"Credential-style filename blocked: {basename}"
     return None
 
 
@@ -121,10 +192,17 @@ def validate_write_path(path: str, root: str | None = None) -> str | None:
     if basename in _BLOCKED_FILENAMES:
         return f"Protected file — cannot be modified by agent: {basename}"
 
+    if _basename_blocked(basename):
+        return f"Credential-style filename blocked: {basename}"
+
     # Block system directories
     for sys_dir in _SYSTEM_DIRS:
         if _is_under(resolved, sys_dir):
             return f"System directory blocked: {sys_dir}"
+
+    # Block writes anywhere under per-user credential dirs (~/.ssh, ~/.aws, …)
+    if _is_in_blocked_home_subpath(resolved):
+        return f"Credential directory blocked: {resolved}"
 
     # Block symlinks (prevent escape via symlink target)
     if os.path.islink(path):

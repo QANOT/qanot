@@ -9,7 +9,10 @@ import pytest
 from qanot.fs_safe import (
     SafeWriteError,
     _SYSTEM_DIRS,
+    _basename_blocked,
+    _is_in_blocked_home_subpath,
     is_path_within_root,
+    validate_read_path,
     validate_write_path,
     safe_write_file,
 )
@@ -231,3 +234,125 @@ class TestSafeWriteFile:
         link.symlink_to(real)
         with pytest.raises(SafeWriteError):
             safe_write_file(str(link), "pwned", root=str(workspace))
+
+
+# ── Credential dir + filename blocklists (OpenClaw port) ─────
+
+
+class TestCredentialBlocklists:
+    """Validates ~/.ssh, ~/.aws, id_rsa, *.pem, kubeconfig, .env etc are
+    blocked for both reads and writes regardless of root jail."""
+
+    @pytest.mark.parametrize("subdir", [
+        ".ssh", ".aws", ".gnupg", ".docker", ".kube",
+        ".cargo", ".config", ".npm", ".terraform.d",
+    ])
+    def test_blocks_home_subpath_read(self, subdir: str) -> None:
+        path = os.path.expanduser(f"~/{subdir}/somefile")
+        result = validate_read_path(path)
+        assert result is not None
+        assert "credential" in result.lower() or "blocked" in result.lower()
+
+    @pytest.mark.parametrize("subdir", [".ssh", ".aws", ".gnupg"])
+    def test_blocks_home_subpath_write_no_root(self, subdir: str) -> None:
+        """Even without a root jail, credential subpaths under $HOME are blocked."""
+        path = os.path.expanduser(f"~/{subdir}/should_not_write")
+        result = validate_write_path(path)
+        assert result is not None
+        assert "credential" in result.lower() or "blocked" in result.lower()
+
+    @pytest.mark.parametrize("absolute_path", [
+        "/Users/alice/.ssh/id_rsa",
+        "/home/bob/.aws/credentials",
+        "/root/.gnupg/private-keys-v1.d",
+    ])
+    def test_blocks_credential_dirs_via_path_walk(self, absolute_path: str) -> None:
+        """Even for paths that don't resolve to current $HOME, the path-walk
+        heuristic should still block /Users/<u>/.ssh, /home/<u>/.aws, /root/.x."""
+        result = validate_read_path(absolute_path)
+        assert result is not None
+
+    @pytest.mark.parametrize("filename", [
+        "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
+        "server.pem", "key.key", "cert.crt", "store.pfx", "store.p12",
+        "credentials", "kubeconfig", ".env", ".env.production",
+        "host_rsa", "deploy_ed25519",
+        "secrets.kdbx",
+    ])
+    def test_basename_blocked_pattern(self, filename: str) -> None:
+        assert _basename_blocked(filename), f"{filename} should match a blocked pattern"
+
+    @pytest.mark.parametrize("filename", [
+        "notes.md", "data.json", "image.png", "README.txt",
+        "myproject.toml", "id.txt",  # bare "id" without _ should not match id_*
+    ])
+    def test_basename_allowed(self, filename: str) -> None:
+        assert not _basename_blocked(filename), f"{filename} should be allowed"
+
+    def test_blocks_id_rsa_read_even_outside_home(self, tmp_path) -> None:
+        """id_rsa anywhere — including a tmpdir — is blocked by filename pattern."""
+        target = tmp_path / "id_rsa"
+        target.write_text("BEGIN RSA PRIVATE KEY")
+        result = validate_read_path(str(target))
+        assert result is not None
+        assert "credential" in result.lower()
+
+    def test_blocks_dotenv_read_in_arbitrary_location(self, tmp_path) -> None:
+        target = tmp_path / ".env"
+        target.write_text("API_KEY=abc")
+        result = validate_read_path(str(target))
+        assert result is not None
+
+    def test_blocks_pem_read(self, tmp_path) -> None:
+        target = tmp_path / "private.pem"
+        target.write_text("-----BEGIN PRIVATE KEY-----")
+        result = validate_read_path(str(target))
+        assert result is not None
+
+    def test_allows_normal_text_file_read(self, tmp_path) -> None:
+        target = tmp_path / "notes.md"
+        target.write_text("hello")
+        result = validate_read_path(str(target))
+        assert result is None
+
+    def test_validate_read_blocks_system_dirs(self) -> None:
+        """Reading /etc/passwd is blocked even though OS may resolve via /private/etc."""
+        result = validate_read_path("/etc/passwd")
+        # On macOS this resolves to /private/etc/passwd which we now block.
+        # On Linux /etc is in _SYSTEM_DIRS directly.
+        assert result is not None
+
+    def test_validate_read_blocks_etc_shadow(self) -> None:
+        result = validate_read_path("/etc/shadow")
+        assert result is not None
+
+    def test_validate_read_blocks_proc(self) -> None:
+        result = validate_read_path("/proc/self/environ")
+        assert result is not None
+
+    def test_validate_read_allows_empty_home_subpath_check_when_no_home(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """If $HOME is unresolvable (~) the function should not crash."""
+        monkeypatch.setenv("HOME", "/nonexistent/path")
+        # path-walk fallback still applies; this should not raise.
+        result = validate_read_path(str(tmp_path / "notes.md"))
+        assert result is None
+
+    def test_blocks_symlink_to_ssh_via_realpath(self, tmp_path) -> None:
+        """A symlink in workspace pointing to ~/.ssh/id_rsa is blocked because
+        realpath() resolves it before the credential-dir check."""
+        ssh_dir = os.path.expanduser("~/.ssh")
+        if not os.path.isdir(ssh_dir):
+            pytest.skip("no ~/.ssh on this host")
+        link = tmp_path / "link"
+        link.symlink_to(ssh_dir)
+        result = validate_read_path(str(link / "id_rsa"))
+        assert result is not None
+
+    def test_is_in_blocked_home_subpath_helper(self) -> None:
+        assert _is_in_blocked_home_subpath("/Users/alice/.ssh/id_rsa")
+        assert _is_in_blocked_home_subpath("/home/bob/.aws/credentials")
+        assert _is_in_blocked_home_subpath("/root/.gnupg/key")
+        assert not _is_in_blocked_home_subpath("/Users/alice/projects/notes.md")
+        assert not _is_in_blocked_home_subpath("/var/log/syslog")
