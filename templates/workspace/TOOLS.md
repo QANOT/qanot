@@ -35,6 +35,14 @@
 - `cron_update` — Update a scheduled job
 - `cron_delete` — Delete a scheduled job
 
+### Follow-ups (open-item tracker)
+- `track_followup` — Mark a topic as needing a re-check at a future time;
+  schedules an isolated re-fire that re-evaluates the entry with the
+  original context preserved.
+- `list_followups` — Show open or resolved follow-ups.
+- `close_followup` — Resolve an entry with a short outcome; deletes the
+  pending re-check if it hasn't fired yet.
+
 ### Skills
 - `create_skill` — Create a reusable skill (SKILL.md + script)
 - `list_skills` — List all available skills

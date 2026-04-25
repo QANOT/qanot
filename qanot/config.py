@@ -101,6 +101,7 @@ class Config:
     mcp_management_enabled: bool = True      # mcp_list/propose/remove/test (4)
     config_management_enabled: bool = True   # delete_message / config_set_secret / config_toggle (3)
     local_business_tools_enabled: bool = True  # currency/ikpu/payment/tax/generate_document/weather (6)
+    followup_enabled: bool = True            # track_followup/list_followups/close_followup (3)
     timezone: str = "Asia/Tashkent"
     max_concurrent: int = 4
     compaction_mode: str = "safeguard"

@@ -340,6 +340,21 @@ async def main() -> None:
     # Register cron tools (pass scheduler ref for reload notifications)
     register_cron_tools(tool_registry, config.cron_dir, scheduler_ref=scheduler)
 
+    # Register follow-up engine: stateful open-item tracker that uses the
+    # scheduler under the hood. Disabling skips registration only; the
+    # followups.json file in the workspace stays intact across toggles.
+    if config.followup_enabled:
+        from qanot.tools.followup import register_followup_tools
+        register_followup_tools(
+            tool_registry,
+            workspace_dir=config.workspace_dir,
+            cron_dir=config.cron_dir,
+            timezone_name=config.timezone,
+            scheduler_ref=scheduler,
+        )
+    else:
+        logger.info("Follow-up tools disabled via followup_enabled=false")
+
     # Register skill management tools (create, list, run, delete, install) — 5 tools.
     if config.skill_tools_enabled:
         from qanot.tools.skill_tools import register_skill_tools

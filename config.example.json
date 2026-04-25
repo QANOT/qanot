@@ -54,6 +54,7 @@
   "heartbeat_interval": "0 */4 * * *",
   "briefing_enabled": true,
   "briefing_schedule": "0 8 * * *",
+  "followup_enabled": true,
   "max_memory_injection_chars": 4000,
   "history_limit": 50,
 
