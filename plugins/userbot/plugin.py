@@ -406,7 +406,8 @@ class UserbotPlugin(Plugin):
             "The recipient_id MUST be an opaque token returned by one of those "
             "tools (tokens expire after 1 hour). Rate-limited: minimum gap "
             "per recipient + hourly global cap. Posts a preview into the "
-            "current chat after a successful send."
+            "current chat after a successful send. Use dry_run=true to "
+            "prepare a draft for the operator to review without sending."
         ),
         parameters={
             "type": "object",
@@ -420,6 +421,22 @@ class UserbotPlugin(Plugin):
                     "type": "string",
                     "description": "Message body (plain text, Telegram limit ~4096 chars).",
                 },
+                "reply_to_message_id": {
+                    "type": "integer",
+                    "description": (
+                        "Optional. If set, send as a reply to this message "
+                        "id within the same chat. Use only when the operator "
+                        "explicitly asks to thread the reply."
+                    ),
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, do NOT send. Return what would be sent so "
+                        "the operator can review. Whitelist is still enforced; "
+                        "rate limit is bypassed because no real send occurs."
+                    ),
+                },
             },
         },
     )
@@ -430,6 +447,16 @@ class UserbotPlugin(Plugin):
 
         recipient_id = (params.get("recipient_id") or "").strip()
         text = params.get("text") or ""
+        dry_run = bool(params.get("dry_run") or False)
+        # Pyrogram accepts None for "no reply"; we coerce 0/missing to None.
+        reply_to_raw = params.get("reply_to_message_id")
+        try:
+            reply_to_message_id: int | None = int(reply_to_raw) if reply_to_raw else None
+        except (TypeError, ValueError):
+            reply_to_message_id = None
+        if reply_to_message_id is not None and reply_to_message_id <= 0:
+            reply_to_message_id = None
+
         if not recipient_id:
             return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
         if not text.strip():
@@ -450,7 +477,8 @@ class UserbotPlugin(Plugin):
 
         label = self._recipient_label(entry)
 
-        # Whitelist gate (non-empty list = gated).
+        # Whitelist gate (non-empty list = gated). Enforced for dry_run too —
+        # the agent shouldn't even *consider* drafting to non-whitelisted peers.
         if not self._allowed_by_whitelist(entry):
             self._audit.whitelist_reject(recipient=label)
             return json.dumps(
@@ -465,7 +493,26 @@ class UserbotPlugin(Plugin):
                 ensure_ascii=False,
             )
 
-        # Rate limit gate.
+        if dry_run:
+            self._audit.dry_run(
+                recipient_id=recipient_id,
+                recipient=label,
+                text=text,
+                reply_to_message_id=reply_to_message_id,
+            )
+            payload: dict[str, Any] = {
+                "status": "ok",
+                "dry_run": True,
+                "would_send": True,
+                "recipient": label,
+                "text": text,
+                "text_len": len(text),
+            }
+            if reply_to_message_id:
+                payload["reply_to_message_id"] = reply_to_message_id
+            return json.dumps(payload, ensure_ascii=False)
+
+        # Rate limit gate (real sends only).
         try:
             self._rate_limiter.check(recipient_id)
         except Exception as rle:
@@ -485,7 +532,10 @@ class UserbotPlugin(Plugin):
 
         # Do the actual send.
         try:
-            msg = await client.send_message(entry["peer"], text)
+            send_kwargs: dict[str, Any] = {}
+            if reply_to_message_id:
+                send_kwargs["reply_to_message_id"] = reply_to_message_id
+            msg = await client.send_message(entry["peer"], text, **send_kwargs)
         except Exception as e:
             cls, friendly = self._friendly_rpc_error(e)
             self._audit.send_error(recipient=label, error_class=cls)
@@ -503,21 +553,22 @@ class UserbotPlugin(Plugin):
             recipient=label,
             text=text,
             message_id=message_id,
+            reply_to_message_id=reply_to_message_id,
         )
 
         # Preview post is best-effort and must NEVER raise back into the
         # tool result — the send already happened.
         await self._post_preview(text, label)
 
-        return json.dumps(
-            {
-                "status": "ok",
-                "ok": True,
-                "message_id": message_id,
-                "recipient": label,
-            },
-            ensure_ascii=False,
-        )
+        result: dict[str, Any] = {
+            "status": "ok",
+            "ok": True,
+            "message_id": message_id,
+            "recipient": label,
+        }
+        if reply_to_message_id:
+            result["reply_to_message_id"] = reply_to_message_id
+        return json.dumps(result, ensure_ascii=False)
 
     @tool(
         name="tg_list_recent_chats",
@@ -680,5 +731,341 @@ class UserbotPlugin(Plugin):
 
         return json.dumps(
             {"status": "ok", "count": len(messages), "messages": messages},
+            ensure_ascii=False,
+        )
+
+    @tool(
+        name="tg_scan_unread",
+        description=(
+            "Scan dialogs and return their recent messages in ONE call. "
+            "Replaces the (list_recent_chats → get_chat_history × N) pattern "
+            "for digest/triage workflows. Each dialog includes a fresh "
+            "recipient_id token. Channels are excluded by default to keep "
+            "broadcast noise out of the brief."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "max_dialogs": {
+                    "type": "integer",
+                    "description": "Max dialogs to inspect (1-50, default 20).",
+                },
+                "messages_per_dialog": {
+                    "type": "integer",
+                    "description": "Messages to fetch per dialog (1-30, default 10).",
+                },
+                "include_channels": {
+                    "type": "boolean",
+                    "description": "Include broadcast channels (default false).",
+                },
+                "include_groups": {
+                    "type": "boolean",
+                    "description": "Include groups/supergroups (default true).",
+                },
+                "only_unread": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, only return dialogs with unread_messages_count > 0 "
+                        "(default true)."
+                    ),
+                },
+            },
+        },
+    )
+    async def tg_scan_unread(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        max_dialogs = max(1, min(50, int(params.get("max_dialogs") or 20)))
+        per_dialog = max(1, min(30, int(params.get("messages_per_dialog") or 10)))
+        include_channels = bool(params.get("include_channels") or False)
+        include_groups = (
+            bool(params.get("include_groups")) if params.get("include_groups") is not None else True
+        )
+        only_unread = (
+            bool(params.get("only_unread")) if params.get("only_unread") is not None else True
+        )
+
+        # First pass: collect candidate dialogs synchronously. We don't
+        # parallelise the dialog iterator — pyrogram's get_dialogs is
+        # already a single MTProto round-trip with paged results.
+        candidates: list[tuple[Any, str, str | None, str, int, int]] = []
+        try:
+            async for dialog in client.get_dialogs(limit=max_dialogs):
+                chat = getattr(dialog, "chat", None)
+                if chat is None:
+                    continue
+                peer_type = self._chat_type(chat)
+                if peer_type == "channel" and not include_channels:
+                    continue
+                if peer_type == "group" and not include_groups:
+                    continue
+                unread = int(getattr(dialog, "unread_messages_count", 0) or 0)
+                if only_unread and unread <= 0:
+                    continue
+                username = getattr(chat, "username", None)
+                title = (
+                    getattr(chat, "title", None)
+                    or getattr(chat, "first_name", None)
+                    or (f"@{username}" if username else "")
+                    or str(getattr(chat, "id", "?"))
+                )
+                peer_id = int(getattr(chat, "id", 0) or 0)
+                candidates.append((chat, title, username, peer_type, peer_id, unread))
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        # Mint tokens (under the lock once) before the parallel fetch so
+        # the agent can immediately reply to anything it sees.
+        peer_tokens: list[str] = []
+        for chat, title, username, peer_type, peer_id, _ in candidates:
+            token = await self._mint_token(
+                peer=peer_id,
+                username=username,
+                first_name=title,
+                peer_id=peer_id,
+                peer_type=peer_type,
+            )
+            peer_tokens.append(token)
+
+        # Parallel history fetch — this is where the speedup comes from.
+        async def _fetch_history(peer_id: int) -> list[Any]:
+            out: list[Any] = []
+            try:
+                async for m in client.get_chat_history(peer_id, limit=per_dialog):
+                    out.append(m)
+            except Exception:
+                # Failures are isolated per-dialog; we still want the rest.
+                return []
+            return out
+
+        histories = await asyncio.gather(
+            *(_fetch_history(c[4]) for c in candidates),
+            return_exceptions=False,
+        )
+
+        dialogs_out: list[dict[str, Any]] = []
+        for (chat, title, _username, peer_type, _peer_id, unread), token, history in zip(
+            candidates, peer_tokens, histories, strict=True,
+        ):
+            messages: list[dict[str, Any]] = []
+            for m in history:
+                sender = getattr(m, "from_user", None)
+                sender_label = ""
+                if sender is not None:
+                    uname = getattr(sender, "username", None)
+                    if uname:
+                        sender_label = f"@{uname}"
+                    else:
+                        sender_label = getattr(sender, "first_name", None) or str(
+                            getattr(sender, "id", "?"),
+                        )
+                text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
+                if not text:
+                    text = "<media>"
+                date = getattr(m, "date", None)
+                date_str = date.isoformat() if hasattr(date, "isoformat") else str(date or "")
+                messages.append({
+                    "from": sender_label,
+                    "text": text,
+                    "date": date_str,
+                    "message_id": int(
+                        getattr(m, "id", 0) or getattr(m, "message_id", 0) or 0,
+                    ),
+                })
+            dialogs_out.append({
+                "recipient_id": token,
+                "title": title,
+                "type": peer_type,
+                "unread": unread,
+                "messages": messages,
+            })
+
+        return json.dumps(
+            {"status": "ok", "count": len(dialogs_out), "dialogs": dialogs_out},
+            ensure_ascii=False,
+        )
+
+    @tool(
+        name="tg_find_mentions",
+        description=(
+            "Find recent messages where the account owner was @-mentioned, "
+            "tagged, or replied-to. Scans active dialogs over a lookback "
+            "window. Returns mention context plus a recipient_id so the "
+            "agent can reply or thread. Channels are excluded."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": "Lookback window in hours (1-168, default 24).",
+                },
+                "max_dialogs": {
+                    "type": "integer",
+                    "description": "Max dialogs to scan (1-100, default 30).",
+                },
+                "messages_per_dialog": {
+                    "type": "integer",
+                    "description": "Messages to inspect per dialog (1-100, default 30).",
+                },
+            },
+        },
+    )
+    async def tg_find_mentions(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        hours = max(1, min(168, int(params.get("hours") or 24)))
+        max_dialogs = max(1, min(100, int(params.get("max_dialogs") or 30)))
+        per_dialog = max(1, min(100, int(params.get("messages_per_dialog") or 30)))
+
+        # Pull the account's @username for the substring fallback. pyrofork's
+        # ``get_me`` returns a User with .username; if we can't get it we
+        # still rely on the Telegram-set ``mentioned`` flag.
+        my_username: str | None = None
+        my_id: int | None = None
+        try:
+            me = await client.get_me()
+            my_username = (getattr(me, "username", None) or "").lower() or None
+            my_id = int(getattr(me, "id", 0) or 0) or None
+        except Exception:
+            pass
+
+        cutoff_ts = time.time() - hours * 3600.0
+
+        # Gather candidate dialogs first (groups + DMs only — channels are
+        # broadcast noise where mentions usually mean nothing).
+        candidates: list[tuple[Any, str, str | None, str, int]] = []
+        try:
+            async for dialog in client.get_dialogs(limit=max_dialogs):
+                chat = getattr(dialog, "chat", None)
+                if chat is None:
+                    continue
+                peer_type = self._chat_type(chat)
+                if peer_type == "channel":
+                    continue
+                username = getattr(chat, "username", None)
+                title = (
+                    getattr(chat, "title", None)
+                    or getattr(chat, "first_name", None)
+                    or (f"@{username}" if username else "")
+                    or str(getattr(chat, "id", "?"))
+                )
+                peer_id = int(getattr(chat, "id", 0) or 0)
+                candidates.append((chat, title, username, peer_type, peer_id))
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        async def _scan(peer_id: int) -> list[Any]:
+            out: list[Any] = []
+            try:
+                async for m in client.get_chat_history(peer_id, limit=per_dialog):
+                    date = getattr(m, "date", None)
+                    ts = date.timestamp() if hasattr(date, "timestamp") else None
+                    if ts is not None and ts < cutoff_ts:
+                        # History is newest-first; once we cross the cutoff
+                        # the rest is older. Stop early.
+                        break
+                    out.append(m)
+            except Exception:
+                return []
+            return out
+
+        histories = await asyncio.gather(
+            *(_scan(c[4]) for c in candidates),
+            return_exceptions=False,
+        )
+
+        mentions: list[dict[str, Any]] = []
+        username_needle = f"@{my_username}" if my_username else None
+
+        for (_chat, title, _username, peer_type, peer_id), history in zip(
+            candidates, histories, strict=True,
+        ):
+            # Skip if this chat had nothing in the window.
+            if not history:
+                continue
+
+            # Mint one token per chat that has a hit (lazily, after we
+            # know there's a mention — saves token churn on dead chats).
+            chat_token: str | None = None
+
+            for m in history:
+                text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
+                mentioned_flag = bool(getattr(m, "mentioned", False))
+
+                # Reply-to-self: did the message reply to one of *my* messages?
+                replied_to_self = False
+                reply = getattr(m, "reply_to_message", None)
+                if reply is not None and my_id is not None:
+                    reply_from = getattr(reply, "from_user", None)
+                    if reply_from is not None:
+                        if int(getattr(reply_from, "id", 0) or 0) == my_id:
+                            replied_to_self = True
+
+                # Substring fallback (case-insensitive).
+                substring_hit = False
+                if username_needle and text:
+                    substring_hit = username_needle in text.lower()
+
+                if not (mentioned_flag or replied_to_self or substring_hit):
+                    continue
+
+                if chat_token is None:
+                    chat_token = await self._mint_token(
+                        peer=peer_id,
+                        username=_username,
+                        first_name=title,
+                        peer_id=peer_id,
+                        peer_type=peer_type,
+                    )
+
+                sender = getattr(m, "from_user", None)
+                sender_label = ""
+                if sender is not None:
+                    uname = getattr(sender, "username", None)
+                    if uname:
+                        sender_label = f"@{uname}"
+                    else:
+                        sender_label = getattr(sender, "first_name", None) or str(
+                            getattr(sender, "id", "?"),
+                        )
+                date = getattr(m, "date", None)
+                date_str = date.isoformat() if hasattr(date, "isoformat") else str(date or "")
+
+                mentions.append({
+                    "recipient_id": chat_token,
+                    "chat_title": title,
+                    "chat_type": peer_type,
+                    "from": sender_label,
+                    "text": text or "<media>",
+                    "message_id": int(
+                        getattr(m, "id", 0) or getattr(m, "message_id", 0) or 0,
+                    ),
+                    "date": date_str,
+                    "reason": (
+                        "reply" if replied_to_self
+                        else ("mention" if mentioned_flag else "substring")
+                    ),
+                })
+
+        return json.dumps(
+            {
+                "status": "ok",
+                "count": len(mentions),
+                "lookback_hours": hours,
+                "mentions": mentions,
+            },
             ensure_ascii=False,
         )

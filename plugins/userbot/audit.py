@@ -75,15 +75,43 @@ class AuditLog:
         recipient: str,
         text: str,
         message_id: int,
+        reply_to_message_id: int | None = None,
     ) -> None:
-        self._write({
+        entry: dict[str, Any] = {
             "event": "send",
             "recipient_id": recipient_id,
             "recipient": recipient,
             "text_preview": _preview(text),
             "text_len": len(text),
             "message_id": message_id,
-        })
+        }
+        if reply_to_message_id:
+            entry["reply_to_message_id"] = reply_to_message_id
+        self._write(entry)
+
+    def dry_run(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        text: str,
+        reply_to_message_id: int | None = None,
+    ) -> None:
+        """Record a draft that the agent prepared but did NOT send.
+
+        Logged separately from real sends so we can see how often the agent
+        proposes drafts vs. how often the operator actually approves.
+        """
+        entry: dict[str, Any] = {
+            "event": "dry_run",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "text_preview": _preview(text),
+            "text_len": len(text),
+        }
+        if reply_to_message_id:
+            entry["reply_to_message_id"] = reply_to_message_id
+        self._write(entry)
 
     def rate_limit(
         self,

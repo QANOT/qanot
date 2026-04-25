@@ -635,4 +635,6 @@ class TestSetupGate:
             "tg_send_message",
             "tg_list_recent_chats",
             "tg_get_chat_history",
+            "tg_scan_unread",
+            "tg_find_mentions",
         }
