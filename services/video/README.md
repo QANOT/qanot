@@ -4,9 +4,9 @@ Render service for the Qanot video engine. Wraps HyperFrames (Apache 2.0)
 behind an HTTP API so the Python framework can submit composition HTML and
 get back rendered MP4 files.
 
-> **Status: Phase 1 -- skeleton, no rendering yet.** This service starts,
-> serves `/health`, persists a job queue schema in SQLite, and exposes auth-
-> guarded endpoints that all return `501 Not Implemented` until Phase 2.
+> **Status: Phase 2 -- render integration.** The service accepts jobs,
+> lints + renders compositions via `npx hyperframes`, and serves the
+> resulting MP4. Phase 3 wires the Python framework into the HTTP API.
 > Full spec: [`docs/video-engine/ARCHITECTURE.md`](../../docs/video-engine/ARCHITECTURE.md).
 
 ## What it does (target end state)
@@ -18,20 +18,22 @@ get back rendered MP4 files.
 - Single render worker, SQLite-backed durable queue, 24h output retention.
 - Service-to-service Bearer auth on every endpoint except `/health`.
 
-## What Phase 1 actually ships
+## What Phase 2 ships
 
-| Endpoint | Phase 1 behavior |
+| Endpoint | Behavior |
 |---|---|
 | `GET /health` | 200 `{"ok":true}` (public) |
-| `POST /render` | 501 `not_implemented` |
-| `GET /jobs/:id` | 501 `not_implemented` |
-| `GET /jobs/:id/output` | 501 `not_implemented` |
-| `DELETE /jobs/:id` | 501 `not_implemented` |
-| `GET /metrics` | Prometheus text (process_start_time + http_requests_total) |
+| `POST /render` | 202 + `{job_id, status, queue_position, estimated_start_seconds}`; 200 on idempotent retry; 400 on validation; 413 if body > 256 KB; 503 in degraded mode |
+| `GET /jobs/:id` | 200 with full status payload; 404 if unknown |
+| `GET /jobs/:id/output` | 200 streaming MP4 with `Content-Disposition: attachment`; 404 if not yet succeeded; 410 if expired or output missing |
+| `DELETE /jobs/:id` | 200 transitions queued -> cancelled atomically; 200 signals worker for in-flight; 409 on terminal state |
+| `GET /metrics` | Prometheus text: jobs submitted/succeeded/failed/cancelled, lint failures, render/lint duration histograms, queue depth, worker busy gauge |
 
-The worker loop polls every second but never finds a job to lease (Phase 2
-implements the lease query). The DB schema is fully laid down so Phase 2 can
-just write rows.
+The worker leases queued jobs, runs `npx hyperframes lint --json` then
+`npx hyperframes render`, atomically renames `<job_id>.tmp.mp4` ->
+`<job_id>.mp4` on success. Lease is bumped every 30s during long renders.
+Crash recovery on startup re-queues jobs whose lease expired without
+completion.
 
 ## Local development
 
@@ -83,40 +85,48 @@ The integration suite starts the @hono/node-server listener on
 
 ```
 services/video/
-├── Dockerfile             # Bun + Chromium + FFmpeg, ready for Phase 2.
+├── Dockerfile             # Bun + Chromium + FFmpeg
 ├── package.json           # pinned deps
 ├── tsconfig.json          # strict TS
 ├── src/
 │   ├── server.ts          # Hono app, @hono/node-server, graceful shutdown
 │   ├── config.ts          # zod-validated env
-│   ├── types.ts           # Job, JobStatus, RenderRequest, ErrorEnvelope
+│   ├── types.ts           # Job, JobStatus, RenderRequest, LintResult, RenderResult
 │   ├── auth/service-key.ts
 │   ├── observability/
 │   │   ├── logger.ts      # pino + pino-pretty in dev
-│   │   └── metrics.ts     # Prometheus text builder (no prom-client dep)
+│   │   └── metrics.ts     # Prometheus text builder (counters/gauges/histograms)
 │   ├── queue/
 │   │   ├── db.ts          # better-sqlite3 + migration runner
-│   │   ├── jobs.ts        # CRUD + transitions + ULID
-│   │   └── worker.ts      # poll loop (does no work yet)
+│   │   ├── jobs.ts        # CRUD + transitions + lease + recovery
+│   │   └── worker.ts      # state machine: queued -> linting -> rendering -> succeeded/failed
+│   ├── render/
+│   │   ├── timeout.ts     # spawn-with-timeout + SIGTERM-then-SIGKILL escalation
+│   │   ├── lint.ts        # npx hyperframes lint --json wrapper
+│   │   └── render.ts      # npx hyperframes render wrapper (progress, atomic write)
 │   └── routes/
-│       ├── health.ts      # full impl
-│       ├── render.ts      # 501 stub
-│       ├── jobs.ts        # 501 stubs
-│       └── metrics.ts     # minimal
+│       ├── health.ts      # /health
+│       ├── render.ts      # POST /render (zod validation, idempotency, 503)
+│       ├── jobs.ts        # GET /jobs/:id, GET .../output, DELETE
+│       └── metrics.ts     # GET /metrics
 ├── test/
 │   ├── unit/
 │   │   ├── auth.test.ts
 │   │   ├── db.test.ts
+│   │   ├── health.test.ts
 │   │   ├── jobs.test.ts
-│   │   └── health.test.ts
+│   │   ├── render-lint.test.ts
+│   │   ├── render-render.test.ts
+│   │   └── worker.test.ts
 │   └── integration/
-│       └── server.test.ts
+│       ├── server.test.ts          # boot + auth + health + metrics
+│       ├── render-flow.test.ts     # POST /render + GET /jobs/:id + DELETE
+│       └── real-render.test.ts     # gated by RUN_INTEGRATION=1
 └── compositions/
-    └── _smoke.html        # placeholder for Phase 2 smoke test
+    └── _smoke.html        # 2-second 1080x1920 composition for real-render
 ```
 
-## Phase 2 onward
+## Phase 3 onward
 
-See `docs/video-engine/ARCHITECTURE.md` §14.1 for the full plan. Phase 2
-fills in `lint` / `render` / state-transition logic in `src/queue/worker.ts`
-and turns the 501 routes into real implementations.
+See `docs/video-engine/ARCHITECTURE.md` §14.1 for the full plan. Phase 3
+adds `qanot/tools/video.py` and the composition sub-agent.

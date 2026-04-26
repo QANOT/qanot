@@ -57,6 +57,10 @@ jobs:
         run: bun run typecheck
 
       - name: Test (vitest)
+        # Real-render integration test is gated by RUN_INTEGRATION=1 and
+        # skipped here. See video-service-real-render.yml for the manual
+        # workflow that exercises the full pipeline (Chromium + FFmpeg).
         run: bun run test
         env:
           NODE_ENV: test
+          RUN_INTEGRATION: "0"

@@ -56,7 +56,7 @@ describe("server lifecycle", () => {
     expect(body.ok).toBe(true);
   });
 
-  it("returns 401 on /render without auth and 501 with auth (Phase 2 stub)", async () => {
+  it("returns 401 on /render without auth and 400 on empty-body with auth (Phase 2)", async () => {
     running = await startServer({ port: 0 });
 
     const noAuth = await fetch(`http://127.0.0.1:${running.port}/render`, {
@@ -76,9 +76,9 @@ describe("server lifecycle", () => {
       },
       body: "{}",
     });
-    expect(withAuth.status).toBe(501);
+    expect(withAuth.status).toBe(400);
     const withAuthBody = (await withAuth.json()) as { error: { code: string } };
-    expect(withAuthBody.error.code).toBe("not_implemented");
+    expect(withAuthBody.error.code).toBe("validation_failed");
   });
 
   it("propagates X-Request-ID when client supplies one", async () => {
