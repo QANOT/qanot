@@ -81,13 +81,75 @@ deploy_cloud() {
 }
 
 # ═══════════════════════════════════════
+# QANOT VIDEO RENDER SERVICE
+# ═══════════════════════════════════════
+deploy_video() {
+    local REMOTE="/root/qanotai"
+    local LOCAL
+    LOCAL="$(cd "$(dirname "$0")/.." && pwd)"
+
+    echo "=== Qanot Video Render Service Deploy ==="
+
+    echo "[1/5] Pushing to remotes..."
+    cd "$LOCAL"
+    git push origin main 2>&1 | tail -2
+    git push qanot main 2>&1 | tail -2
+    echo "   Done."
+
+    echo "[2/5] Pulling & building image on server..."
+    ssh "$SERVER" "cd $REMOTE && git pull origin main 2>&1 | tail -3"
+    ssh "$SERVER" "cd $REMOTE/services/video && docker build $REBUILD -t qanot-video:latest . 2>&1 | tail -3"
+    echo "   Done."
+
+    echo "[3/5] Verifying secret + data dir..."
+    ssh "$SERVER" 'set -e
+        mkdir -p /data/video
+        if [ ! -f /root/.env.qanot-video ]; then
+            SECRET=$(openssl rand -hex 32)
+            cat > /root/.env.qanot-video <<EOF
+SERVICE_SECRET=$SECRET
+HOST=127.0.0.1
+PORT=8770
+DB_PATH=/data/video/jobs.db
+OUTPUT_DIR=/data/video/renders
+LOG_LEVEL=info
+EOF
+            chmod 600 /root/.env.qanot-video
+            echo "   Generated new SERVICE_SECRET (first deploy)."
+        else
+            echo "   Existing /root/.env.qanot-video kept."
+        fi'
+    echo "   Done."
+
+    echo "[4/5] Recreating qanot-video container..."
+    ssh "$SERVER" "docker rm -f qanot-video 2>/dev/null || true"
+    ssh "$SERVER" 'docker run -d \
+        --name qanot-video \
+        --restart unless-stopped \
+        --memory 1500m \
+        --memory-swap 1500m \
+        --network host \
+        -v /data/video:/data/video \
+        --env-file /root/.env.qanot-video \
+        qanot-video:latest'
+    echo "   Done."
+
+    echo "[5/5] Health check..."
+    sleep 3
+    ssh "$SERVER" 'docker ps --filter "name=qanot-video" --format "{{.Names}}: {{.Status}}"'
+    ssh "$SERVER" 'curl -sf http://127.0.0.1:8770/health && echo ""'
+    echo ""
+}
+
+# ═══════════════════════════════════════
 # RUN
 # ═══════════════════════════════════════
 case "$TARGET" in
     qanot)  deploy_qanot ;;
     cloud)  deploy_cloud ;;
-    all)    deploy_qanot; deploy_cloud ;;
-    *)      echo "Usage: $0 [qanot|cloud|all] [--rebuild]"; exit 1 ;;
+    video)  deploy_video ;;
+    all)    deploy_qanot; deploy_cloud; deploy_video ;;
+    *)      echo "Usage: $0 [qanot|cloud|video|all] [--rebuild]"; exit 1 ;;
 esac
 
 echo "=== Deploy complete ==="
