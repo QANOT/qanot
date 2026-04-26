@@ -103,7 +103,12 @@ deploy_video() {
 
     echo "[3/5] Verifying secret + data dir..."
     ssh "$SERVER" 'set -e
-        mkdir -p /data/video
+        mkdir -p /data/video /data/video/renders
+        # Container runs as UID 10001 (non-root user "qanot" inside the image
+        # per services/video/Dockerfile). Bind-mounted host paths overlay the
+        # image filesystem permissions, so we have to chown on the host —
+        # idempotent, cheap.
+        chown -R 10001:10001 /data/video
         if [ ! -f /root/.env.qanot-video ]; then
             SECRET=$(openssl rand -hex 32)
             cat > /root/.env.qanot-video <<EOF
