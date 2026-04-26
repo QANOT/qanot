@@ -112,13 +112,13 @@ export async function renderComposition(
     writeFileSync(join(projectDir, "hyperframes.json"), HYPERFRAMES_JSON);
     writeFileSync(join(projectDir, "index.html"), opts.composition_html);
 
-    const bin = opts.bin ?? "npx";
+    // Default to the globally-installed `hyperframes` binary (image-baked at
+    // pinned version). Skipping npx avoids npm's first-run install warnings
+    // landing in stderr/stdout and tripping our parsers.
+    const bin = opts.bin ?? "hyperframes";
     const args =
       opts.args_override ??
       [
-        "--yes",
-        "--package=hyperframes@0.4.30",
-        "hyperframes",
         "render",
         projectDir,
         "--output",

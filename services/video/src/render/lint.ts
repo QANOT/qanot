@@ -80,10 +80,16 @@ export async function lintComposition(opts: LintOptions): Promise<LintResult> {
     writeFileSync(join(projectDir, "hyperframes.json"), HYPERFRAMES_JSON);
     writeFileSync(join(projectDir, "index.html"), opts.composition_html);
 
-    const bin = opts.bin ?? "npx";
+    // Default to the globally-installed hyperframes binary (pinned at image
+    // build time -- see Dockerfile). Falls back to `npx hyperframes` only if
+    // a caller explicitly opts in via QANOT_VIDEO_LINT_BIN env. Skipping npx
+    // avoids npm's deprecation warnings polluting stdout on the first run
+    // (which previously caused JSON.parse to fail and surface a misleading
+    // lint_failed result).
+    const bin = opts.bin ?? "hyperframes";
     const args =
       opts.bin === undefined
-        ? ["--yes", "--package=hyperframes@0.4.30", "hyperframes", "lint", "--json", projectDir]
+        ? ["lint", "--json", projectDir]
         : [
             ...(opts.extraArgsBefore ?? []),
             ...(opts.extraArgsAfter && opts.extraArgsAfter.length > 0
