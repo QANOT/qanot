@@ -58,6 +58,16 @@ COPY src ./src
 COPY compositions ./compositions
 COPY tsconfig.json ./
 
+# Pre-install hyperframes globally so the wrappers in src/render/ can call
+# the `hyperframes` binary directly instead of `npx --yes --package=...`.
+# Reasons: (1) avoid npm install warnings polluting stdout on first call
+# (npm prints `npm warn deprecated ...` which made our JSON parser see
+# unparseable output and surface lint_failed with a warning string as the
+# message), (2) deterministic version pinned at image build time, (3) cold
+# render starts in <1s instead of waiting for npx to fetch packages.
+RUN npm install -g hyperframes@0.4.30 \
+    && hyperframes --version
+
 # Non-root user. Chromium's user-namespace sandbox needs the binary readable
 # (which it is by default) plus the process to NOT be uid 0 -- otherwise
 # Chromium refuses to start without --no-sandbox (which we will not use).
