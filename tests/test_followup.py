@@ -117,10 +117,22 @@ def test_track_followup_happy_path(registry, workdirs):
 
 def test_track_followup_naive_due_uses_configured_tz(registry, workdirs):
     """A naive ISO string ('2026-04-26T08:00:00') means 08:00 *Tashkent*,
-    not 08:00 UTC — that's the operator's mental model."""
+    not 08:00 UTC — that's the operator's mental model.
+
+    Build the naive ISO string from Tashkent-local "now + 2h" so this test
+    works under any system timezone (CI runs in UTC; failed previously
+    because datetime.now() is naive UTC there, naive_future was already in
+    the past once interpreted as Tashkent).
+    """
+    tashkent = ZoneInfo("Asia/Tashkent")
+    naive_future = (
+        (datetime.now(tashkent) + timedelta(hours=2))
+        .replace(tzinfo=None, microsecond=0)
+        .isoformat()
+    )
     result = _call(registry, "track_followup", {
         "topic": "naive due",
-        "due": (datetime.now() + timedelta(hours=2)).replace(microsecond=0).isoformat(),
+        "due": naive_future,
     })
     assert result["ok"] is True
     # Stored due should now carry an offset.
