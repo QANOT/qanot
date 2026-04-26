@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn",
+    "style": "off"
+  },
+  "rules": {
+    "no-console": "off",
+    "no-empty-function": "off",
+    "no-await-in-loop": "off",
+    "typescript/no-explicit-any": "warn"
+  },
+  "ignorePatterns": ["node_modules", "dist", "data", "*.db"]
+}
