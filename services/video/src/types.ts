@@ -116,3 +116,49 @@ export interface ErrorEnvelope {
     details?: unknown;
   };
 }
+
+/** Single finding from `hyperframes lint --json`. */
+export interface LintError {
+  rule: string;
+  severity: "error" | "warning" | "info";
+  message: string;
+  element?: string;
+  line?: number;
+  fix_hint?: string;
+  snippet?: string;
+}
+
+/** Result of a lint subprocess call. */
+export type LintResult =
+  | { ok: true; warnings: LintError[]; duration_ms: number }
+  | {
+      ok: false;
+      /** When errors[] is empty + reason is set, the tool itself failed. */
+      errors: LintError[];
+      reason?: "timeout" | "spawn_failed" | "invalid_output" | "tool_error";
+      message?: string;
+      duration_ms: number;
+    };
+
+/** Result of a render subprocess call. */
+export type RenderResult =
+  | {
+      ok: true;
+      output_path: string;
+      output_size_bytes: number;
+      render_duration_ms: number;
+    }
+  | {
+      ok: false;
+      code: JobErrorCode;
+      message: string;
+      stderr_tail: string;
+      render_duration_ms: number;
+    };
+
+/** Progress callback shape used by the renderer. */
+export type RenderProgressCallback = (event: {
+  percent: number;
+  stage?: JobStage;
+  raw_line: string;
+}) => void;

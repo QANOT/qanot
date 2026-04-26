@@ -147,15 +147,119 @@ export function transitionStatus(
 }
 
 /**
- * Phase 2 worker hook. Today it does nothing: there is no actual rendering,
- * so we never lease. Implemented as a function so the worker loop is real
- * code (not a TODO comment) and Phase 2 can drop in a real query.
+ * Atomically claim the next queued job, transitioning it to `linting` and
+ * setting a lease so a crashed worker's job is reclaimable. Returns the
+ * leased job, or null if the queue is empty.
+ *
+ * Per docs/video-engine/ARCHITECTURE.md §3.6 + §9.1: the lease is a
+ * timestamp (`leased_until`) so crash recovery is just "any row whose lease
+ * has elapsed AND is in a non-terminal in-flight state".
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function leaseNextQueuedJob(_db: SqliteDb, _leaseSeconds = 180): Job | null {
-  // TODO(Phase 2): atomic SELECT … UPDATE leased_until = now()+lease_seconds
-  // returning the row, restricted to status='queued' and ordered by queued_at.
-  return null;
+export function leaseNextQueuedJob(
+  db: SqliteDb,
+  leaseSeconds = 180,
+): Job | null {
+  const tx = db.transaction((): Job | null => {
+    const row = db
+      .prepare(
+        `SELECT id FROM jobs
+           WHERE status = 'queued'
+           ORDER BY queued_at ASC
+           LIMIT 1`,
+      )
+      .get() as { id: string } | undefined;
+    if (!row) return null;
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const leaseUntil = nowSeconds + leaseSeconds;
+    const updated = db
+      .prepare(
+        `UPDATE jobs
+           SET status = 'linting',
+               stage = 'linting',
+               started_at = COALESCE(started_at, @now),
+               leased_until = @lease
+         WHERE id = @id AND status = 'queued'`,
+      )
+      .run({ id: row.id, now: nowSeconds, lease: leaseUntil });
+    if (updated.changes !== 1) return null;
+    return getById(db, row.id);
+  });
+  return tx();
+}
+
+/** Update progress + optional stage in one statement. Best-effort, no error. */
+export function updateProgress(
+  db: SqliteDb,
+  jobId: string,
+  percent: number,
+  stage?: JobStage,
+): void {
+  const clamped = Math.min(100, Math.max(0, Math.floor(percent)));
+  const setStage = stage ? ", stage = @stage" : "";
+  db.prepare(
+    `UPDATE jobs
+       SET progress_percent = @percent ${setStage}
+     WHERE id = @id AND status IN ('linting', 'rendering')`,
+  ).run({
+    id: jobId,
+    percent: clamped,
+    ...(stage ? { stage } : {}),
+  });
+}
+
+/** Push the lease forward; called from the worker heartbeat. */
+export function extendLease(
+  db: SqliteDb,
+  jobId: string,
+  leaseSeconds: number,
+): void {
+  const newDeadline = Math.floor(Date.now() / 1000) + leaseSeconds;
+  db.prepare(
+    `UPDATE jobs
+       SET leased_until = @lease
+     WHERE id = @id AND status IN ('linting', 'rendering')`,
+  ).run({ id: jobId, lease: newDeadline });
+}
+
+/**
+ * Crash recovery: any row stuck in linting/rendering past its lease is
+ * re-queued so the next worker can pick it up. Idempotent because the
+ * renderer writes via tmp+rename -- no partial output ever served.
+ */
+export function recoverOrphanedJobs(db: SqliteDb): number {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const info = db
+    .prepare(
+      `UPDATE jobs
+         SET status = 'queued',
+             stage = NULL,
+             progress_percent = 0,
+             leased_until = NULL,
+             started_at = NULL
+       WHERE status IN ('linting', 'rendering')
+         AND (leased_until IS NULL OR leased_until < @now)`,
+    )
+    .run({ now: nowSeconds });
+  return info.changes;
+}
+
+/** COUNT(*) of queued jobs older-or-equal-than the supplied queued_at. */
+export function queuePosition(db: SqliteDb, queuedAt: number): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued' AND queued_at <= ?`,
+    )
+    .get(queuedAt) as { n: number };
+  return row.n;
+}
+
+/** Total queued depth (used by metrics). */
+export function queueDepth(db: SqliteDb): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued'`)
+    .get() as { n: number };
+  return row.n;
 }
 
 function rowToJob(row: unknown): Job {

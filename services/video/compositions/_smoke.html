@@ -1,29 +1,59 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>qanot-video smoke composition</title>
   <!--
-    Placeholder smoke composition for Phase 2 integration tests.
-    Phase 2 will replace this with a real HyperFrames-conformant 2-second
-    composition. Do not delete -- the integration test references this path.
+    Phase 2 smoke composition. Real HyperFrames-conformant 2-second 1080x1920
+    composition used by test/integration/real-render.test.ts when the suite
+    is gated on with RUN_INTEGRATION=1.
   -->
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <style>
-    html, body { margin: 0; width: 1080px; height: 1920px; background: #0a0a0a; color: #fff; font-family: system-ui; overflow: hidden; }
-    .stage { display: flex; align-items: center; justify-content: center; height: 100%; }
-    h1 { font-size: 96px; margin: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 1080px;
+      height: 1920px;
+      background: #0a0a0a;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+    }
+    .stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 0 80px;
+      text-align: center;
+    }
+    h1 { font-size: 96px; font-weight: 800; margin: 0 0 32px; }
+    p  { font-size: 48px; color: #a0a0a0; margin: 0; line-height: 1.4; }
   </style>
 </head>
 <body>
-  <div id="root" data-composition-id="main" data-start="0" data-duration="2" data-width="1080" data-height="1920">
-    <div class="stage"><h1 id="title">qanot smoke</h1></div>
+  <div
+    id="root"
+    data-composition-id="main"
+    data-start="0"
+    data-duration="2"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div class="stage">
+      <h1 id="title">qanot</h1>
+      <p id="sub">smoke render</p>
+    </div>
   </div>
   <script>
-    const tl = gsap.timeline({paused: true});
-    tl.from("#title", { opacity: 0, y: 40, duration: 0.6 }, 0)
-      .to("#title",   { opacity: 0, y: -30, duration: 0.5 }, 1.5);
-    window.__timelines = { main: tl };
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from("#title", { y: 80, opacity: 0, duration: 0.6, ease: "power3.out" }, 0)
+      .from("#sub",   { y: 40, opacity: 0, duration: 0.5, ease: "power3.out" }, 0.2)
+      .to(["#title", "#sub"], { opacity: 0, y: -30, duration: 0.4, ease: "power2.in" }, 1.5);
+    window.__timelines["main"] = tl;
   </script>
 </body>
 </html>

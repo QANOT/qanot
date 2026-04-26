@@ -1,0 +1,93 @@
+name: video-service-real-render
+
+# Manual workflow that runs the real-render integration test (Phase 2).
+#
+# This is gated behind workflow_dispatch because it:
+#   - downloads hyperframes from npm (~30s) and Chromium (~150 MB)
+#   - runs an actual end-to-end render (60 frames at 1080x1920)
+#   - takes 1-3 minutes
+#
+# The standard `video-service` workflow on every PR runs only unit + http
+# integration tests (RUN_INTEGRATION not set => the real-render suite skips).
+# This workflow is what an operator runs before flipping a bot to the new
+# engine in production.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to test (default: HEAD of triggering branch)"
+        required: false
+        default: ""
+
+concurrency:
+  group: video-service-real-render-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  real-render:
+    name: real hyperframes render (gated)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/video
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Install Chromium + FFmpeg
+        # Chromium and FFmpeg are required by hyperframes render. apt is the
+        # simplest path on ubuntu-22.04; matches what the production
+        # Dockerfile installs.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              chromium-browser ffmpeg fonts-liberation
+        working-directory: .
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('services/video/bun.lock', 'services/video/package.json') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install service dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pre-fetch hyperframes
+        # Warm the npx cache so the test's deadline does not include the
+        # initial npm download.
+        run: npx --yes --package=hyperframes@0.4.30 hyperframes --version
+
+      - name: Run real-render integration test
+        env:
+          RUN_INTEGRATION: "1"
+          NODE_ENV: test
+          # hyperframes looks for chromium under this name on debian/ubuntu.
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+        run: npx vitest run test/integration/real-render.test.ts
+
+      - name: Upload rendered output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-render-failure-output
+          path: services/video/data/renders/
+          if-no-files-found: ignore
+          retention-days: 3

@@ -37,6 +37,7 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
 export interface AppDeps {
   db: SqliteDb;
   config: Config;
+  worker: Worker;
 }
 
 /** Hono Variables map for `c.set` / `c.get` -- keeps types honest. */
@@ -86,8 +87,11 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
 
   // Routes.
   app.route("/", buildHealthRoutes({ db: deps.db }));
-  app.route("/", buildRenderRoutes());
-  app.route("/", buildJobsRoutes());
+  app.route("/", buildRenderRoutes({ db: deps.db }));
+  app.route(
+    "/",
+    buildJobsRoutes({ db: deps.db, worker: deps.worker, outputDir: deps.config.OUTPUT_DIR }),
+  );
   app.route("/", buildMetricsRoutes());
 
   // 404 envelope.
@@ -147,8 +151,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const config = loadConfig();
   const log = getLogger();
   const db = openDatabase(config.DB_PATH);
-  const worker = new Worker({ db });
-  const app = buildApp({ db, config });
+  const worker = new Worker({ db, outputDir: config.OUTPUT_DIR });
+  const app = buildApp({ db, config, worker });
 
   const host = opts.host ?? config.HOST;
   const port = opts.port ?? config.PORT;
