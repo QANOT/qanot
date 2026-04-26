@@ -242,3 +242,49 @@ async def test_same_host_origin_fallback():
         assert resp.status == 200
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_is_public_no_token():
+    """Docker HEALTHCHECK + k8s liveness probes must reach /api/health
+    without knowing the auto-generated token. This was the regression that
+    flipped containers to 'unhealthy' after the dashboard auth fix shipped."""
+    config = _StubConfig(dashboard_token="some-token")
+    client = await _make_client(config, _StubAgent())
+    try:
+        # No Authorization, no Origin — exactly what `curl -sf` from the
+        # Dockerfile HEALTHCHECK sends.
+        resp = await client.get("/api/health")
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["ok"] is True
+        assert "uptime_seconds" in body
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_no_pii_leak():
+    """Health payload must contain ONLY liveness fields — no config, no
+    bot name, no token, no internal paths. Allowlist via key set."""
+    config = _StubConfig(dashboard_token="some-token", bot_name="secret-bot")
+    client = await _make_client(config, _StubAgent())
+    try:
+        resp = await client.get("/api/health")
+        body = await resp.json()
+        assert set(body.keys()) <= {"ok", "uptime_seconds"}
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_works_with_empty_token():
+    """If somehow the token is cleared at runtime, /api/health still
+    answers — it's the liveness probe that proves the process is alive."""
+    config = _StubConfig(dashboard_token="")
+    client = await _make_client(config, _StubAgent())
+    try:
+        resp = await client.get("/api/health")
+        assert resp.status == 200
+    finally:
+        await client.close()

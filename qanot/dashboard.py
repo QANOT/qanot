@@ -25,8 +25,9 @@ DASHBOARD_PORT = 8765
 
 # Routes registered by webhook/webchat handlers — they have their own auth
 # (Telegram secret_token, webchat session token) and must not be gated by
-# the dashboard token.
-_PUBLIC_PREFIXES = ("/api/webhook", "/webchat", "/ws/")
+# the dashboard token. /api/health is also public so Docker/k8s liveness
+# probes don't need to learn the auto-generated token.
+_PUBLIC_PREFIXES = ("/api/webhook", "/webchat", "/ws/", "/api/health")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
@@ -93,6 +94,7 @@ class Dashboard:
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self._handle_index)
+        self.app.router.add_get("/api/health", self._handle_api_health)
         self.app.router.add_get("/api/status", self._handle_api_status)
         self.app.router.add_get("/api/config", self._handle_api_config)
         self.app.router.add_get("/api/costs", self._handle_api_costs)
@@ -103,6 +105,14 @@ class Dashboard:
         self.app.router.add_get("/api/voicecall", self._handle_api_voicecall)
 
     # ── API endpoints ──
+
+    async def _handle_api_health(self, request: web.Request) -> web.Response:
+        """Public liveness probe. Returns 200 + minimal payload — no PII, no
+        auth required. Used by Docker HEALTHCHECK and k8s liveness probes."""
+        return web.json_response({
+            "ok": True,
+            "uptime_seconds": int(time.time() - self._start_time),
+        })
 
     async def _handle_api_status(self, request: web.Request) -> web.Response:
         status = self.agent.context.session_status()
