@@ -14,13 +14,16 @@ from qanot.session import SessionWriter
 from qanot.scheduler import CronScheduler
 from qanot.telegram import TelegramAdapter
 from qanot.backup import backup_workspace
-from qanot.tools.builtin import register_builtin_tools
-from qanot.tools.cron import register_cron_tools
-from qanot.tools.doctor import register_doctor_tool
-from qanot.tools.documents import register_document_tools
 from qanot.tools.workspace import init_workspace
-from qanot.plugins.loader import load_plugins, shutdown_plugins
 from qanot.hooks import HookRegistry
+from qanot.bootstrap import (
+    build_provider,
+    find_gemini_key,
+    register_post_agent_tools,
+    register_pre_agent_tools,
+    setup_plugins,
+    teardown_plugins,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,74 +31,6 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("qanot")
-
-
-def _find_gemini_key(config) -> str | None:
-    """Find a Gemini API key from config (multi-provider or dedicated field)."""
-    # Check multi-provider configs
-    for pc in config.providers:
-        if pc.provider == "gemini" and pc.api_key:
-            return pc.api_key
-    # Check dedicated image_api_key
-    if config.image_api_key:
-        return config.image_api_key
-    return None
-
-
-def _anthropic_thinking_kwargs(provider_type: str, config) -> dict:
-    """Return thinking keyword arguments for Anthropic providers; empty dict otherwise."""
-    if provider_type == "anthropic":
-        return {
-            "thinking_level": config.thinking_level,
-            "thinking_budget": config.thinking_budget,
-            "code_execution": config.code_execution,
-            "memory_tool": config.memory_tool,
-            "context_editing": config.context_editing_enabled,
-            "context_editing_trigger_tokens": config.context_editing_trigger_tokens,
-            "context_editing_keep_tool_uses": config.context_editing_keep_tool_uses,
-            "context_editing_clear_at_least_tokens": config.context_editing_clear_at_least_tokens,
-        }
-    return {}
-
-
-def _create_provider(config):
-    """Create LLM provider based on config.
-
-    Supports two config formats:
-    1. Single provider: { "provider": "anthropic", "model": "...", "api_key": "..." }
-    2. Multi-provider: { "providers": [{ "name": "main", "provider": "anthropic", ... }, ...] }
-
-    When multiple providers are configured, creates a FailoverProvider that
-    automatically switches between them on errors.
-    """
-    from qanot.providers.failover import FailoverProvider, ProviderProfile, _create_single_provider
-
-    # Multi-provider mode
-    if config.providers:
-        profiles = [
-            ProviderProfile(
-                name=pc.name,
-                provider_type=pc.provider,
-                api_key=pc.api_key,
-                model=pc.model,
-                base_url=pc.base_url or None,
-                **_anthropic_thinking_kwargs(pc.provider, config),
-            )
-            for pc in config.providers
-        ]
-        provider = FailoverProvider(profiles)
-        logger.info("Multi-provider mode: %s (failover enabled)", ", ".join(p.name for p in profiles))
-        return provider
-
-    # Single provider mode — reuse the same factory
-    profile = ProviderProfile(
-        name="default",
-        provider_type=config.provider,
-        api_key=config.api_key,
-        model=config.model,
-        **_anthropic_thinking_kwargs(config.provider, config),
-    )
-    return _create_single_provider(profile)
 
 
 def _get_container_memory_limit_bytes() -> int | None:
@@ -147,24 +82,8 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Startup backup failed (non-fatal): %s", e)
 
-    # Create provider
-    provider = _create_provider(config)
-    logger.info("Provider initialized: %s", config.provider)
-
-    # Wrap with routing provider if enabled (cost optimization)
-    if config.routing_enabled:
-        from qanot.routing import RoutingProvider
-        routing_mid_model = getattr(config, "routing_mid_model", "claude-sonnet-4-6")
-        provider = RoutingProvider(
-            provider=provider,
-            cheap_model=config.routing_model,
-            mid_model=routing_mid_model,
-            threshold=config.routing_threshold,
-        )
-        logger.info(
-            "3-tier routing: simple → %s, moderate → %s, complex → %s",
-            config.routing_model, routing_mid_model, config.model,
-        )
+    # Provider stack (single/multi/failover + optional routing wrapper)
+    provider = build_provider(config, logger)
 
     # Create context tracker (auto-detect 1M for Opus/Sonnet 4.6)
     _1M_MODELS = ("claude-opus-4-6", "claude-sonnet-4-6")
@@ -181,13 +100,11 @@ async def main() -> None:
         workspace_dir=config.workspace_dir,
     )
 
-    # Create tool registry
+    # Tool registry + lifecycle hooks
     tool_registry = ToolRegistry()
-
-    # Create lifecycle hook registry
     agent_hooks = HookRegistry()
 
-    # Initialize RAG engine
+    # Initialize RAG engine (FastEmbed CPU / Gemini / OpenAI)
     rag_engine = None
     rag_indexer = None
     if config.rag_enabled:
@@ -208,8 +125,9 @@ async def main() -> None:
         # Wire real-time indexing: every WAL / daily-note / SESSION-STATE write
         # fires memory._notify_hooks(content, source). We re-ingest on each
         # write so rag_search returns fresh data without waiting for restart.
-        # NOTE: the Anthropic memory_20250818 tool has its own hook (below);
-        # this one covers qanot's built-in memory.py writes.
+        # NOTE: the Anthropic memory_20250818 tool has its own hook (registered
+        # later in register_pre_agent_tools); this one covers qanot's
+        # built-in memory.py writes.
         from qanot.memory import add_write_hook
 
         def _rag_index_on_memory_write(content: str, source: str) -> None:
@@ -230,8 +148,9 @@ async def main() -> None:
         else:
             logger.info("RAG engine initialized in FTS-only mode (no embedder available)")
 
-    # Register built-in tools
-    # _agent_ref/_telegram_ref populated after creation; lambdas capture the lists
+    # Deferred references — populated after Agent / Telegram are constructed.
+    # Tool handlers registered below capture these lists so they can resolve
+    # the live agent and adapter at call time.
     _agent_ref: list = []
     _telegram_ref: list = []
 
@@ -251,142 +170,33 @@ async def main() -> None:
             reason=reason,
         )
 
-    register_builtin_tools(
-        tool_registry, config.workspace_dir, context,
-        rag_indexer=rag_indexer,
-        get_user_id=lambda: _agent_ref[0].current_user_id if _agent_ref else "",
-        get_cost_tracker=lambda: _agent_ref[0].cost_tracker if _agent_ref else None,
-        exec_security=config.exec_security,
-        exec_allowlist=config.exec_allowlist,
-        approval_callback=_approval_callback if config.exec_security == "cautious" else None,
-        get_bot=lambda: _telegram_ref[0].bot if _telegram_ref else None,
-        get_chat_id=lambda: _agent_ref[0].current_chat_id if _agent_ref else None,
-    )
-
-    # Register Anthropic-compatible memory tool (/memories directory)
-    if config.memory_tool:
-        from qanot.tools.memory_tool import register_memory_tool
-
-        def _memory_write_hook(content: str, source: str) -> None:
-            """Trigger RAG re-indexing when memory tool writes a file."""
-            if rag_indexer:
-                task = asyncio.create_task(rag_indexer.index_text(content, source=source))
-                task.add_done_callback(
-                    lambda t: logger.warning("Memory RAG index failed: %s", t.exception())
-                    if not t.cancelled() and t.exception() else None
-                )
-
-        register_memory_tool(
-            tool_registry, config.workspace_dir,
-            on_write=_memory_write_hook if rag_indexer else None,
-        )
-
-    # Register document generation tools (Word, Excel, PDF, PPTX) — 12 tools.
-    # Gated: disable on bots that don't need them to stay under the tool-count
-    # classifier threshold on OAuth paths.
-    if config.document_tools_enabled:
-        register_document_tools(tool_registry, config.workspace_dir)
-    else:
-        logger.info("Document tools disabled via document_tools_enabled=false")
-
-    # Register doctor diagnostics tool
-    register_doctor_tool(tool_registry, config, context)
-
-    # Register Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
-    if config.local_business_tools_enabled:
-        from qanot.tools.local import register_local_tools
-        register_local_tools(tool_registry)
-    else:
-        logger.info("Local business tools disabled via local_business_tools_enabled=false")
-
-    # Connect MCP servers (Model Context Protocol)
-    mcp_manager = None
-    if config.mcp_servers:
-        from qanot.mcp_client import MCPManager
-        mcp_manager = MCPManager()
-        mcp_count = await mcp_manager.connect_servers(config.mcp_servers)
-        if mcp_count:
-            tool_count = mcp_manager.register_tools(tool_registry)
-            logger.info("MCP: %d servers connected, %d tools registered", mcp_count, tool_count)
-
-    # Register browser control tools (Playwright)
-    if config.browser_enabled:
-        try:
-            from qanot.tools.browser import register_browser_tools
-            register_browser_tools(tool_registry, config.workspace_dir)
-            logger.info("Browser control enabled (Playwright)")
-        except Exception as e:
-            logger.warning("Browser tools failed to register: %s", e)
-
-    # Register web search tools (only if Brave API key is configured).
-    # get_user_id resolves through _agent_ref so per-user rate limiting
-    # works once the agent is built.
-    if config.brave_api_key:
-        from qanot.tools.web import register_web_tools
-        register_web_tools(
-            tool_registry,
-            config.brave_api_key,
-            get_user_id=lambda: _agent_ref[0].current_user_id if _agent_ref else None,
-            per_user_hourly=config.web_search_per_user_hourly,
-        )
-        logger.info("Web search enabled (Brave API)")
-
-    # Find Gemini API key for image generation (registered after agent creation)
-    gemini_api_key = _find_gemini_key(config)
-
-    # Create session writer
+    # Session writer + cron scheduler — both are needed by the pre-agent
+    # tool registration (cron tools take a scheduler ref).
     session = SessionWriter(config.sessions_dir)
-
-    # Create scheduler (needs tool registry reference)
     scheduler = CronScheduler(
         config=config,
         provider=provider,
         tool_registry=tool_registry,
     )
 
-    # Register cron tools (pass scheduler ref for reload notifications)
-    register_cron_tools(tool_registry, config.cron_dir, scheduler_ref=scheduler)
+    # Phase 1: register every tool that does NOT need the live Agent.
+    mcp_manager = await register_pre_agent_tools(
+        tool_registry=tool_registry,
+        config=config,
+        context=context,
+        rag_indexer=rag_indexer,
+        scheduler=scheduler,
+        agent_ref=_agent_ref,
+        telegram_ref=_telegram_ref,
+        approval_callback=_approval_callback if config.exec_security == "cautious" else None,
+        logger=logger,
+    )
 
-    # Register follow-up engine: stateful open-item tracker that uses the
-    # scheduler under the hood. Disabling skips registration only; the
-    # followups.json file in the workspace stays intact across toggles.
-    if config.followup_enabled:
-        from qanot.tools.followup import register_followup_tools
-        register_followup_tools(
-            tool_registry,
-            workspace_dir=config.workspace_dir,
-            cron_dir=config.cron_dir,
-            timezone_name=config.timezone,
-            scheduler_ref=scheduler,
-        )
-    else:
-        logger.info("Follow-up tools disabled via followup_enabled=false")
+    # Find Gemini API key for image generation (registered post-agent)
+    gemini_api_key = find_gemini_key(config)
 
-    # Register skill management tools (create, list, run, delete, install) — 5 tools.
-    if config.skill_tools_enabled:
-        from qanot.tools.skill_tools import register_skill_tools
-        register_skill_tools(
-            tool_registry, config.workspace_dir,
-            reload_callback=lambda: _agent_ref[0].load_skills(config.workspace_dir) if _agent_ref else None,
-        )
-    else:
-        logger.info("Skill tools disabled via skill_tools_enabled=false")
-
-    # Load plugins
-    await load_plugins(config, tool_registry)
-
-    # Register plugin lifecycle hooks with agent
-    from qanot.plugins.loader import get_plugin_manager
-    _pm = get_plugin_manager()
-    if _pm:
-        for plugin in _pm.loaded_plugins.values():
-            agent_hooks.register_plugin(plugin)
-        if agent_hooks.summary:
-            logger.info("Plugin hooks registered: %s", agent_hooks.summary)
-
-    # Freeze plugin registries to prevent runtime mutations from sub-agents
-    from qanot.prompt import freeze_plugin_registries
-    freeze_plugin_registries()
+    # Plugins: discover, register tools, wire lifecycle hooks, freeze registry.
+    await setup_plugins(config, tool_registry, agent_hooks, logger)
 
     # Log registered tools
     logger.info("Tools registered: %s", ", ".join(tool_registry.tool_names))
@@ -400,7 +210,6 @@ async def main() -> None:
         context=context,
         hooks=agent_hooks,
     )
-
     _agent_ref.append(agent)
 
     # Restore conversations from shutdown snapshot (if available)
@@ -410,40 +219,6 @@ async def main() -> None:
 
     # Load skills from workspace
     agent.load_skills(config.workspace_dir)
-
-    get_user_id = lambda: agent.current_user_id
-
-    # Register RAG tools and hooks (needs agent reference for get_user_id)
-    if rag_engine is not None and rag_indexer is not None:
-        from qanot.tools.rag import register_rag_tools
-        from qanot.memory import add_write_hook
-
-        agent.attach_rag(rag_indexer)
-
-        register_rag_tools(
-            tool_registry, rag_engine, config.workspace_dir,
-            get_user_id=get_user_id,
-        )
-
-        def _on_memory_write(content: str, source: str) -> None:
-            task = asyncio.create_task(rag_indexer.index_text(content, source=source))
-            def _on_done(t):
-                if not t.cancelled() and (exc := t.exception()):
-                    logger.warning("RAG index task failed: %s", exc)
-            task.add_done_callback(_on_done)
-
-        add_write_hook(_on_memory_write)
-
-    # Register image generation tool (needs agent reference for pending images)
-    if gemini_api_key:
-        from qanot.tools.image import register_image_tools
-        register_image_tools(
-            tool_registry, gemini_api_key, config.workspace_dir,
-            model=config.image_model,
-            get_user_id=get_user_id,
-            per_user_hourly=config.image_gen_per_user_hourly,
-        )
-        logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
     # Update scheduler with main agent
     scheduler.main_agent = agent
@@ -463,63 +238,19 @@ async def main() -> None:
     if mcp_manager:
         telegram._mcp_manager = mcp_manager
 
-    # Register agent-initiated MCP management tools (mcp_test/propose/list/remove) — 4 tools.
-    if config.mcp_management_enabled:
-        from qanot.tools.mcp_manage import register_mcp_tools
-        register_mcp_tools(
-            tool_registry,
-            config,
-            mcp_manager,
-            telegram,
-            get_user_id=lambda: agent.current_user_id or "",
-            get_chat_id=lambda: agent.current_chat_id,
-        )
-    else:
-        logger.info("MCP management tools disabled via mcp_management_enabled=false")
-
-    # Register config-secret management tools (delete_message, config_set_secret, config_toggle) — 3 tools.
-    if config.config_management_enabled:
-        from qanot.tools.config_manage import register_config_tools
-        register_config_tools(
-            tool_registry,
-            config,
-            telegram,
-            get_user_id=lambda: agent.current_user_id or "",
-            get_chat_id=lambda: agent.current_chat_id,
-            get_message_id=lambda: agent.current_message_id,
-            get_bot=lambda: telegram.bot,
-        )
-    else:
-        logger.info("Config management tools disabled via config_management_enabled=false")
-
-    # Register orchestrator tools (unified delegation + sub-agents)
-    # Only when explicitly enabled — prevents model from over-delegating simple tasks
-    subagent_manager = None
-    if config.agents_enabled:
-        from qanot.orchestrator import SubagentManager, register_orchestrator_tools
-        subagent_manager = SubagentManager(
-            config=config,
-            provider=provider,
-            parent_registry=tool_registry,
-            announce_callback=telegram.send_message,
-            persist_dir=config.workspace_dir,
-        )
-        register_orchestrator_tools(
-            tool_registry, subagent_manager, config, depth=0,
-            get_user_id=get_user_id,
-            get_chat_id=lambda: agent.current_chat_id,
-        )
-
-        # Register dynamic agent management tools (create/update/delete agents at runtime)
-        from qanot.tools.agent_manager import register_agent_manager_tools
-        register_agent_manager_tools(
-            tool_registry, config, provider, tool_registry,
-            get_user_id=get_user_id,
-            subagent_manager=subagent_manager,
-        )
-        logger.info("Agent tools registered (orchestrator + management)")
-    else:
-        logger.info("Agent tools disabled (set agents_enabled: true to enable)")
+    # Phase 2: register tools that genuinely need the live Agent.
+    subagent_manager = register_post_agent_tools(
+        tool_registry=tool_registry,
+        config=config,
+        agent=agent,
+        provider=provider,
+        rag_engine=rag_engine,
+        rag_indexer=rag_indexer,
+        gemini_api_key=gemini_api_key,
+        mcp_manager=mcp_manager,
+        telegram=telegram,
+        logger=logger,
+    )
 
     # Wire sub-agent cancellation into Telegram /reset
     telegram.subagent_manager = subagent_manager
@@ -567,7 +298,7 @@ async def main() -> None:
         # Register delegate_to_group tool on the main bot's registry
         register_group_orchestration_tools(
             tool_registry, config, group_orchestrator,
-            get_user_id=get_user_id,
+            get_user_id=lambda: agent.current_user_id,
         )
         logger.info(
             "Group orchestration enabled (group_id=%d, %d agent bots)",
@@ -681,7 +412,7 @@ async def main() -> None:
                 await ab.stop()
             except Exception as e:
                 logger.warning("Error stopping agent bot '%s': %s", ab.agent_def.id, e)
-        await shutdown_plugins()
+        await teardown_plugins()
         scheduler.stop()
         # Close MCP server connections
         if mcp_manager:
