@@ -61,6 +61,14 @@ TOKEN_TTL_SECONDS = 3600
 # agent's actual reply.
 PREVIEW_TEXT_MAX = 400
 
+# Telegram TodoList caps. The server enforces its own (slightly higher in
+# some app configs), but we validate client-side to fail fast with a
+# friendly message rather than after a round-trip. Defaults match the
+# values shipped in current Telegram clients.
+TODO_TITLE_MAX = 32
+TODO_ITEM_MAX = 64
+TODO_ITEMS_MAX = 30
+
 
 class UserbotPlugin(Plugin):
     """Send messages as the owner's Telegram account via MTProto."""
@@ -262,6 +270,18 @@ class UserbotPlugin(Plugin):
         tool was called from a cron job), we silently skip. The audit log
         is the authoritative record either way.
         """
+        preview_text = text if len(text) <= PREVIEW_TEXT_MAX else (
+            text[:PREVIEW_TEXT_MAX] + "…"
+        )
+        msg = f"✍️ {recipient_label} ga xabar yuborildi:\n{preview_text}"
+        await self._post_preview_message(msg)
+
+    async def _post_preview_message(self, message: str) -> None:
+        """Send an arbitrary one-off preview line into the calling chat.
+
+        Shared by tg_send_message (✍️ xabar) and tg_send_checklist
+        (📋 checklist) so both produce a visible operator-facing trail.
+        """
         try:
             from qanot.agent import Agent
 
@@ -272,11 +292,7 @@ class UserbotPlugin(Plugin):
             bot = await self._get_preview_bot()
             if bot is None:
                 return
-            preview_text = text if len(text) <= PREVIEW_TEXT_MAX else (
-                text[:PREVIEW_TEXT_MAX] + "…"
-            )
-            msg = f"✍️ {recipient_label} ga xabar yuborildi:\n{preview_text}"
-            await bot.send_message(chat_id=chat_id, text=msg)
+            await bot.send_message(chat_id=chat_id, text=message)
         except Exception as e:
             logger.debug("userbot preview post failed: %s", e)
 
@@ -356,6 +372,11 @@ class UserbotPlugin(Plugin):
             return name, "Bu chatga yozish huquqingiz yo'q."
         if "inputuserdeactivated" in lname or "deactivated" in lname:
             return name, "Foydalanuvchi akkaunti o'chirilgan."
+        if "premium" in lname or "premium" in msg.lower():
+            return name, (
+                "Bu funksiya Telegram Premium talab qiladi (akkaunt egasida). "
+                "Premium yo'q bo'lsa, oddiy matnli ro'yxat (☐ belgilar bilan) yuboring."
+            )
         return name, f"Telegram xatolik: {msg}"
 
     # ── Tools ────────────────────────────────────────────────────
@@ -611,6 +632,335 @@ class UserbotPlugin(Plugin):
         if reply_to_message_id:
             result["reply_to_message_id"] = reply_to_message_id
         return json.dumps(result, ensure_ascii=False)
+
+    @tool(
+        name="tg_send_checklist",
+        description=(
+            "Send a NATIVE clickable Telegram checklist (TODO list) AS the "
+            "account owner. Recipients can tick tasks off in real-time inside "
+            "Telegram — no buttons, no plain-text ☐, no Mini App. "
+            "Use this for action items, meeting follow-ups, group task "
+            "boards. Requires the operator's Telegram account to have "
+            "Premium (only Premium users can create checklists). "
+            "Up to 30 tasks, title up to 32 chars, each task up to 64 chars. "
+            "Same opaque-token / whitelist / rate-limit safety as "
+            "tg_send_message: resolve the recipient via tg_find_contact or "
+            "tg_list_recent_chats first."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "title", "tasks"],
+            "properties": {
+                "recipient_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque token from tg_find_contact / tg_list_recent_chats."
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": f"Checklist heading (1-{TODO_TITLE_MAX} chars).",
+                },
+                "tasks": {
+                    "type": "array",
+                    "description": (
+                        f"1-{TODO_ITEMS_MAX} task lines, each "
+                        f"1-{TODO_ITEM_MAX} chars."
+                    ),
+                    "items": {"type": "string"},
+                },
+                "others_can_append": {
+                    "type": "boolean",
+                    "description": (
+                        "Allow recipients to add new tasks to the list "
+                        "(default true)."
+                    ),
+                },
+                "others_can_complete": {
+                    "type": "boolean",
+                    "description": (
+                        "Allow recipients to tick tasks off (default true). "
+                        "Set false to make it a read-only announcement."
+                    ),
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, validate but do NOT send. Whitelist still "
+                        "enforced; rate limit bypassed."
+                    ),
+                },
+            },
+        },
+    )
+    async def tg_send_checklist(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        title = (params.get("title") or "").strip()
+        tasks_raw = params.get("tasks")
+        others_can_append = params.get("others_can_append")
+        others_can_complete = params.get("others_can_complete")
+        dry_run = bool(params.get("dry_run") or False)
+
+        if not recipient_id:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id is required"},
+                ensure_ascii=False,
+            )
+        if not title:
+            return json.dumps(
+                {"status": "error", "error": "title is required (non-empty)"},
+                ensure_ascii=False,
+            )
+        if not isinstance(tasks_raw, list) or len(tasks_raw) == 0:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "tasks must be a non-empty array of strings",
+                },
+                ensure_ascii=False,
+            )
+
+        # Normalise tasks: trim, drop empties, reject non-strings.
+        tasks: list[str] = []
+        for raw in tasks_raw:
+            if not isinstance(raw, str):
+                return json.dumps(
+                    {"status": "error", "error": "every task must be a string"},
+                    ensure_ascii=False,
+                )
+            stripped = raw.strip()
+            if stripped:
+                tasks.append(stripped)
+        if not tasks:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "tasks contains no non-empty strings",
+                },
+                ensure_ascii=False,
+            )
+
+        if len(title) > TODO_TITLE_MAX:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"title too long (max {TODO_TITLE_MAX} chars)",
+                    "title_len": len(title),
+                },
+                ensure_ascii=False,
+            )
+        if len(tasks) > TODO_ITEMS_MAX:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"too many tasks (max {TODO_ITEMS_MAX})",
+                    "task_count": len(tasks),
+                },
+                ensure_ascii=False,
+            )
+        for i, t in enumerate(tasks, start=1):
+            if len(t) > TODO_ITEM_MAX:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": (
+                            f"task #{i} too long (max {TODO_ITEM_MAX} chars)"
+                        ),
+                        "task_index": i,
+                        "task_len": len(t),
+                    },
+                    ensure_ascii=False,
+                )
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "recipient_id noto'g'ri yoki muddati tugagan. Avval "
+                        "tg_find_contact yoki tg_list_recent_chats chaqirib "
+                        "yangi token oling."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "Bu oluvchi userbot_recipient_whitelist ro'yxatida "
+                        "yo'q. config.json-dagi whitelist-ga qo'shing yoki "
+                        "boshqa kontaktni tanlang."
+                    ),
+                    "recipient": label,
+                },
+                ensure_ascii=False,
+            )
+
+        # Defaults: collaborative checklists are the common case.
+        append_b = True if others_can_append is None else bool(others_can_append)
+        complete_b = (
+            True if others_can_complete is None else bool(others_can_complete)
+        )
+
+        if dry_run:
+            self._audit.dry_run_checklist(
+                recipient_id=recipient_id,
+                recipient=label,
+                title=title,
+                task_count=len(tasks),
+                others_can_append=append_b,
+                others_can_complete=complete_b,
+            )
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "dry_run": True,
+                    "would_send": True,
+                    "recipient": label,
+                    "title": title,
+                    "task_count": len(tasks),
+                    "tasks": tasks,
+                    "others_can_append": append_b,
+                    "others_can_complete": complete_b,
+                },
+                ensure_ascii=False,
+            )
+
+        # Rate limit gate (real sends only). Same bucket as tg_send_message
+        # — checklists count toward the same per-recipient and hourly caps,
+        # since from Telegram's view they're outbound messages too.
+        try:
+            self._rate_limiter.check(recipient_id)
+        except Exception as rle:
+            bucket = getattr(rle, "bucket", "unknown")
+            retry = int(getattr(rle, "retry_after_seconds", 0))
+            self._audit.rate_limit(recipient=label, bucket=bucket, retry_after=retry)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": str(rle),
+                    "bucket": bucket,
+                    "retry_after_seconds": retry,
+                },
+                ensure_ascii=False,
+            )
+
+        # Build the raw MTProto payload. pyrofork has no high-level
+        # send_checklist helper yet — TodoList was added in Layer 205 and
+        # only the raw types ship — so we go through messages.SendMedia.
+        try:
+            from pyrogram.raw.functions.messages import SendMedia
+            from pyrogram.raw.types import (
+                InputMediaTodo,
+                TextWithEntities,
+                TodoItem,
+                TodoList,
+            )
+        except ImportError as e:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"pyrofork raw types unavailable: {e}",
+                },
+                ensure_ascii=False,
+            )
+
+        try:
+            peer = await client.resolve_peer(entry["id"])
+            todo_obj = TodoList(
+                title=TextWithEntities(text=title, entities=[]),
+                list=[
+                    TodoItem(
+                        id=i,
+                        title=TextWithEntities(text=t, entities=[]),
+                    )
+                    for i, t in enumerate(tasks, start=1)
+                ],
+                others_can_append=append_b,
+                others_can_complete=complete_b,
+            )
+            updates = await client.invoke(
+                SendMedia(
+                    peer=peer,
+                    media=InputMediaTodo(todo=todo_obj),
+                    message="",
+                    random_id=client.rnd_id(),
+                ),
+            )
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        message_id = self._extract_message_id(updates)
+
+        self._rate_limiter.record(recipient_id)
+        self._audit.send_checklist(
+            recipient_id=recipient_id,
+            recipient=label,
+            title=title,
+            task_count=len(tasks),
+            message_id=message_id,
+            others_can_append=append_b,
+            others_can_complete=complete_b,
+        )
+
+        await self._post_preview_message(
+            f"📋 {label} ga checklist yuborildi: «{title}» "
+            f"({len(tasks)} ta task)",
+        )
+
+        return json.dumps(
+            {
+                "status": "ok",
+                "ok": True,
+                "message_id": message_id,
+                "recipient": label,
+                "title": title,
+                "task_count": len(tasks),
+                "others_can_append": append_b,
+                "others_can_complete": complete_b,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _extract_message_id(updates: Any) -> int:
+        """Pull the new message id out of a raw ``Updates`` envelope.
+
+        ``messages.SendMedia`` returns ``Updates`` with one of
+        ``UpdateNewMessage``, ``UpdateNewChannelMessage`` (carry the full
+        Message), or ``UpdateMessageID`` (carries only the id keyed by
+        random_id). We try both — return 0 if neither shows up so callers
+        still record the audit row, just without a message_id link.
+        """
+        if updates is None:
+            return 0
+        upd_list = getattr(updates, "updates", None) or []
+        for u in upd_list:
+            msg = getattr(u, "message", None)
+            mid = getattr(msg, "id", None) if msg is not None else None
+            if mid:
+                return int(mid)
+            if type(u).__name__ == "UpdateMessageID":
+                raw_id = getattr(u, "id", 0)
+                if raw_id:
+                    return int(raw_id)
+        return 0
 
     @tool(
         name="tg_list_recent_chats",

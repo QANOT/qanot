@@ -140,6 +140,50 @@ class AuditLog:
             "error_class": error_class,
         })
 
+    def send_checklist(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        title: str,
+        task_count: int,
+        message_id: int,
+        others_can_append: bool,
+        others_can_complete: bool,
+    ) -> None:
+        self._write({
+            "event": "send_checklist",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "title_preview": _preview(title),
+            "title_len": len(title),
+            "task_count": task_count,
+            "message_id": message_id,
+            "others_can_append": others_can_append,
+            "others_can_complete": others_can_complete,
+        })
+
+    def dry_run_checklist(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        title: str,
+        task_count: int,
+        others_can_append: bool,
+        others_can_complete: bool,
+    ) -> None:
+        self._write({
+            "event": "dry_run_checklist",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "title_preview": _preview(title),
+            "title_len": len(title),
+            "task_count": task_count,
+            "others_can_append": others_can_append,
+            "others_can_complete": others_can_complete,
+        })
+
 
 def _utc_iso() -> str:
     t = time.gmtime()

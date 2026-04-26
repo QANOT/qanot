@@ -633,8 +633,450 @@ class TestSetupGate:
         assert tool_names == {
             "tg_find_contact",
             "tg_send_message",
+            "tg_send_checklist",
             "tg_list_recent_chats",
             "tg_get_chat_history",
             "tg_scan_unread",
             "tg_find_mentions",
         }
+
+
+# ── Tool: tg_send_checklist ─────────────────────────────────────
+
+
+@pytest.fixture
+def fake_raw_pyrogram(monkeypatch):
+    """Inject a minimal fake ``pyrogram.raw`` so tg_send_checklist's
+    deferred import succeeds without pyrofork installed.
+
+    Each fake constructor stashes its kwargs on ``self`` so assertions can
+    inspect what the tool sent. SendMedia is captured by the AsyncMock
+    client.invoke() in the test body — we don't need to invoke the real
+    one anywhere.
+    """
+    import types as _types
+
+    class _Capture:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    raw_pkg = _types.ModuleType("pyrogram.raw")
+    raw_pkg.__path__ = []  # mark as package
+    raw_funcs_pkg = _types.ModuleType("pyrogram.raw.functions")
+    raw_funcs_pkg.__path__ = []
+    raw_funcs_messages = _types.ModuleType("pyrogram.raw.functions.messages")
+    raw_funcs_messages.SendMedia = _Capture
+    raw_types = _types.ModuleType("pyrogram.raw.types")
+    raw_types.InputMediaTodo = _Capture
+    raw_types.TodoList = _Capture
+    raw_types.TodoItem = _Capture
+    raw_types.TextWithEntities = _Capture
+
+    # Install. We DO NOT install a top-level "pyrogram" because tg_send_message
+    # imports nothing from it directly — keeping it absent ensures the rest of
+    # the suite stays untouched.
+    monkeypatch.setitem(sys.modules, "pyrogram.raw", raw_pkg)
+    monkeypatch.setitem(sys.modules, "pyrogram.raw.functions", raw_funcs_pkg)
+    monkeypatch.setitem(
+        sys.modules,
+        "pyrogram.raw.functions.messages",
+        raw_funcs_messages,
+    )
+    monkeypatch.setitem(sys.modules, "pyrogram.raw.types", raw_types)
+    # Some import resolvers want the parent name registered too.
+    if "pyrogram" not in sys.modules:
+        pyrogram_pkg = _types.ModuleType("pyrogram")
+        pyrogram_pkg.__path__ = []
+        monkeypatch.setitem(sys.modules, "pyrogram", pyrogram_pkg)
+    return _Capture
+
+
+def _make_checklist_client() -> AsyncMock:
+    """An AsyncMock pyrogram client wired for tg_send_checklist.
+
+    ``resolve_peer`` returns a marker, ``rnd_id`` returns a fixed int,
+    ``invoke`` returns a fake Updates with one UpdateNewMessage carrying
+    message id 555.
+    """
+    client = AsyncMock()
+    client.resolve_peer = AsyncMock(return_value="peer-resolved")
+    client.rnd_id = MagicMock(return_value=42424242)
+
+    fake_msg = MagicMock()
+    fake_msg.id = 555
+
+    fake_update = MagicMock()
+    fake_update.message = fake_msg
+    type(fake_update).__name__ = "UpdateNewMessage"
+
+    fake_updates = MagicMock()
+    fake_updates.updates = [fake_update]
+
+    client.invoke = AsyncMock(return_value=fake_updates)
+    return client
+
+
+class TestSendChecklist:
+    @pytest.mark.asyncio
+    async def test_rejects_missing_recipient_id(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        result = json.loads(await p.tg_send_checklist(
+            {"title": "T", "tasks": ["a"]},
+        ))
+        assert result["status"] == "error"
+        assert "recipient_id" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_title(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": token, "title": "   ", "tasks": ["a"]},
+        ))
+        assert result["status"] == "error"
+        assert "title" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_tasks_array(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": token, "title": "T", "tasks": []},
+        ))
+        assert result["status"] == "error"
+        assert "tasks" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_string_task(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": token, "title": "T", "tasks": ["ok", 123]},
+        ))
+        assert result["status"] == "error"
+        assert "string" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_all_blank_tasks(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": token, "title": "T", "tasks": ["  ", ""]},
+        ))
+        assert result["status"] == "error"
+        assert "non-empty" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_title_too_long(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {
+                "recipient_id": token,
+                "title": "x" * (plugin_mod.TODO_TITLE_MAX + 1),
+                "tasks": ["a"],
+            },
+        ))
+        assert result["status"] == "error"
+        assert "title" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_too_many_tasks(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {
+                "recipient_id": token,
+                "title": "T",
+                "tasks": [f"task {i}" for i in range(plugin_mod.TODO_ITEMS_MAX + 1)],
+            },
+        ))
+        assert result["status"] == "error"
+        assert "tasks" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_task_too_long(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {
+                "recipient_id": token,
+                "title": "T",
+                "tasks": ["ok", "x" * (plugin_mod.TODO_ITEM_MAX + 1)],
+            },
+        ))
+        assert result["status"] == "error"
+        assert result["task_index"] == 2
+
+    @pytest.mark.asyncio
+    async def test_rejects_expired_token(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        p = _make_plugin(workspace_dir=tmp_path)
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": "rcp_nope", "title": "T", "tasks": ["a"]},
+        ))
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_whitelist_blocks_non_match(self, tmp_path, monkeypatch):
+        _patch_client(monkeypatch, AsyncMock())
+        cfg = FakeConfig(userbot_recipient_whitelist=["@allowed"])
+        p = _make_plugin(config=cfg, workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="attacker", first_name="A", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist(
+            {"recipient_id": token, "title": "T", "tasks": ["a"]},
+        ))
+        assert result["status"] == "error"
+        # Whitelist gate fires BEFORE any client call.
+        events = [
+            json.loads(l)["event"]
+            for l in (Path(tmp_path) / "userbot_audit.log").read_text().strip().splitlines()
+        ]
+        assert events == ["whitelist_reject"]
+
+    @pytest.mark.asyncio
+    async def test_dry_run_validates_without_send(
+        self, tmp_path, monkeypatch, fake_raw_pyrogram,
+    ):
+        client = _make_checklist_client()
+        _patch_client(monkeypatch, client)
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=123, username="umid", first_name="Umid", peer_id=123, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "Sprint 12",
+            "tasks": ["alpha", "beta"],
+            "dry_run": True,
+        }))
+        assert result["status"] == "ok"
+        assert result["dry_run"] is True
+        assert result["task_count"] == 2
+        # No invoke / send happened.
+        client.invoke.assert_not_awaited()
+        # Audit recorded the dry run.
+        entry = json.loads(
+            (Path(tmp_path) / "userbot_audit.log").read_text().strip(),
+        )
+        assert entry["event"] == "dry_run_checklist"
+        assert entry["task_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_successful_send(
+        self, tmp_path, monkeypatch, fake_raw_pyrogram,
+    ):
+        client = _make_checklist_client()
+        _patch_client(monkeypatch, client)
+        p = _make_plugin(workspace_dir=tmp_path)
+        p._post_preview_message = AsyncMock(return_value=None)
+        token = await p._mint_token(
+            peer=123, username="umid", first_name="Umid", peer_id=123, peer_type="user",
+        )
+
+        result = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "Sprint 12",
+            "tasks": [" alpha ", "beta", ""],  # blanks dropped, others trimmed
+        }))
+        assert result["status"] == "ok"
+        assert result["message_id"] == 555
+        assert result["task_count"] == 2
+        assert result["recipient"] == "@umid"
+        assert result["others_can_append"] is True
+        assert result["others_can_complete"] is True
+
+        # Verify the raw payload that hit invoke().
+        client.invoke.assert_awaited_once()
+        sent = client.invoke.await_args.args[0]
+        assert type(sent).__name__ == "_Capture"
+        assert sent.message == ""
+        assert sent.peer == "peer-resolved"
+        assert sent.random_id == 42424242
+        media = sent.media
+        todo = media.todo
+        assert todo.others_can_append is True
+        assert todo.others_can_complete is True
+        # Task ids start at 1; blanks were dropped.
+        assert [t.id for t in todo.list] == [1, 2]
+        assert [t.title.text for t in todo.list] == ["alpha", "beta"]
+        assert todo.title.text == "Sprint 12"
+
+        # Audit row.
+        entry = json.loads(
+            (Path(tmp_path) / "userbot_audit.log").read_text().strip(),
+        )
+        assert entry["event"] == "send_checklist"
+        assert entry["task_count"] == 2
+        assert entry["message_id"] == 555
+
+        # Preview line was posted.
+        p._post_preview_message.assert_awaited_once()
+        preview_arg = p._post_preview_message.await_args.args[0]
+        assert "📋" in preview_arg
+        assert "Sprint 12" in preview_arg
+        assert "@umid" in preview_arg
+
+    @pytest.mark.asyncio
+    async def test_others_can_complete_false_propagates(
+        self, tmp_path, monkeypatch, fake_raw_pyrogram,
+    ):
+        client = _make_checklist_client()
+        _patch_client(monkeypatch, client)
+        p = _make_plugin(workspace_dir=tmp_path)
+        p._post_preview_message = AsyncMock(return_value=None)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "Read-only",
+            "tasks": ["x"],
+            "others_can_append": False,
+            "others_can_complete": False,
+        }))
+        assert result["status"] == "ok"
+        sent = client.invoke.await_args.args[0]
+        assert sent.media.todo.others_can_append is False
+        assert sent.media.todo.others_can_complete is False
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_blocks_second_send(
+        self, tmp_path, monkeypatch, fake_raw_pyrogram,
+    ):
+        client = _make_checklist_client()
+        _patch_client(monkeypatch, client)
+        cfg = FakeConfig(userbot_send_per_recipient_seconds=60)
+        p = _make_plugin(config=cfg, workspace_dir=tmp_path)
+        p._post_preview_message = AsyncMock()
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+
+        ok = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "T",
+            "tasks": ["a"],
+        }))
+        assert ok["status"] == "ok"
+
+        blocked = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "T2",
+            "tasks": ["b"],
+        }))
+        assert blocked["status"] == "error"
+        assert blocked["bucket"] == "per_recipient"
+        # invoke() called once, not twice.
+        assert client.invoke.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_premium_required_error_friendly(
+        self, tmp_path, monkeypatch, fake_raw_pyrogram,
+    ):
+        class PremiumAccountRequired(Exception):
+            pass
+
+        client = _make_checklist_client()
+        client.invoke = AsyncMock(
+            side_effect=PremiumAccountRequired("PREMIUM_ACCOUNT_REQUIRED"),
+        )
+        _patch_client(monkeypatch, client)
+        p = _make_plugin(workspace_dir=tmp_path)
+        token = await p._mint_token(
+            peer=1, username="u", first_name="U", peer_id=1, peer_type="user",
+        )
+        result = json.loads(await p.tg_send_checklist({
+            "recipient_id": token,
+            "title": "T",
+            "tasks": ["a"],
+        }))
+        assert result["status"] == "error"
+        assert result["error_class"] == "PremiumAccountRequired"
+        assert "Premium" in result["error"]
+        # Send error audit row.
+        entry = json.loads(
+            (Path(tmp_path) / "userbot_audit.log").read_text().strip(),
+        )
+        assert entry["event"] == "send_error"
+
+    @pytest.mark.asyncio
+    async def test_extract_message_id_handles_update_message_id(self):
+        """Fallback: if updates carry only UpdateMessageID (no full message)."""
+        u = MagicMock()
+        u.message = None
+        u.id = 777
+        type(u).__name__ = "UpdateMessageID"
+        envelope = MagicMock()
+        envelope.updates = [u]
+        assert UserbotPlugin._extract_message_id(envelope) == 777
+
+    @pytest.mark.asyncio
+    async def test_extract_message_id_returns_zero_when_unknown(self):
+        envelope = MagicMock()
+        envelope.updates = []
+        assert UserbotPlugin._extract_message_id(envelope) == 0
+        assert UserbotPlugin._extract_message_id(None) == 0
+
+
+# ── Audit log: checklist events ─────────────────────────────────
+
+
+class TestAuditChecklist:
+    def test_send_checklist_event_shape(self, tmp_path):
+        al = AuditLog(tmp_path)
+        al.send_checklist(
+            recipient_id="rcp_x",
+            recipient="@umid",
+            title="Sprint 12",
+            task_count=5,
+            message_id=999,
+            others_can_append=True,
+            others_can_complete=False,
+        )
+        entry = json.loads(al.path.read_text().strip())
+        assert entry["event"] == "send_checklist"
+        assert entry["task_count"] == 5
+        assert entry["message_id"] == 999
+        assert entry["title_preview"] == "Sprint 12"
+        assert entry["others_can_append"] is True
+        assert entry["others_can_complete"] is False
+
+    def test_dry_run_checklist_event_shape(self, tmp_path):
+        al = AuditLog(tmp_path)
+        al.dry_run_checklist(
+            recipient_id="rcp_x",
+            recipient="@umid",
+            title="T",
+            task_count=2,
+            others_can_append=False,
+            others_can_complete=True,
+        )
+        entry = json.loads(al.path.read_text().strip())
+        assert entry["event"] == "dry_run_checklist"
+        assert entry["task_count"] == 2
