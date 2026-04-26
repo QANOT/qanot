@@ -37,7 +37,7 @@ RUN chmod +x /app/entrypoint.sh
 EXPOSE 8765 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://127.0.0.1:8765/api/status || exit 1
+    CMD curl -sf http://127.0.0.1:8765/api/health || exit 1
 
 ENV PATH="/home/qanot/.local/bin:${PATH}"
 CMD ["/app/entrypoint.sh"]
