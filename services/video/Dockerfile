@@ -75,6 +75,29 @@ RUN useradd --create-home --shell /usr/sbin/nologin --uid 10001 qanot \
     && mkdir -p /data/video /data/video/renders \
     && chown -R qanot:qanot /app /data/video
 
+# Pre-seed the qanot user's hyperframes config so the very first runtime
+# invocation does NOT print the telemetry notice ("Hyperframes collects
+# anonymous usage data ...") ahead of lint JSON output — which would make
+# JSON.parse fail and surface a misleading lint_failed result.
+#
+# The config file lives at $HOME/.hyperframes/config.json. Setting
+# `telemetryNoticeShown: true` suppresses the prompt; `telemetryEnabled:
+# false` opts us out of the data collection. Hyperframes writes back to
+# this file on each command (commandCount counter, lastUpdateCheck), so
+# it must be writable by the runtime user.
+RUN mkdir -p /home/qanot/.hyperframes \
+    && cat > /home/qanot/.hyperframes/config.json <<'EOF'
+{
+  "telemetryEnabled": false,
+  "telemetryNoticeShown": true,
+  "anonymousId": "00000000-0000-0000-0000-000000000000",
+  "commandCount": 0,
+  "lastUpdateCheck": "2026-01-01T00:00:00.000Z",
+  "latestVersion": "0.4.30"
+}
+EOF
+RUN chown -R qanot:qanot /home/qanot/.hyperframes
+
 USER qanot
 
 EXPOSE 8770
