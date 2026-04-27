@@ -218,6 +218,20 @@ def register_post_agent_tools(
         )
         logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
+    # Video render tool (HyperFrames-based; talks to qanot-video service).
+    # Only when video_engine is set to "hyperframes". "legacy_reels" leaves
+    # the existing plugins/reels code path untouched; "off" registers nothing.
+    if getattr(config, "video_engine", "off") == "hyperframes":
+        from qanot.tools.video import register_video_tools
+        register_video_tools(
+            tool_registry,
+            config=config,
+            workspace_dir=config.workspace_dir,
+            get_user_id=lambda: agent.current_user_id or None,
+            get_chat_id=lambda: agent.current_chat_id,
+            get_bot=lambda: telegram.bot,
+        )
+
     # Agent-initiated MCP management tools (mcp_test/propose/list/remove) — 4 tools.
     if config.mcp_management_enabled:
         from qanot.tools.mcp_manage import register_mcp_tools

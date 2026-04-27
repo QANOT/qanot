@@ -76,6 +76,8 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
         self._pending_files: dict[str, list[str]] = {}
+        # Per-user pending videos queue (populated by render_video tool)
+        self._pending_videos: dict[str, list[str]] = {}
         # Lazy-initialised image extractor (Haiku-backed pre-turn pipeline).
         # None until first image arrives; we build it lazily so turns that
         # never include images pay zero overhead.
@@ -95,6 +97,17 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         if cls._instance is not None:
             cls._instance._pending_images.setdefault(user_id, []).append(image_path)
 
+    @classmethod
+    def _push_pending_video(cls, user_id: str, video_path: str) -> None:
+        """Push a video path to the pending queue for a user.
+
+        Populated by ``render_video`` (qanot/tools/video.py). The Telegram
+        adapter pops these after the agent turn and delivers via
+        ``bot.send_video``.
+        """
+        if cls._instance is not None:
+            cls._instance._pending_videos.setdefault(user_id, []).append(video_path)
+
     def pop_pending_images(self, user_id: str) -> list[str]:
         """Pop all pending image paths for a user."""
         return self._pending_images.pop(user_id, [])
@@ -102,6 +115,10 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
     def pop_pending_files(self, user_id: str) -> list[str]:
         """Pop all pending file paths for a user."""
         return self._pending_files.pop(user_id, [])
+
+    def pop_pending_videos(self, user_id: str) -> list[str]:
+        """Pop all pending video paths for a user."""
+        return self._pending_videos.pop(user_id, [])
 
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection."""

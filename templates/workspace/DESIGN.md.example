@@ -1,0 +1,40 @@
+# Bot brand: <Bot nomi>
+
+> Bu fayl bot ovoz/brendi uchun **vizual qoidalar** to'plami. Agent har bir video
+> kompozitsiyasini ushbu qoidalarga muvofiq yaratadi. Faqat shu fayl bor bo'lsa va
+> render_video tooli yoqilgan bo'lsa — bu fayl avtomatik ravishda kompozitsiya
+> system promptiga qo'shiladi.
+>
+> Operator: shu fayldan ko'chirib `DESIGN.md` deb saqlang va o'zingizning brendni
+> moslang.
+
+## Palette
+
+- Background: `#0a0a0a` (qora-yashil orqa)
+- Primary text: `#ffffff`
+- Accent: `#00ff88` (zumrad)
+- Muted: `#a0a0a0`
+
+## Typography
+
+- Headings: `'Inter', system-ui` — 700-800 weight
+- Body: `'Inter', system-ui` — 400-500 weight
+- Heading scale: 96px / 64px / 48px
+
+## Motion
+
+- Easing default: `power3.out` (kirish), `power2.in` (chiqish)
+- Duration default: 0.7s (kirish), 0.5s (chiqish)
+- Birinchi animatsiya 0.2–0.3s'ga kechiktirilsin
+
+## Imagery
+
+- Logo: yuqori-chap burchakda, 80px keng, 40px chetdan, `opacity: 0.6`
+- Background: yaxlit `#0a0a0a` yoki video B-roll, 40%'gacha qoraytirilgan
+
+## What NOT to do
+
+- Default `#3b82f6` ko'k yoki `#333` kulrang ishlatmang
+- Stockdan olingan generic font ishlatmang
+- 60px'dan kichik sarlavha qo'ymang
+- 4.5:1'dan past kontrast bilan matn yozmang

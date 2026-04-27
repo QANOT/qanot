@@ -106,6 +106,8 @@ _SECRET_FIELDS = frozenset({
     # voicecall_session gives *full* access to the user's Telegram account
     # — belongs in env/file, never plaintext config.json.
     "voicecall_session", "voicecall_api_hash",
+    # qanot-video service Bearer secret (env or file in JSON)
+    "video_service_secret",
 })
 
 
