@@ -94,31 +94,76 @@ class TopKeyClient:
         path: str,
         params: dict | None = None,
         *,
-        max_pages: int = 5,
-        max_items: int = 500,
+        max_pages: int = 50,
+        max_items: int = 5000,
     ) -> dict:
         """Walk paginated list endpoints, capped to keep responses bounded.
 
-        Tries Mobile-style (?page=N&per_page=100, meta.last_page) first; if
-        the response shape isn't paginated we just return the single page.
+        Handles two TopKey paginations observed in the live API:
+
+        1. **Froiden** (e.g. ``/task`` -> {"data":[...], "meta":{"paging":
+           {"links": {"next": "<url>"}, "total": N}}}). Follows
+           ``meta.paging.links.next`` until exhausted; the server hardcodes
+           ``limit=10`` regardless of ``per_page``, hence the higher
+           max_pages default.
+        2. **Mobile** (e.g. ``/mobile/leave`` -> {"data":[...], "meta":
+           {"current_page", "last_page", "total"}}). Bumps ``page`` until
+           ``last_page``.
         """
         all_items: list = []
         total = 0
-        last_page = 1
-        per_page = 100
-        for page in range(1, max_pages + 1):
-            p = {**(params or {}), "page": page, "per_page": per_page}
-            data = await self.get(path, p)
+        next_url: str | None = None
+        # First page: respect caller's params; per_page set high in case the
+        # endpoint honours it (most don't, but it's free to try).
+        first_params = {**(params or {}), "page": 1}
+        first_params.setdefault("per_page", 200)
+        # Track our own page counter for mobile-style endpoints that return
+        # last_page but not current_page in the meta block.
+        page_counter = 1
+
+        for _ in range(max_pages):
+            if next_url is None:
+                data = await self.get(path, first_params)
+            else:
+                data = await self._request("GET", next_url, absolute=True)
+
             items, meta = self._unwrap_list(data)
             all_items.extend(items)
+
             if meta:
-                total = int(meta.get("total", total) or total)
-                last_page = int(meta.get("last_page", last_page) or last_page)
+                t = meta.get("total") or (meta.get("paging") or {}).get("total")
+                if t is not None:
+                    try:
+                        total = int(t)
+                    except (TypeError, ValueError):
+                        pass
+
             if len(all_items) >= max_items:
                 all_items = all_items[:max_items]
                 break
-            if not meta or page >= last_page:
-                break
+
+            # Detect next link: Froiden (`meta.paging.links.next`) first.
+            paging = meta.get("paging") if isinstance(meta, dict) else None
+            if isinstance(paging, dict):
+                links = paging.get("links") or {}
+                next_url = links.get("next") or None
+                if not next_url:
+                    break
+                continue
+
+            # Mobile-style: meta has `last_page` (and optionally `current_page`).
+            last = meta.get("last_page") if isinstance(meta, dict) else None
+            current = meta.get("current_page") if isinstance(meta, dict) else None
+            effective_current = int(current) if current is not None else page_counter
+            if last is not None and effective_current < int(last):
+                page_counter = effective_current + 1
+                next_url = None
+                first_params = {**(params or {}), "page": page_counter, "per_page": 200}
+                continue
+
+            # No more pages signalled.
+            break
+
         return {"items": all_items, "total": total or len(all_items)}
 
     @staticmethod
@@ -162,12 +207,13 @@ class TopKeyClient:
         *,
         body: dict | None = None,
         params: dict | None = None,
+        absolute: bool = False,
     ) -> Any:
         # First attempt; if 401 (token expired/missing), re-login once and retry.
-        status, data = await self._raw(method, path, body=body, params=params)
+        status, data = await self._raw(method, path, body=body, params=params, absolute=absolute)
         if status == 401:
             await self.login()
-            status, data = await self._raw(method, path, body=body, params=params)
+            status, data = await self._raw(method, path, body=body, params=params, absolute=absolute)
         if status >= 400:
             msg = None
             if isinstance(data, dict):
@@ -182,9 +228,13 @@ class TopKeyClient:
         *,
         body: dict | None = None,
         params: dict | None = None,
+        absolute: bool = False,
     ) -> tuple[int, Any]:
         session = await self._get_session()
-        url = f"{self.base_url}{API_BASE}{path}"
+        # `absolute=True` means caller provides a full URL (e.g. the
+        # `meta.paging.links.next` URL from a Froiden response). Otherwise
+        # we prepend the configured base + API_BASE prefix.
+        url = path if absolute else f"{self.base_url}{API_BASE}{path}"
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"

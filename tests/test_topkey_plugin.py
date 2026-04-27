@@ -367,3 +367,150 @@ async def test_log_time_post_body_and_validation():
     assert call["json"] == {
         "task_id": 5, "total_hours": 2.5, "date": "2026-04-26", "memo": "review",
     }
+
+
+# ── 13. Late arrivals: shift-based threshold (real semantics) ──────
+
+
+@pytest.mark.asyncio
+async def test_get_late_arrivals_uses_shift_late_mark_duration():
+    """Plugin must consult /shift/list for start_time + late_mark_duration
+    instead of looking for an `is_late` field that the API doesn't return.
+
+    Real prod bug fix (Apr 27): bot said "no late arrivals today" while the
+    HR dashboard showed 7 late employees. Cause: plugin filtered on
+    `is_late=1` which doesn't exist; mobile API returns raw `check_in`.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    _attach_session(client, [
+        # 1: /shift/list response
+        (200, {"data": [
+            {"id": 1, "name": "day", "start_time": "09:00:00", "end_time": "18:00:00", "late_mark_duration": 15},
+            {"id": 9, "name": "Dam olish kuni", "start_time": "00:00:00", "end_time": "00:00:00", "late_mark_duration": 0},
+        ]}),
+        # 2: /mobile/attendance/all response
+        (200, {"data": [
+            # On time: 09:10 (within 15-min grace)
+            {"user_id": "1", "name": "Alice", "check_in": "2026-04-27 09:10:00", "is_on_leave": "0", "shift_id": "1"},
+            # Late: 09:30 (15 min beyond grace)
+            {"user_id": "2", "name": "Bob", "check_in": "2026-04-27 09:30:00", "is_on_leave": "0", "shift_id": "1"},
+            # Very late: 10:57
+            {"user_id": "3", "name": "Carol", "check_in": "2026-04-27 10:57:00", "is_on_leave": "0", "shift_id": "1"},
+            # Absent: no check_in
+            {"user_id": "4", "name": "Dan", "check_in": "-", "is_on_leave": "0", "shift_id": "1"},
+            # On leave
+            {"user_id": "5", "name": "Eve", "check_in": "-", "is_on_leave": "1", "shift_id": "1"},
+            # Day-off shift: 08:30 should NOT count as late despite being before 09:00
+            {"user_id": "6", "name": "Fred", "check_in": "2026-04-27 08:30:00", "is_on_leave": "0", "shift_id": "9"},
+        ]}),
+    ])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_get_late_arrivals")
+    parsed = json.loads(await tool.handler({"date": "2026-04-27"}))
+
+    assert parsed["count"] == 2  # Bob + Carol
+    names = [e["name"] for e in parsed["employees"]]
+    assert "Bob" in names and "Carol" in names
+    # Sorted by minutes_late desc
+    assert parsed["employees"][0]["name"] == "Carol"
+    # Carol = 10:57 vs threshold 09:15 = 1h42m + 15-min grace was already added
+    assert parsed["employees"][0]["minutes_late"] >= 100
+
+
+@pytest.mark.asyncio
+async def test_team_summary_uses_real_late_classifier():
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    _attach_session(client, [
+        (200, {"data": [
+            {"id": 1, "name": "day", "start_time": "09:00:00", "end_time": "18:00:00", "late_mark_duration": 15},
+        ]}),
+        (200, {"data": [
+            {"user_id": "1", "name": "A", "check_in": "2026-04-27 09:00:00", "is_on_leave": "0", "shift_id": "1"},
+            {"user_id": "2", "name": "B", "check_in": "2026-04-27 10:00:00", "is_on_leave": "0", "shift_id": "1"},
+            {"user_id": "3", "name": "C", "check_in": "-", "is_on_leave": "0", "shift_id": "1"},
+            {"user_id": "4", "name": "D", "check_in": "-", "is_on_leave": "1", "shift_id": "1"},
+        ]}),
+    ])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_get_team_summary")
+    parsed = json.loads(await tool.handler({"date": "2026-04-27"}))
+    assert parsed["total"] == 4
+    assert parsed["present_on_time"] == 1   # A
+    assert parsed["present_late"] == 1      # B
+    assert parsed["absent"] == 1            # C
+    assert parsed["on_leave"] == 1          # D
+
+
+# ── 14. list_tasks: auto-pagination + Excel spool + overdue filter ───
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_auto_paginates_and_spools_to_xlsx(tmp_path):
+    """list_tasks must walk Froiden's offset pagination AND spool >100 rows
+    to a workspace xlsx file (mirrors the absmarket fix pattern)."""
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+
+    # Build 3 pages of 50 tasks each = 150 total
+    def _make_page(start: int, count: int, next_url: str | None) -> dict:
+        items = [
+            {
+                "id": i, "heading": f"task {i}", "status": "completed",
+                "due_date": "2025-12-14T15:31:58+05:00", "users": [], "project": None,
+            }
+            for i in range(start, start + count)
+        ]
+        meta = {"paging": {"total": 150}}
+        if next_url:
+            meta["paging"]["links"] = {"next": next_url}
+        return {"data": items, "meta": meta}
+
+    _attach_session(client, [
+        (200, _make_page(1, 50, "https://topkey.uz/api/v1/task?offset=50")),
+        (200, _make_page(51, 50, "https://topkey.uz/api/v1/task?offset=100")),
+        (200, _make_page(101, 50, None)),
+    ])
+    p = QanotPlugin()
+    p.client = client
+    p._workspace_dir = str(tmp_path)
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+    parsed = json.loads(await tool.handler({}))
+    # 150 > 100 spool threshold → file_path must be present
+    assert parsed["match_total"] == 150
+    assert parsed["fetched_total"] == 150
+    assert "file_path" in parsed
+    assert parsed["file_path"].endswith(".xlsx")
+    assert Path(parsed["file_path"]).exists()
+    assert parsed["status_counts"] == {"completed": 150}
+    # Preview shows first 20
+    assert len(parsed["preview"]) == 20
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_overdue_filter_excludes_completed_and_future():
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    # 4 tasks: 1 overdue+incomplete, 1 overdue+completed (excluded),
+    # 1 future+incomplete (excluded), 1 no due date (excluded).
+    _attach_session(client, [
+        (200, {"data": [
+            {"id": 1, "heading": "really overdue", "status": "incomplete",
+             "due_date": "2025-01-01T00:00:00+05:00", "users": [], "project": None},
+            {"id": 2, "heading": "overdue but done", "status": "completed",
+             "due_date": "2025-01-01T00:00:00+05:00", "users": [], "project": None},
+            {"id": 3, "heading": "future task", "status": "incomplete",
+             "due_date": "2099-01-01T00:00:00+05:00", "users": [], "project": None},
+            {"id": 4, "heading": "no due", "status": "incomplete",
+             "due_date": None, "users": [], "project": None},
+        ], "meta": {"paging": {"total": 4}}}),
+    ])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+    parsed = json.loads(await tool.handler({"overdue_only": True}))
+    assert parsed["match_total"] == 1
+    assert parsed["items"][0]["id"] == 1
