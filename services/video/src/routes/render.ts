@@ -19,6 +19,7 @@ import { z } from "zod";
 import type { AppEnv } from "../server.js";
 import { childLogger } from "../observability/logger.js";
 import { incCounter } from "../observability/metrics.js";
+import { probeDisk } from "../observability/sampler.js";
 import { insertJob, queuePosition } from "../queue/jobs.js";
 import {
   RenderQuality,
@@ -29,6 +30,7 @@ import {
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MEMORY_RSS_LIMIT_BYTES = 1.4 * 1024 * 1024 * 1024;
+const DISK_FULL_RATIO = 0.95;
 const ESTIMATED_SECONDS_PER_QUEUED = 25;
 
 const RenderRequestSchema = z.object({
@@ -48,21 +50,28 @@ const RenderRequestSchema = z.object({
 export interface RenderRouteDeps {
   db: SqliteDb;
   /**
-   * Optional probe override. Phase 2 ships an in-process RAM probe; tests
-   * inject this to simulate the disk-full path that Phase 4's OS gauges
-   * will populate.
+   * Output directory; used by the default disk-pressure probe so the 503
+   * envelope surfaces when the OUTPUT_DIR filesystem is >95% full.
+   */
+  outputDir?: string;
+  /**
+   * Optional probe override. Tests inject this to simulate degraded states.
+   * When omitted, the default probe is built from `outputDir`.
    */
   isDegraded?: () => DegradedReason | null;
 }
 
 export interface DegradedReason {
-  code: "memory_pressure" | "disk_full";
+  code: "memory_pressure" | "degraded_disk_full";
   message: string;
   retry_after_seconds: number;
 }
 
 export function buildRenderRoutes(deps: RenderRouteDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+  const probe =
+    deps.isDegraded ??
+    (() => defaultDegradedProbe(deps.outputDir));
 
   app.use(
     "/render",
@@ -83,10 +92,17 @@ export function buildRenderRoutes(deps: RenderRouteDeps): Hono<AppEnv> {
   app.post("/render", async (c) => {
     const log = c.get("logger") ?? childLogger({ component: "render-route" });
 
-    const degraded = (deps.isDegraded ?? defaultDegradedProbe)();
+    const degraded = probe();
     if (degraded) {
       const body: ErrorEnvelope = {
-        error: { code: degraded.code, message: degraded.message },
+        error: {
+          code: "service_unavailable",
+          message: degraded.message,
+          details: {
+            code: degraded.code,
+            retry_after_seconds: degraded.retry_after_seconds,
+          },
+        },
       };
       log.warn(
         { degraded_code: degraded.code },
@@ -173,12 +189,15 @@ function buildAcceptedBody(
 /**
  * Default degraded-mode probe.
  *   - RAM: process RSS over MEMORY_RSS_LIMIT_BYTES (90% of the 1.5 GB cap).
- *   - Disk: cgroup/disk usage gauges are not directly readable from Node
- *     stdlib without spawning, so Phase 2 covers the RAM lever and leaves
- *     disk for Phase 4 when we add the OS probe gauges. Tests can inject
- *     `isDegraded` to simulate either case.
+ *   - Disk: statvfs on OUTPUT_DIR; reject when used/total > 95% per §9.4.
+ *
+ * On platforms where statvfs is unavailable (Windows test runners) the
+ * disk probe degrades gracefully -- we silently skip it and rely on the
+ * cleanup cron to keep capacity under control.
  */
-function defaultDegradedProbe(): DegradedReason | null {
+export function defaultDegradedProbe(
+  outputDir: string | undefined,
+): DegradedReason | null {
   const usage = process.memoryUsage();
   if (usage.rss > MEMORY_RSS_LIMIT_BYTES) {
     return {
@@ -186,6 +205,16 @@ function defaultDegradedProbe(): DegradedReason | null {
       message: "Service is at memory capacity. Retry shortly.",
       retry_after_seconds: 30,
     };
+  }
+  if (outputDir) {
+    const disk = probeDisk(outputDir);
+    if (disk && disk.usage_ratio > DISK_FULL_RATIO) {
+      return {
+        code: "degraded_disk_full",
+        message: `Output volume ${disk.mount} is full (${(disk.usage_ratio * 100).toFixed(1)}% used). Retry after cleanup.`,
+        retry_after_seconds: 300,
+      };
+    }
   }
   return null;
 }

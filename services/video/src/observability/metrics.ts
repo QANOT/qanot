@@ -1,9 +1,27 @@
 /**
- * Minimal Prometheus exposition.
+ * Minimal Prometheus exposition for the qanot-video render service.
  *
- * Phase 2 wires up the per-job counters/histograms (the §8.1 subset that the
- * rendering pipeline can populate today). The gauges that need OS probes
- * (disk_used_bytes, memory_rss_bytes) are still TODO until Phase 4.
+ * Phase 4 populates the full §8.1 metric catalog:
+ *
+ *   Counters
+ *     video_jobs_submitted_total{bot_id}
+ *     video_jobs_succeeded_total{bot_id}
+ *     video_jobs_failed_total{bot_id, error_code}
+ *     video_jobs_cancelled_total{bot_id}
+ *     video_lint_failures_total{bot_id}
+ *
+ *   Histograms (seconds; le-bucketed)
+ *     video_render_duration_seconds{format,quality}
+ *     video_lint_duration_seconds
+ *     video_total_lifecycle_seconds{bot_id}
+ *
+ *   Gauges (sampled on demand by sampleResourceGauges())
+ *     video_queue_depth
+ *     video_worker_busy
+ *     video_disk_used_bytes{mount}
+ *     video_disk_free_bytes{mount}
+ *     video_memory_rss_bytes{component}
+ *     video_chromium_processes
  *
  * Deliberately no prom-client dependency -- keeps the dep tree small and the
  * exposition format is plain text. Counters/gauges/histograms are plain Maps.
@@ -51,8 +69,17 @@ const counters = new Map<string, CounterDefinition>();
 const gauges = new Map<string, GaugeDefinition>();
 const histograms = new Map<string, HistogramDefinition>();
 
-const DEFAULT_DURATION_BUCKETS_SECONDS = [
-  0.1, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 180,
+/**
+ * Standard duration buckets per ARCHITECTURE §8.1: render and lifecycle
+ * histograms share these so dashboards line up.
+ */
+const STANDARD_DURATION_BUCKETS_SECONDS = [
+  0.5, 1, 2, 5, 10, 20, 30, 60, 120,
+] as const;
+
+/** Lint typically completes in <1s; use a tighter low end. */
+const LINT_DURATION_BUCKETS_SECONDS = [
+  0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30,
 ] as const;
 
 const processStartTimeSeconds = Date.now() / 1000;
@@ -61,6 +88,10 @@ const processStartTimeSeconds = Date.now() / 1000;
 export function registerCounter(name: string, help: string): void {
   if (!counters.has(name)) {
     counters.set(name, { help, series: new Map() });
+  } else {
+    // Refresh the help string so re-registration after reset wins.
+    const existing = counters.get(name);
+    if (existing) existing.help = help;
   }
 }
 
@@ -68,6 +99,9 @@ export function registerCounter(name: string, help: string): void {
 export function registerGauge(name: string, help: string): void {
   if (!gauges.has(name)) {
     gauges.set(name, { help, series: new Map() });
+  } else {
+    const existing = gauges.get(name);
+    if (existing) existing.help = help;
   }
 }
 
@@ -78,7 +112,7 @@ export function registerGauge(name: string, help: string): void {
 export function registerHistogram(
   name: string,
   help: string,
-  buckets: readonly number[] = DEFAULT_DURATION_BUCKETS_SECONDS,
+  buckets: readonly number[] = STANDARD_DURATION_BUCKETS_SECONDS,
 ): void {
   if (!histograms.has(name)) {
     histograms.set(name, {
@@ -86,6 +120,9 @@ export function registerHistogram(
       buckets: [...buckets].toSorted((a, b) => a - b),
       series: new Map(),
     });
+  } else {
+    const existing = histograms.get(name);
+    if (existing) existing.help = help;
   }
 }
 
@@ -130,6 +167,35 @@ export function setGauge(
 }
 
 /**
+ * Read a single labelled gauge value. Returns null when the gauge has not been
+ * set yet for this label set. Used by /summary to expose disk + worker_busy
+ * without re-running the OS probes.
+ */
+export function readGauge(
+  name: string,
+  labels: Record<string, string> = {},
+): number | null {
+  const def = gauges.get(name);
+  if (!def) return null;
+  const entry = def.series.get(stableKey(labels));
+  return entry ? entry.value : null;
+}
+
+/**
+ * Sum a counter across every label combination (e.g. all bot_ids). Used by
+ * /summary to compute "jobs today" totals without re-aggregating from SQLite.
+ */
+export function readCounterSum(name: string): number {
+  const def = counters.get(name);
+  if (!def) return 0;
+  let total = 0;
+  for (const entry of def.series.values()) {
+    total += entry.value;
+  }
+  return total;
+}
+
+/**
  * Observe a histogram value (typically duration in seconds). Auto-registers
  * with default duration buckets if the name is unknown.
  */
@@ -142,7 +208,7 @@ export function observeHistogram(
   if (!def) {
     def = {
       help: name,
-      buckets: [...DEFAULT_DURATION_BUCKETS_SECONDS],
+      buckets: [...STANDARD_DURATION_BUCKETS_SECONDS],
       series: new Map(),
     };
     histograms.set(name, def);
@@ -270,10 +336,13 @@ function escapeLabel(v: string): string {
 }
 
 function registerDefaultMetrics(): void {
+  // HTTP plumbing
   registerCounter(
     "http_requests_total",
     "Total HTTP requests received, by route and status.",
   );
+
+  // §8.1 counters
   registerCounter(
     "video_jobs_submitted_total",
     "Total render jobs accepted (POST /render -> 202 or 200 idempotent).",
@@ -294,15 +363,25 @@ function registerDefaultMetrics(): void {
     "video_lint_failures_total",
     "Total compositions that failed lint (precedes a video_jobs_failed_total bump).",
   );
+
+  // §8.1 histograms
   registerHistogram(
     "video_render_duration_seconds",
     "Render subprocess wall-clock duration in seconds.",
+    STANDARD_DURATION_BUCKETS_SECONDS,
   );
   registerHistogram(
     "video_lint_duration_seconds",
     "Lint subprocess wall-clock duration in seconds.",
-    [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+    LINT_DURATION_BUCKETS_SECONDS,
   );
+  registerHistogram(
+    "video_total_lifecycle_seconds",
+    "End-to-end job lifecycle duration (queued -> terminal) in seconds.",
+    STANDARD_DURATION_BUCKETS_SECONDS,
+  );
+
+  // §8.1 gauges (populated by sampleResourceGauges + worker hooks)
   registerGauge(
     "video_queue_depth",
     "Current number of jobs in status=queued.",
@@ -310,6 +389,22 @@ function registerDefaultMetrics(): void {
   registerGauge(
     "video_worker_busy",
     "1 when the worker is currently processing a job, 0 otherwise.",
+  );
+  registerGauge(
+    "video_disk_used_bytes",
+    "Bytes used on the OUTPUT_DIR filesystem (mount label set per probe).",
+  );
+  registerGauge(
+    "video_disk_free_bytes",
+    "Bytes available on the OUTPUT_DIR filesystem (mount label set per probe).",
+  );
+  registerGauge(
+    "video_memory_rss_bytes",
+    "Resident set size (bytes) of the render-service process.",
+  );
+  registerGauge(
+    "video_chromium_processes",
+    "Best-effort count of running chromium child processes.",
   );
 }
 

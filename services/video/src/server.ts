@@ -24,12 +24,14 @@ import { serviceKeyAuth } from "./auth/service-key.js";
 import { loadConfig, type Config } from "./config.js";
 import { childLogger, getLogger } from "./observability/logger.js";
 import { incCounter } from "./observability/metrics.js";
+import { CronManager } from "./queue/cron.js";
 import { openDatabase } from "./queue/db.js";
 import { Worker } from "./queue/worker.js";
 import { buildHealthRoutes } from "./routes/health.js";
 import { buildJobsRoutes } from "./routes/jobs.js";
 import { buildMetricsRoutes } from "./routes/metrics.js";
 import { buildRenderRoutes } from "./routes/render.js";
+import { buildSummaryRoutes } from "./routes/summary.js";
 import type { ErrorEnvelope } from "./types.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -87,12 +89,19 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
 
   // Routes.
   app.route("/", buildHealthRoutes({ db: deps.db }));
-  app.route("/", buildRenderRoutes({ db: deps.db }));
+  app.route(
+    "/",
+    buildRenderRoutes({ db: deps.db, outputDir: deps.config.OUTPUT_DIR }),
+  );
   app.route(
     "/",
     buildJobsRoutes({ db: deps.db, worker: deps.worker, outputDir: deps.config.OUTPUT_DIR }),
   );
-  app.route("/", buildMetricsRoutes());
+  app.route("/", buildMetricsRoutes({ outputDir: deps.config.OUTPUT_DIR }));
+  app.route(
+    "/",
+    buildSummaryRoutes({ db: deps.db, worker: deps.worker, outputDir: deps.config.OUTPUT_DIR }),
+  );
 
   // 404 envelope.
   app.notFound((c) => {
@@ -139,6 +148,7 @@ export interface StartOptions {
 export interface RunningServer {
   server: ServerType;
   worker: Worker;
+  cron: CronManager;
   db: SqliteDb;
   port: number;
   host: string;
@@ -152,6 +162,11 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const log = getLogger();
   const db = openDatabase(config.DB_PATH);
   const worker = new Worker({ db, outputDir: config.OUTPUT_DIR });
+  const cron = new CronManager({
+    db,
+    outputDir: config.OUTPUT_DIR,
+    dbPath: config.DB_PATH,
+  });
   const app = buildApp({ db, config, worker });
 
   const host = opts.host ?? config.HOST;
@@ -172,6 +187,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   });
 
   worker.start();
+  cron.start();
 
   const addr = server.address();
   const boundPort =
@@ -197,11 +213,12 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     await Promise.race([stopHttp, timeout]);
 
     await worker.stop();
+    await cron.stop();
     db.close();
     log.info("graceful shutdown complete");
   };
 
-  return { server, worker, db, port: boundPort, host: boundHost, close };
+  return { server, worker, cron, db, port: boundPort, host: boundHost, close };
 }
 
 // Module-level run when executed directly (bun run src/server.ts).

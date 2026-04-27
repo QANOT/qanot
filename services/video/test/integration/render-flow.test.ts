@@ -295,7 +295,7 @@ describe("POST /render degraded mode", () => {
         buildRenderRoutes({
           db,
           isDegraded: () => ({
-            code: "disk_full",
+            code: "degraded_disk_full",
             message: "Simulated disk-full degraded mode.",
             retry_after_seconds: 60,
           }),
@@ -317,8 +317,11 @@ describe("POST /render degraded mode", () => {
       );
       expect(res.status).toBe(503);
       expect(res.headers.get("retry-after")).toBe("60");
-      const body = (await res.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("disk_full");
+      const body = (await res.json()) as {
+        error: { code: string; details?: { code: string } };
+      };
+      expect(body.error.code).toBe("service_unavailable");
+      expect(body.error.details?.code).toBe("degraded_disk_full");
     } finally {
       db.close();
     }

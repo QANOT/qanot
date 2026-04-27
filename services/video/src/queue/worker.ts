@@ -31,6 +31,11 @@ import {
   observeHistogram,
   setGauge,
 } from "../observability/metrics.js";
+import {
+  checkCompositionAssets,
+  type AssetGuardOptions,
+  type AssetGuardResult,
+} from "../render/asset_guard.js";
 import { lintComposition } from "../render/lint.js";
 import { renderComposition } from "../render/render.js";
 import {
@@ -68,6 +73,17 @@ export interface WorkerOptions {
   /** Allow tests to inject fake lint/render. */
   lintFn?: typeof lintComposition;
   renderFn?: typeof renderComposition;
+  /**
+   * Override the asset-URL allowlist check. Tests inject a stub that
+   * always passes, or one that returns a deterministic failure. Production
+   * uses the default `checkCompositionAssets`.
+   */
+  assetGuardFn?: (
+    html: string,
+    opts?: AssetGuardOptions,
+  ) => Promise<AssetGuardResult>;
+  /** Forwarded into the asset-guard call (e.g. resolver, file roots). */
+  assetGuardOptions?: AssetGuardOptions;
 }
 
 export class Worker {
@@ -78,6 +94,8 @@ export class Worker {
   private readonly heartbeatMs: number;
   private readonly lintFn: typeof lintComposition;
   private readonly renderFn: typeof renderComposition;
+  private readonly assetGuardFn: NonNullable<WorkerOptions["assetGuardFn"]>;
+  private readonly assetGuardOptions: AssetGuardOptions | undefined;
   private readonly log: Logger;
 
   private running = false;
@@ -97,6 +115,8 @@ export class Worker {
     this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.lintFn = opts.lintFn ?? lintComposition;
     this.renderFn = opts.renderFn ?? renderComposition;
+    this.assetGuardFn = opts.assetGuardFn ?? checkCompositionAssets;
+    this.assetGuardOptions = opts.assetGuardOptions;
     this.log = childLogger({ component: "worker" });
     mkdirSync(this.outputDir, { recursive: true });
   }
@@ -213,8 +233,53 @@ export class Worker {
     };
 
     try {
-      // -------- Lint -------- //
       startHeartbeat();
+
+      // -------- Asset URL allowlist (Phase 4 §6.3 + §7.4) -------- //
+      // Runs BEFORE the hyperframes lint so a malicious composition cannot
+      // escape into Chromium even if lint somehow let it through.
+      let assetVerdict: AssetGuardResult;
+      try {
+        assetVerdict = await this.assetGuardFn(
+          job.composition_html,
+          this.assetGuardOptions,
+        );
+      } catch (err) {
+        log.error({ err: serializeError(err) }, "asset_guard threw");
+        this.failJob(job, JobStatus.Linting, JobErrorCode.AssetFetchFailed, {
+          message: "Asset URL allowlist check failed unexpectedly",
+          details: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+      if (!assetVerdict.ok) {
+        log.warn(
+          {
+            reason: assetVerdict.reason,
+            offending_url: assetVerdict.offending_url,
+          },
+          "asset_guard rejected composition",
+        );
+        this.failJob(
+          job,
+          JobStatus.Linting,
+          JobErrorCode.AssetFetchFailed,
+          {
+            message: assetVerdict.message,
+            details: {
+              reason: assetVerdict.reason,
+              offending_url: assetVerdict.offending_url ?? null,
+            },
+          },
+        );
+        return;
+      }
+      if (cancelController.signal.aborted) {
+        this.cancelJob(job, JobStatus.Linting);
+        return;
+      }
+
+      // -------- Lint -------- //
       let lintResult: LintResult;
       try {
         lintResult = await this.lintFn({
@@ -320,6 +385,11 @@ export class Worker {
         );
         if (transitioned) {
           incCounter("video_jobs_succeeded_total", { bot_id: job.bot_id });
+          observeHistogram(
+            "video_total_lifecycle_seconds",
+            Math.max(0, finishedAt - job.queued_at),
+            { bot_id: job.bot_id },
+          );
           log.info(
             {
               output_size_bytes: renderResult.output_size_bytes,
@@ -384,6 +454,11 @@ export class Worker {
         bot_id: job.bot_id,
         error_code: code,
       });
+      observeHistogram(
+        "video_total_lifecycle_seconds",
+        Math.max(0, finishedAt - job.queued_at),
+        { bot_id: job.bot_id },
+      );
     }
   }
 
@@ -402,6 +477,11 @@ export class Worker {
     );
     if (ok) {
       incCounter("video_jobs_cancelled_total", { bot_id: job.bot_id });
+      observeHistogram(
+        "video_total_lifecycle_seconds",
+        Math.max(0, finishedAt - job.queued_at),
+        { bot_id: job.bot_id },
+      );
     }
   }
 

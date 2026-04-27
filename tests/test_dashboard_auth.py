@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -49,6 +51,8 @@ class _StubConfig:
         self.dashboard_token = ""
         self.dashboard_host = "127.0.0.1"
         self.dashboard_allowed_origins: list[str] = []
+        self.video_render_url = ""
+        self.video_service_secret = ""
         for k, v in overrides.items():
             setattr(self, k, v)
 
@@ -286,5 +290,177 @@ async def test_health_endpoint_works_with_empty_token():
     try:
         resp = await client.get("/api/health")
         assert resp.status == 200
+    finally:
+        await client.close()
+
+
+# ── /api/video proxy ─────────────────────────────────────────────
+
+
+async def _spawn_fake_render_service(
+    payload: dict[str, Any] | None = None,
+    status: int = 200,
+    expect_bearer: str | None = None,
+) -> tuple[TestServer, str]:
+    """Boot a tiny aiohttp server that mimics qanot-video's GET /summary.
+
+    Returns (server, base_url) so the test can wire it into config and
+    tear it down on completion.
+    """
+    body = payload or {
+        "queue_depth": 0,
+        "worker_busy": False,
+        "jobs_today": {"succeeded": 14, "failed": 1, "cancelled": 0},
+        "recent_jobs": [
+            {
+                "job_id": "01HAAAAAAAAAAAAAAAAAAAAAAA",
+                "bot_id": "topkeydevbot",
+                "status": "succeeded",
+                "duration_s": 38,
+                "format": "9:16",
+                "queued_at": "2026-04-26T08:00:00Z",
+            }
+        ],
+        "disk_free_bytes": 8_500_000_000,
+        "service_healthy": True,
+    }
+
+    async def handler(request: web.Request) -> web.Response:
+        if expect_bearer is not None:
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {expect_bearer}":
+                return web.json_response({"error": "unauthorized"}, status=401)
+        return web.json_response(body, status=status)
+
+    fake_app = web.Application()
+    fake_app.router.add_get("/summary", handler)
+    server = TestServer(fake_app)
+    await server.start_server()
+    base_url = f"http://127.0.0.1:{server.port}"
+    return server, base_url
+
+
+@pytest.mark.asyncio
+async def test_api_video_proxies_summary_when_service_healthy():
+    """Happy path: dashboard.config has render URL + secret; /api/video
+    fetches /summary and returns the same JSON 1:1."""
+    fake_server, base_url = await _spawn_fake_render_service(
+        expect_bearer="render-secret-xyz",
+    )
+    try:
+        config = _StubConfig(
+            dashboard_token="dash-token",
+            video_render_url=base_url,
+            video_service_secret="render-secret-xyz",
+        )
+        client = await _make_client(config, _StubAgent())
+        try:
+            resp = await client.get(
+                "/api/video",
+                headers={"Authorization": "Bearer dash-token"},
+            )
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["service_healthy"] is True
+            assert body["queue_depth"] == 0
+            assert body["jobs_today"]["succeeded"] == 14
+            assert body["disk_free_bytes"] == 8_500_000_000
+            assert isinstance(body["recent_jobs"], list)
+            assert body["recent_jobs"][0]["status"] == "succeeded"
+        finally:
+            await client.close()
+    finally:
+        await fake_server.close()
+
+
+@pytest.mark.asyncio
+async def test_api_video_returns_unhealthy_when_service_unreachable():
+    """If the render service is down, dashboard returns 200 with
+    service_healthy=false. The dashboard itself stays alive."""
+    config = _StubConfig(
+        dashboard_token="dash-token",
+        # Bind to a port nothing is listening on; aiohttp ClientError fires.
+        video_render_url="http://127.0.0.1:1",
+        video_service_secret="render-secret-xyz",
+    )
+    client = await _make_client(config, _StubAgent())
+    try:
+        resp = await client.get(
+            "/api/video",
+            headers={"Authorization": "Bearer dash-token"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["service_healthy"] is False
+        assert "error" in body
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_video_unhealthy_when_unconfigured():
+    """No render URL or secret in config → service_healthy=false. This
+    is the default for bots that never enabled the video engine."""
+    config = _StubConfig(
+        dashboard_token="dash-token",
+        video_render_url="",
+        video_service_secret="",
+    )
+    client = await _make_client(config, _StubAgent())
+    try:
+        resp = await client.get(
+            "/api/video",
+            headers={"Authorization": "Bearer dash-token"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["service_healthy"] is False
+        assert "error" in body
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_video_unhealthy_when_service_returns_5xx():
+    """Render service alive but reporting itself unhealthy (e.g. db
+    corruption) → dashboard surfaces service_healthy=false."""
+    fake_server, base_url = await _spawn_fake_render_service(
+        payload={"error": "internal"},
+        status=500,
+    )
+    try:
+        config = _StubConfig(
+            dashboard_token="dash-token",
+            video_render_url=base_url,
+            video_service_secret="anything",
+        )
+        client = await _make_client(config, _StubAgent())
+        try:
+            resp = await client.get(
+                "/api/video",
+                headers={"Authorization": "Bearer dash-token"},
+            )
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["service_healthy"] is False
+            assert "500" in body["error"]
+        finally:
+            await client.close()
+    finally:
+        await fake_server.close()
+
+
+@pytest.mark.asyncio
+async def test_api_video_requires_dashboard_auth():
+    """The /api/video endpoint is auth-gated -- no token, no proxy."""
+    config = _StubConfig(
+        dashboard_token="dash-token",
+        video_render_url="http://127.0.0.1:1",
+        video_service_secret="x",
+    )
+    client = await _make_client(config, _StubAgent())
+    try:
+        resp = await client.get("/api/video")
+        assert resp.status == 401
     finally:
         await client.close()

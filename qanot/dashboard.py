@@ -6,13 +6,15 @@ Uses aiohttp (already a dependency) — no extra packages needed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import aiohttp
 from aiohttp import web
 
 if TYPE_CHECKING:
@@ -103,6 +105,7 @@ class Dashboard:
         self.app.router.add_get("/api/tools", self._handle_api_tools)
         self.app.router.add_get("/api/routing", self._handle_api_routing)
         self.app.router.add_get("/api/voicecall", self._handle_api_voicecall)
+        self.app.router.add_get("/api/video", self._handle_api_video)
 
     # ── API endpoints ──
 
@@ -221,6 +224,56 @@ class Dashboard:
         if vcm is None:
             return web.json_response({"enabled": False})
         return web.json_response(vcm.stats_snapshot())
+
+    async def _handle_api_video(self, request: web.Request) -> web.Response:
+        """Proxy a curated subset of qanot-video metrics for the dashboard.
+
+        Per docs/video-engine/ARCHITECTURE.md §8.3: the dashboard reads
+        `config.video_render_url` + `config.video_service_secret` (Phase 3
+        wiring) and fetches the render service's GET /summary endpoint.
+        On any connection / timeout / non-2xx, we return 200 with
+        `service_healthy=false` so the dashboard itself stays up.
+        """
+        url = (getattr(self.config, "video_render_url", "") or "").rstrip("/")
+        secret = getattr(self.config, "video_service_secret", "") or ""
+        if not url or not secret:
+            return web.json_response({
+                "service_healthy": False,
+                "error": "render service not configured",
+            })
+
+        target = f"{url}/summary"
+        timeout = aiohttp.ClientTimeout(total=5.0)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    target,
+                    headers={"Authorization": f"Bearer {secret}"},
+                ) as resp:
+                    if resp.status != 200:
+                        body_text = await resp.text()
+                        return web.json_response({
+                            "service_healthy": False,
+                            "error": (
+                                f"render service returned {resp.status}: "
+                                f"{body_text[:200]}"
+                            ),
+                        })
+                    payload: dict[str, Any] = await resp.json()
+        except asyncio.TimeoutError:
+            return web.json_response({
+                "service_healthy": False,
+                "error": "render service timed out",
+            })
+        except aiohttp.ClientError as e:
+            return web.json_response({
+                "service_healthy": False,
+                "error": f"render service unreachable: {e}",
+            })
+
+        # Normalise: ensure service_healthy is set even if upstream omitted it.
+        payload.setdefault("service_healthy", True)
+        return web.json_response(payload)
 
     # ── Dashboard HTML ──
 
