@@ -33,8 +33,13 @@ def _read_video_secret() -> str | None:
 
 
 def main():
+    # Filter to containers running the qanot-bot image specifically. The
+    # broader `name=qanot-` prefix would also match service containers like
+    # qanot-video (which uses the qanot-video:latest image and must NOT be
+    # recreated with qanot-bot:latest).
     result = subprocess.run(
-        ["docker", "ps", "-a", "--filter", "name=qanot-", "--format", "{{.Names}}"],
+        ["docker", "ps", "-a", "--filter", "ancestor=qanot-bot:latest",
+         "--format", "{{.Names}}"],
         capture_output=True, text=True,
     )
     names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
