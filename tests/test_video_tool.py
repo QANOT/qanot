@@ -72,13 +72,15 @@ class _FakeResponse:
 class _FakeProvider:
     """Returns a canned composition. Tracks call_count for assertions."""
 
+    model = "claude-sonnet-4-6"
+
     def __init__(self, response_text: str = "<!doctype html><html><body>x</body></html>"):
         self.response_text = response_text
         self.call_count = 0
         self.last_messages: list[dict[str, Any]] = []
         self.last_system: str = ""
 
-    async def chat(self, *, messages, system, tools, model, max_tokens):
+    async def chat(self, messages, tools=None, system=None):
         self.call_count += 1
         self.last_messages = messages
         self.last_system = system

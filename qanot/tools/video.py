@@ -324,7 +324,12 @@ async def _author_composition(
     """Single-shot composition write. Returns raw HTML or raises ValueError.
 
     Provider must implement the LLMProvider.chat contract from
-    qanot/providers/base.py.
+    qanot/providers/base.py — chat(messages, tools=None, system=None).
+    `model` is read from provider.model and routed via the existing
+    RoutingProvider mechanism if enabled. Phase 4 wires per-tool routing;
+    for v1 we accept the main agent's model (typically Sonnet 4.6 already
+    in production), with the parameter present so the call site can
+    request a specific model when the routing layer learns to honor it.
     """
     user_msg = brief
     if feedback:
@@ -336,13 +341,15 @@ async def _author_composition(
         )
 
     messages = [{"role": "user", "content": user_msg}]
-    # No tools, no thinking — composition is pure text generation.
+    # The base LLMProvider.chat() signature does not accept a per-call
+    # model override (provider.model is used). The `model` parameter is
+    # accepted here for forward compatibility with a router-aware call
+    # path that Phase 4 will introduce; today it is informational only.
+    _ = model
     response = await provider.chat(
         messages=messages,
-        system=system_prompt,
         tools=[],
-        model=model,
-        max_tokens=_COMPOSITION_OUTPUT_TOKEN_BUDGET,
+        system=system_prompt,
     )
 
     text = (response.content or "").strip()
