@@ -128,12 +128,17 @@ EOF
 
     echo "[4/5] Recreating qanot-video container..."
     ssh "$SERVER" "docker rm -f qanot-video 2>/dev/null || true"
+    # Run on the same Docker network as the bot containers so they can
+    # reach the service via DNS at http://qanot-video:8770. Not bound to
+    # the host network -- public ingress is intentionally unavailable; the
+    # service has no business being exposed beyond the docker network.
+    ssh "$SERVER" 'docker network create qanot-cloud-net 2>/dev/null || true'
     ssh "$SERVER" 'docker run -d \
         --name qanot-video \
         --restart unless-stopped \
         --memory 1500m \
         --memory-swap 1500m \
-        --network host \
+        --network qanot-cloud-net \
         -v /data/video:/data/video \
         --env-file /root/.env.qanot-video \
         qanot-video:latest'
@@ -142,7 +147,8 @@ EOF
     echo "[5/5] Health check..."
     sleep 3
     ssh "$SERVER" 'docker ps --filter "name=qanot-video" --format "{{.Names}}: {{.Status}}"'
-    ssh "$SERVER" 'curl -sf http://127.0.0.1:8770/health && echo ""'
+    # Verify health from inside the container (no host port binding).
+    ssh "$SERVER" 'docker exec qanot-video sh -c "curl -sf http://127.0.0.1:8770/health" && echo ""'
     echo ""
 }
 
