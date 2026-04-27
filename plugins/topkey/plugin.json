@@ -1,0 +1,22 @@
+{
+  "name": "topkey",
+  "version": "0.1.0",
+  "description": "TopKey HR + Project Management plugin (28 tools)",
+  "author": "Qanot AI",
+  "license": "Proprietary",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "required_config": [
+    "api_url",
+    "email",
+    "password"
+  ],
+  "cloud": {
+    "display_name": "TopKey",
+    "icon": "🏢",
+    "category": "hr",
+    "connect_type": "miniapp",
+    "visible": true
+  }
+}
