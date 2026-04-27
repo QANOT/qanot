@@ -2,6 +2,7 @@
 """Recreate qanot-bot containers with the latest image, preserving config."""
 
 import json
+import os
 import subprocess
 import sys
 
@@ -10,6 +11,25 @@ SKIP_ENV = {
     "PYTHON_PIP_VERSION", "PYTHON_SETUPTOOLS_VERSION",
     "PYTHON_GET_PIP_URL", "PYTHON_GET_PIP_SHA256",
 }
+
+# Read the qanot-video service secret from the env file written by
+# scripts/deploy.sh on first deploy. Bot containers need this to talk to
+# the render service when video_engine="hyperframes".
+VIDEO_SECRET_PATH = "/root/.env.qanot-video"
+
+
+def _read_video_secret() -> str | None:
+    if not os.path.isfile(VIDEO_SECRET_PATH):
+        return None
+    try:
+        with open(VIDEO_SECRET_PATH, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("SERVICE_SECRET="):
+                    return line.split("=", 1)[1]
+    except OSError:
+        return None
+    return None
 
 
 def main():
@@ -23,6 +43,8 @@ def main():
         print("   No bot containers found.")
         return
 
+    video_secret = _read_video_secret()
+
     for name in names:
         info_raw = subprocess.run(
             ["docker", "inspect", name], capture_output=True, text=True,
@@ -31,10 +53,17 @@ def main():
 
         # Extract env vars
         env_args = []
+        existing_keys = set()
         for e in info["Config"].get("Env", []):
             key = e.split("=", 1)[0]
+            existing_keys.add(key)
             if key not in SKIP_ENV:
                 env_args.extend(["-e", e])
+
+        # Inject QANOT_VIDEO_SECRET if available and not already set on the
+        # container. Idempotent — preserves a manually-set value.
+        if video_secret and "QANOT_VIDEO_SECRET" not in existing_keys:
+            env_args.extend(["-e", f"QANOT_VIDEO_SECRET={video_secret}"])
 
         # Extract volumes
         vol_args = []

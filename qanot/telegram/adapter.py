@@ -19,7 +19,7 @@ from qanot.telegram.formatting import _sanitize_response
 from qanot.telegram.handlers import HandlersMixin
 from qanot.telegram.media import (
     download_photo, download_sticker, send_pending_files,
-    send_pending_images, send_voice_reply, transcribe_voice,
+    send_pending_images, send_pending_videos, send_voice_reply, transcribe_voice,
 )
 from qanot.telegram.streaming import StreamingMixin
 
@@ -622,6 +622,7 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
 
             await send_pending_images(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
             await send_pending_files(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
+            await send_pending_videos(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
 
             should_tts = (
                 self.config.voice_mode == "always"

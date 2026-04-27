@@ -222,6 +222,20 @@ class Config:
     # minutes without these caps.
     web_search_per_user_hourly: int = 20
     image_gen_per_user_hourly: int = 10
+    # Video engine (HyperFrames render service)
+    # "off"           — no video tools registered
+    # "legacy_reels"  — register the old plugins/reels create_reel
+    # "hyperframes"   — register the new render_video tool (requires service)
+    video_engine: str = "off"
+    video_render_url: str = "http://127.0.0.1:8770"
+    video_service_secret: str = ""  # Bearer token; resolve via SecretRef in JSON
+    video_per_user_daily_limit: int = 5
+    video_per_bot_daily_limit: int = 50
+    video_per_user_daily_cost_usd: float = 0.50
+    video_per_bot_daily_cost_usd: float = 5.00
+    video_composition_model: str = "claude-sonnet-4-6"
+    video_default_duration_seconds: int = 30
+    video_max_duration_seconds: int = 60
     # Multi-agent definitions
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group
@@ -414,6 +428,7 @@ def load_config(path: str | None = None) -> Config:
         'soul_path', 'tools_path', 'workspace_dir', 'sessions_dir',
         'cron_dir', 'plugins_dir',
         'voicecall_api_hash', 'voicecall_session',
+        'video_service_secret', 'video_render_url',
     }
     for key, value in simple.items():
         if isinstance(value, str) and key in _SENSITIVE_FIELDS:

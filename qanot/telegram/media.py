@@ -359,3 +359,22 @@ async def send_pending_files(bot: "Bot", chat_id: int, user_id: str, agent: "Age
             logger.info("Sent file: %s", path)
         except Exception as e:
             logger.warning("Failed to send file %s: %s", path, e)
+
+
+async def send_pending_videos(bot: "Bot", chat_id: int, user_id: str, agent: "Agent", *, thread_id: int | None = None) -> None:
+    """Send any videos rendered by render_video tool during this turn."""
+    video_paths = agent.pop_pending_videos(user_id)
+    if not video_paths:
+        return
+
+    for path in video_paths:
+        try:
+            from aiogram.types import FSInputFile
+            video = FSInputFile(path)
+            kwargs: dict = {"chat_id": chat_id, "video": video, "supports_streaming": True}
+            if thread_id:
+                kwargs["message_thread_id"] = thread_id
+            await bot.send_video(**kwargs)
+            logger.info("Sent rendered video: %s", path)
+        except Exception as e:
+            logger.warning("Failed to send rendered video %s: %s", path, e)
