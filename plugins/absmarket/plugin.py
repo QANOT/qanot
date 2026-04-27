@@ -111,11 +111,16 @@ class QanotPlugin(Plugin):
         self.client: AbsMarketClient | None = None
         self._db_pool = None
         self._db_config: dict = {}
+        self._workspace_dir: str = ""
 
     async def setup(self, config: dict) -> None:
         api_url = config.get("api_url", "")
         email = config.get("email", "")
         password = config.get("password", "")
+        # workspace_dir is injected by qanot/plugins/loader.py so plugins can
+        # spool large outputs to disk for the agent (avoids inline payloads
+        # blowing the agent context).
+        self._workspace_dir = config.get("workspace_dir", "")
         if not api_url or not email or not password:
             logger.warning("[absmarket] Missing config (api_url, email, password)")
             return
@@ -398,27 +403,94 @@ class QanotPlugin(Plugin):
     def _build_query_tool(self) -> ToolDef:
         """Build the MySQL query tool."""
         import re
+        import time
+
+        # When the result has more rows than this, return a preview + spool the
+        # full set to a file in the workspace so the agent can either send it
+        # directly (Excel) or process it without burning iterations on
+        # paginated re-queries. Hard upper cap keeps memory bounded for very
+        # large queries (1M rows of 50 cols would be ~100 MB JSON).
+        INLINE_THRESHOLD = 500
+        HARD_ROW_CAP = 100_000
 
         async def absmarket_query(p: dict) -> str:
             query = (p.get("query", "") or "").strip()
+            output_format = (p.get("output_format") or "auto").lower()
+            if output_format not in ("auto", "json", "xlsx"):
+                return self._err("output_format faqat: auto | json | xlsx")
             if not re.match(r"^SELECT\b", query, re.IGNORECASE):
                 return self._err("Faqat SELECT so'rovlar ruxsat etilgan.")
-            blocked = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC|CALL)\b", re.IGNORECASE)
+            blocked = re.compile(
+                r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC|CALL)\b",
+                re.IGNORECASE,
+            )
             if blocked.search(query):
                 return self._err("Bu turdagi so'rov ruxsat etilmagan.")
             try:
                 async with self._db_pool.acquire() as conn:
                     async with conn.cursor() as cur:
-                        await cur.execute("SET SESSION MAX_EXECUTION_TIME = 5000")
+                        await cur.execute("SET SESSION MAX_EXECUTION_TIME = 30000")
                         await cur.execute(query)
                         rows = await cur.fetchall()
                         cols = [d[0] for d in cur.description] if cur.description else []
                         result_rows = [dict(zip(cols, row)) for row in rows]
-                        limited = result_rows[:500]
+                        total = len(result_rows)
+                        capped = total > HARD_ROW_CAP
+                        if capped:
+                            result_rows = result_rows[:HARD_ROW_CAP]
+
+                        # Resolve format: when "auto", pick xlsx for large
+                        # results so the agent can `send_file` directly without
+                        # re-querying or running a Python script.
+                        fmt = output_format
+                        if fmt == "auto":
+                            fmt = "xlsx" if total > INLINE_THRESHOLD else "json"
+
+                        # Small result + json: keep current inline contract.
+                        if fmt == "json" and total <= INLINE_THRESHOLD:
+                            return self._ok({
+                                "rows": result_rows,
+                                "total_rows": total,
+                                "truncated": False,
+                            })
+
+                        # Large result OR explicit xlsx — spool to workspace.
+                        out_dir = Path(self._workspace_dir or ".") / "generated"
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        ts = int(time.time())
+
+                        if fmt == "xlsx":
+                            fname = f"absmarket_query_{ts}.xlsx"
+                            path = out_dir / fname
+                            self._write_xlsx(path, cols, result_rows)
+                        else:
+                            fname = f"absmarket_query_{ts}.json"
+                            path = out_dir / fname
+                            path.write_text(
+                                json.dumps(
+                                    {
+                                        "columns": cols,
+                                        "total_rows": total,
+                                        "rows": result_rows,
+                                    },
+                                    ensure_ascii=False,
+                                    default=str,
+                                ),
+                                encoding="utf-8",
+                            )
+
+                        preview = result_rows[: min(20, total)]
                         return self._ok({
-                            "rows": limited,
-                            "total_rows": len(result_rows),
-                            "truncated": len(result_rows) > 500,
+                            "format": fmt,
+                            "preview": preview,
+                            "total_rows": total,
+                            "row_cap_applied": capped,
+                            "file_path": str(path),
+                            "advice": (
+                                "Excel/JSON foyli to'liq natija bilan saqlandi. "
+                                "Foydalanuvchiga yuborish uchun: send_file({path}). "
+                                "Qayta absmarket_query chaqirib paginatsiya QILMANG."
+                            ),
                         })
             except Exception as e:
                 return self._err(str(e))
@@ -429,10 +501,41 @@ class QanotPlugin(Plugin):
                 "MySQL bazaga SELECT so'rov yuborish. Faqat SELECT ruxsat etilgan. "
                 "Asosiy jadvallar: tbl_sales, tbl_sales_details, tbl_items, tbl_item_categories, "
                 "tbl_customers, tbl_suppliers, tbl_purchase, tbl_expenses. "
-                "del_status='Live' filtrini qo'shish SHART."
+                "del_status='Live' filtrini qo'shish SHART. "
+                "500+ qator natija bo'lsa avtomatik Excel fayl sifatida saqlanadi: "
+                "preview + file_path qaytadi, agent send_file orqali yuboradi. "
+                "Pagination qo'lda kerak EMAS."
             ),
             parameters={"type": "object", "required": ["query"], "properties": {
                 "query": {"type": "string", "description": "SQL SELECT so'rov"},
+                "output_format": {
+                    "type": "string",
+                    "enum": ["auto", "json", "xlsx"],
+                    "description": (
+                        "auto (default): kichik natija inline JSON, katta — Excel fayli. "
+                        "json: har doim JSON fayl. xlsx: har doim Excel fayl."
+                    ),
+                },
             }},
             handler=absmarket_query,
         )
+
+    @staticmethod
+    def _write_xlsx(path: Path, cols: list[str], rows: list[dict]) -> None:
+        """Write rows as Excel via openpyxl (already a project dep)."""
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "absmarket_query"
+        ws.append(cols)
+        for r in rows:
+            ws.append([r.get(c) for c in cols])
+        # Auto-size columns up to a sane max so the file is usable without
+        # manual fiddling. Sample first 50 rows for width estimation.
+        for idx, col in enumerate(cols, start=1):
+            sample = [str(r.get(col, "")) for r in rows[:50]]
+            width = min(max([len(col)] + [len(s) for s in sample]), 60)
+            ws.column_dimensions[get_column_letter(idx)].width = width + 2
+        wb.save(path)
