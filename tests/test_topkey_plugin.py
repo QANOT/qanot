@@ -514,3 +514,63 @@ async def test_list_tasks_overdue_filter_excludes_completed_and_future():
     parsed = json.loads(await tool.handler({"overdue_only": True}))
     assert parsed["match_total"] == 1
     assert parsed["items"][0]["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_requests_completed_on_field_and_filters_late_completed():
+    """The TopKey /task endpoint omits completed_on by default — without an
+    explicit ``?fields=`` selector, completion-date analytics silently fail
+    (this is the bug that made the bot say "TopKey doesn't track completion
+    dates" while the column was populated for ~55 of 125 completed tasks).
+
+    list_tasks must (a) include ``completed_on`` in the fields query param
+    and (b) expose a ``late_completed_only`` filter that catches tasks where
+    ``status==completed`` AND ``completed_on > due_date``.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    fixture_payload = {"data": [
+        # On-time completion: completed_on < due_date → excluded
+        {"id": 1, "heading": "on-time", "status": "completed",
+         "due_date": "2025-12-31", "completed_on": "2025-12-25 10:00:00",
+         "users": [], "project": None},
+        # Late completion: completed_on > due_date → included
+        {"id": 2, "heading": "late done", "status": "completed",
+         "due_date": "2025-12-01", "completed_on": "2025-12-15 09:00:00",
+         "users": [], "project": None},
+        # Still incomplete → excluded from late_completed_only
+        {"id": 3, "heading": "still open", "status": "incomplete",
+         "due_date": "2025-01-01", "completed_on": None,
+         "users": [], "project": None},
+        # Completed but no completion timestamp (legacy row) → excluded
+        {"id": 4, "heading": "no co stamp", "status": "completed",
+         "due_date": "2025-01-01", "completed_on": None,
+         "users": [], "project": None},
+        # Another late completion to verify counting
+        {"id": 5, "heading": "another late", "status": "completed",
+         "due_date": "2025-06-01", "completed_on": "2025-06-30 18:00:00",
+         "users": [], "project": None},
+    ], "meta": {"paging": {"total": 5}}}
+    # Two tool invocations below — queue the same payload twice.
+    _attach_session(client, [(200, fixture_payload), (200, fixture_payload)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+
+    parsed = json.loads(await tool.handler({"late_completed_only": True}))
+    assert parsed["match_total"] == 2
+    assert {t["id"] for t in parsed["items"]} == {2, 5}
+    assert parsed["late_completed_count"] == 2
+
+    # Even without the filter, late_completed_count must be reported across
+    # the matched set so summary queries don't need to iterate items.
+    parsed_all = json.loads(await tool.handler({}))
+    assert parsed_all["match_total"] == 5
+    assert parsed_all["late_completed_count"] == 2
+
+    # The first /task request must carry the explicit fields= projection
+    # including completed_on — otherwise the API returns null for that field.
+    session: _FakeSession = client._session  # type: ignore[assignment]
+    first_get = next(c for c in session.calls if c["method"] == "GET" and "/task" in c["url"])
+    fields_param = first_get["params"].get("fields", "")
+    assert "completed_on" in fields_param, f"fields= must include completed_on; got {fields_param!r}"
