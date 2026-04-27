@@ -86,6 +86,72 @@ class QanotPlugin(Plugin):
 
     # ── Helpers ───────────────────────────────────────────────
 
+    # Spool threshold for list responses: when a tool returns more than this
+    # many rows, write the full result to {workspace}/generated/<file>.xlsx
+    # and surface a preview + file_path. Avoids the agent inlining huge
+    # payloads + losing iterations on manual pagination (the absmarket bug
+    # that ate 25 iterations on Davron's 8,675-row report).
+    _SPOOL_THRESHOLD = 100
+
+    def _maybe_spool(self, name: str, items: list, full: dict) -> str:
+        """If `items` is large, write Excel and return a reference; else inline."""
+        total = len(items)
+        if total <= self._SPOOL_THRESHOLD or not items:
+            return self._ok({"items": items, "total": total, **{k: v for k, v in full.items() if k not in ("items",)}})
+
+        try:
+            import time
+            from openpyxl import Workbook
+            from openpyxl.utils import get_column_letter
+        except Exception as e:  # noqa: BLE001 — missing dep degrades to inline
+            logger.warning("[topkey] openpyxl unavailable, returning inline: %s", e)
+            return self._ok({"items": items[:self._SPOOL_THRESHOLD], "total": total, "truncated": True})
+
+        out_dir = Path(self._workspace_dir or ".") / "generated"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        path = out_dir / f"topkey_{name}_{ts}.xlsx"
+
+        # Flatten one level: nested dicts -> JSON strings to keep cells single-valued
+        cols: list[str] = []
+        seen = set()
+        for r in items:
+            if isinstance(r, dict):
+                for k in r.keys():
+                    if k not in seen:
+                        seen.add(k)
+                        cols.append(k)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = name[:31] or "topkey"
+        ws.append(cols)
+        for r in items:
+            row = []
+            for c in cols:
+                v = r.get(c) if isinstance(r, dict) else None
+                if isinstance(v, (dict, list)):
+                    v = json.dumps(v, ensure_ascii=False, default=str)
+                row.append(v)
+            ws.append(row)
+        # Auto-width based on first 50 rows
+        for idx, col in enumerate(cols, start=1):
+            sample = [str(r.get(col, ""))[:80] for r in items[:50] if isinstance(r, dict)]
+            width = min(max([len(col)] + [len(s) for s in sample]), 60)
+            ws.column_dimensions[get_column_letter(idx)].width = width + 2
+        wb.save(path)
+
+        return self._ok({
+            "preview": items[:20],
+            "total": total,
+            "file_path": str(path),
+            "format": "xlsx",
+            "advice": (
+                f"{total} ta yozuv Excel faylga saqlandi. Foydalanuvchiga yuborish uchun: "
+                "send_file({file_path}). Qayta {tool_name} chaqirib paginatsiya QILMANG."
+            ),
+            **{k: v for k, v in full.items() if k != "items"},
+        })
+
     def _ok(self, data: Any) -> str:
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -233,51 +299,119 @@ class QanotPlugin(Plugin):
             get_user_attendance,
         ))
 
-        async def get_team_summary(p: dict) -> str:
-            """Aggregate /mobile/attendance/all into present/absent/late/on_leave counts."""
+        # Shifts are reused across attendance queries; fetch once and cache
+        # in-memory for the lifetime of the plugin (re-fetch is cheap if a
+        # shift is added — but rare). Keys: id -> {start_time, late_mark_duration}.
+        _shifts_cache: dict[int, dict] = {}
+
+        async def _shifts() -> dict[int, dict]:
+            if _shifts_cache:
+                return _shifts_cache
             try:
-                params: dict[str, Any] = {}
-                if "date" in p:
-                    params["date"] = p["date"]
-                data = await c.get("/mobile/attendance/all", params or None)
-                rows = []
+                data = await c.get("/mobile/shift/list")
+                items = []
                 if isinstance(data, dict):
-                    inner = data.get("data")
-                    if isinstance(inner, list):
-                        rows = inner
-                    elif isinstance(inner, dict) and isinstance(inner.get("data"), list):
-                        rows = inner["data"]
+                    items = data.get("data") or []
                 elif isinstance(data, list):
-                    rows = data
-                present = absent = late = on_leave = 0
-                for r in rows:
-                    if not isinstance(r, dict):
-                        continue
-                    if str(r.get("is_on_leave", "0")) == "1":
-                        on_leave += 1
-                        continue
-                    check_in = r.get("check_in", "-")
-                    if check_in and check_in != "-":
-                        present += 1
-                        # Heuristic: a "late" flag isn't always present; rely on
-                        # explicit field if backend supplies one.
-                        if r.get("is_late") in (1, "1", True, "true"):
-                            late += 1
-                    else:
-                        absent += 1
+                    items = data
+                for s in items:
+                    if isinstance(s, dict) and "id" in s:
+                        _shifts_cache[int(s["id"])] = {
+                            "name": s.get("name", ""),
+                            "start_time": s.get("start_time", "00:00:00"),
+                            "end_time": s.get("end_time", "00:00:00"),
+                            "late_mark_duration": int(s.get("late_mark_duration", 0) or 0),
+                        }
+            except Exception as e:  # noqa: BLE001 — shift fetch failure shouldn't block whole tool
+                logger.warning("[topkey] shift cache fetch failed: %s", e)
+            return _shifts_cache
+
+        async def _attendance_rows(date: str | None) -> list[dict]:
+            params = {"date": date} if date else {}
+            data = await c.get("/mobile/attendance/all", params or None)
+            rows: list = []
+            if isinstance(data, dict):
+                inner = data.get("data")
+                if isinstance(inner, list):
+                    rows = inner
+                elif isinstance(inner, dict) and isinstance(inner.get("data"), list):
+                    rows = inner["data"]
+            elif isinstance(data, list):
+                rows = data
+            return [r for r in rows if isinstance(r, dict)]
+
+        def _classify_attendance(rows: list[dict], shifts: dict[int, dict]) -> dict:
+            """Return classification: present_on_time, late, absent, on_leave.
+
+            Late is computed against the shift's start_time + late_mark_duration
+            (per-shift configurable, e.g. 15 min grace). Without a real shift
+            entry we fall back to 09:00 + 15 min for safety.
+            """
+            from datetime import datetime, timedelta
+            on_time: list[dict] = []
+            late: list[dict] = []
+            absent: list[dict] = []
+            on_leave: list[dict] = []
+
+            for r in rows:
+                if str(r.get("is_on_leave", "0")) == "1":
+                    on_leave.append(r)
+                    continue
+                check_in = r.get("check_in", "-")
+                if not check_in or check_in == "-":
+                    absent.append(r)
+                    continue
+                try:
+                    ci_dt = datetime.fromisoformat(str(check_in).replace("Z", "+00:00").replace(" ", "T"))
+                except (ValueError, TypeError):
+                    on_time.append(r)
+                    continue
+                shift = shifts.get(int(r.get("shift_id", 0) or 0)) if shifts else None
+                start_str = (shift or {}).get("start_time") or "09:00:00"
+                grace_min = int((shift or {}).get("late_mark_duration") or 15)
+                # Build the threshold datetime using the check-in's date and
+                # the shift's start_time. Both are in Asia/Tashkent semantics.
+                try:
+                    h, m, s = (int(x) for x in start_str.split(":"))
+                except (ValueError, TypeError):
+                    h, m, s = 9, 0, 0
+                threshold = ci_dt.replace(hour=h, minute=m, second=s, microsecond=0) + timedelta(minutes=grace_min)
+                # Special case: shift is "Dam olish kuni" (00:00-00:00) — skip late check.
+                if start_str == "00:00:00":
+                    on_time.append(r)
+                    continue
+                if ci_dt > threshold:
+                    minutes_late = int((ci_dt - threshold).total_seconds() // 60) + grace_min
+                    enriched = {**r, "minutes_late": minutes_late, "shift_name": (shift or {}).get("name", "?")}
+                    late.append(enriched)
+                else:
+                    on_time.append(r)
+            return {"on_time": on_time, "late": late, "absent": absent, "on_leave": on_leave}
+
+        async def get_team_summary(p: dict) -> str:
+            """Aggregate /mobile/attendance/all using real shift schedules."""
+            try:
+                date = p.get("date")
+                shifts = await _shifts()
+                rows = await _attendance_rows(date)
+                cls = _classify_attendance(rows, shifts)
                 return self._ok({
-                    "date": params.get("date") or "today",
+                    "date": date or "today",
                     "total": len(rows),
-                    "present": present,
-                    "absent": absent,
-                    "late": late,
-                    "on_leave": on_leave,
+                    "present_on_time": len(cls["on_time"]),
+                    "present_late": len(cls["late"]),
+                    "absent": len(cls["absent"]),
+                    "on_leave": len(cls["on_leave"]),
                 })
             except Exception as e:
                 return self._err(str(e))
         tools.append(ToolDef(
             "topkey_get_team_summary",
-            "TopKey: Kunlik davomat sarhisobi (present, absent, late, on_leave hisoblari).",
+            (
+                "TopKey: Kunlik davomat sarhisobi. 'Kech' status har shift'ning "
+                "real start_time + late_mark_duration (smena ta'rifidan) "
+                "asosida hisoblanadi."
+            ),
             {"type": "object", "properties": {
                 "date": {"type": "string", "description": "YYYY-MM-DD; bo'sh — bugun"},
             }},
@@ -285,30 +419,41 @@ class QanotPlugin(Plugin):
         ))
 
         async def get_late_arrivals(p: dict) -> str:
+            """Return employees who arrived later than their shift start +
+            late_mark_duration. Shift schedules are pulled from /shift/list."""
             try:
-                params: dict[str, Any] = {}
-                if "date" in p:
-                    params["date"] = p["date"]
-                data = await c.get("/mobile/attendance/all", params or None)
-                rows = []
-                if isinstance(data, dict):
-                    inner = data.get("data")
-                    if isinstance(inner, list):
-                        rows = inner
-                elif isinstance(data, list):
-                    rows = data
-                late = [
-                    r for r in rows
-                    if isinstance(r, dict) and r.get("is_late") in (1, "1", True, "true")
-                ]
-                return self._ok({"date": params.get("date") or "today", "count": len(late), "employees": late})
+                date = p.get("date")
+                shifts = await _shifts()
+                rows = await _attendance_rows(date)
+                cls = _classify_attendance(rows, shifts)
+                late = cls["late"]
+                # Sort by minutes_late desc so the agent sees the most extreme first
+                late.sort(key=lambda r: r.get("minutes_late", 0), reverse=True)
+                return self._ok({
+                    "date": date or "today",
+                    "count": len(late),
+                    "employees": [
+                        {
+                            "user_id": r.get("user_id"),
+                            "name": r.get("name"),
+                            "check_in": r.get("check_in"),
+                            "minutes_late": r.get("minutes_late"),
+                            "shift_name": r.get("shift_name"),
+                        }
+                        for r in late
+                    ],
+                })
             except Exception as e:
                 return self._err(str(e))
         tools.append(ToolDef(
             "topkey_get_late_arrivals",
-            "TopKey: Berilgan sanada kech kelgan xodimlar.",
+            (
+                "TopKey: Berilgan sanada kech kelgan xodimlar (har biri uchun "
+                "minutes_late va smena nomi). Shift start_time + "
+                "late_mark_duration (smena grace minutes) asosida hisoblanadi."
+            ),
             {"type": "object", "properties": {
-                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "date": {"type": "string", "description": "YYYY-MM-DD; bo'sh — bugun"},
             }},
             get_late_arrivals,
         ))
@@ -527,33 +672,87 @@ class QanotPlugin(Plugin):
         # ── WORK / TASKS (5) ─────────────────────────────────
 
         async def list_tasks(p: dict) -> str:
+            """List ALL tasks via Froiden offset-pagination, with optional
+            client-side filtering. Server-side ``status`` / ``project_id`` /
+            etc. filters are silently ignored by TopKey's task index, so we
+            fetch the full set then filter in Python."""
             try:
-                params: dict[str, Any] = {}
-                if "project_id" in p:
-                    params["project_id"] = p["project_id"]
-                if "assigned_to" in p:
-                    params["assigned_to"] = p["assigned_to"]
-                if "status" in p:
-                    params["status"] = p["status"]
-                if "board_column_id" in p:
-                    params["board_column_id"] = p["board_column_id"]
-                if "page" in p:
-                    params["page"] = p["page"]
-                if "per_page" in p:
-                    params["per_page"] = p["per_page"]
-                return self._ok(await c.get("/task", params or None))
+                # Fetch all tasks (auto-paginated by client.get_all). The
+                # cap is 5000 — TopKey companies rarely have more open tasks
+                # than that, and it caps memory.
+                got = await c.get_all("/task", max_pages=200, max_items=5000)
+                items = got.get("items", []) or []
+
+                # Client-side filters (server ignores them).
+                project_id = p.get("project_id")
+                assigned_to = p.get("assigned_to")
+                status = p.get("status")
+                board_column_id = p.get("board_column_id")
+                overdue_only = bool(p.get("overdue_only"))
+
+                def _matches(t: dict) -> bool:
+                    if project_id is not None and t.get("project") and \
+                            (t["project"].get("id") if isinstance(t["project"], dict) else None) != int(project_id):
+                        return False
+                    if assigned_to is not None:
+                        ids = [u.get("id") for u in (t.get("users") or []) if isinstance(u, dict)]
+                        if int(assigned_to) not in ids:
+                            return False
+                    if status is not None and t.get("status") != status:
+                        return False
+                    if board_column_id is not None and t.get("board_column_id") != int(board_column_id):
+                        return False
+                    if overdue_only:
+                        # Overdue = due_date in the past AND status != completed
+                        due = t.get("due_date") or ""
+                        if t.get("status") == "completed":
+                            return False
+                        if not due:
+                            return False
+                        try:
+                            from datetime import datetime
+                            due_dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
+                            if due_dt.timestamp() >= datetime.now(due_dt.tzinfo).timestamp():
+                                return False
+                        except (ValueError, TypeError):
+                            return False
+                    return True
+
+                filtered = [t for t in items if _matches(t)]
+                # Aggregate stats so the agent has counts without iterating
+                from collections import Counter
+                status_counts = Counter(t.get("status") for t in filtered)
+                return self._maybe_spool(
+                    "tasks",
+                    filtered,
+                    {
+                        "fetched_total": len(items),
+                        "match_total": len(filtered),
+                        "status_counts": dict(status_counts),
+                        "filters_applied": {
+                            "project_id": project_id, "assigned_to": assigned_to,
+                            "status": status, "board_column_id": board_column_id,
+                            "overdue_only": overdue_only,
+                        },
+                    },
+                )
             except Exception as e:
                 return self._err(str(e))
         tools.append(ToolDef(
             "topkey_list_tasks",
-            "TopKey: Vazifalar ro'yxati. Filter: project_id, assigned_to (user_id), status, board_column_id.",
+            (
+                "TopKey: Hamma vazifalarni avtomatik to'la ro'yxatdan o'tkazib oladi (auto-pagination). "
+                "Filterlar Python tomonida qo'llaniladi (server filterlari ishonchsiz). "
+                "100+ qator natija avtomatik Excel faylga saqlanadi → preview + file_path qaytadi. "
+                "Filter: project_id, assigned_to (user_id), status (completed/incomplete/in_progress), "
+                "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan)."
+            ),
             {"type": "object", "properties": {
                 "project_id": {"type": "number"},
                 "assigned_to": {"type": "number"},
-                "status": {"type": "string"},
+                "status": {"type": "string", "description": "completed | incomplete | in_progress | review"},
                 "board_column_id": {"type": "number"},
-                "page": {"type": "number"},
-                "per_page": {"type": "number"},
+                "overdue_only": {"type": "boolean", "description": "Faqat muddati o'tgan + bajarilmaganlar"},
             }},
             list_tasks,
         ))
