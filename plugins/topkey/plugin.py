@@ -675,12 +675,24 @@ class QanotPlugin(Plugin):
             """List ALL tasks via Froiden offset-pagination, with optional
             client-side filtering. Server-side ``status`` / ``project_id`` /
             etc. filters are silently ignored by TopKey's task index, so we
-            fetch the full set then filter in Python."""
+            fetch the full set then filter in Python.
+
+            ``completed_on`` is **not** in the default field list returned by
+            ``/task`` — TopKey requires an explicit ``?fields=`` selector to
+            surface it. Without this, completion-date queries (e.g. "kim
+            muddatdan keyin bajardi?") silently return null and the agent
+            says the date isn't tracked, even though the column exists.
+            """
             try:
-                # Fetch all tasks (auto-paginated by client.get_all). The
-                # cap is 5000 — TopKey companies rarely have more open tasks
-                # than that, and it caps memory.
-                got = await c.get_all("/task", max_pages=200, max_items=5000)
+                # Explicit field selection so completion-date analytics work.
+                # Server defaults omit completed_on; passing fields= forces
+                # the API to project it (verified via live probe — without
+                # this, ~55 of 125 completed tasks reported null completed_on
+                # despite the column being populated).
+                fetch_params = {
+                    "fields": "id,heading,status,due_date,completed_on,project,users,board_column_id,priority",
+                }
+                got = await c.get_all("/task", fetch_params, max_pages=200, max_items=5000)
                 items = got.get("items", []) or []
 
                 # Client-side filters (server ignores them).
@@ -689,6 +701,37 @@ class QanotPlugin(Plugin):
                 status = p.get("status")
                 board_column_id = p.get("board_column_id")
                 overdue_only = bool(p.get("overdue_only"))
+                late_completed_only = bool(p.get("late_completed_only"))
+
+                from datetime import datetime
+
+                def _parse_dt(s: Any) -> datetime | None:
+                    """Parse the three TopKey timestamp shapes we've seen:
+                    'YYYY-MM-DD', 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DDTHH:MM:SS+05:00'.
+                    Python 3.11+ fromisoformat handles space and T separators
+                    natively; fall back to date-only parsing otherwise."""
+                    if not s or not isinstance(s, str):
+                        return None
+                    candidate = s.replace("Z", "+00:00")
+                    try:
+                        return datetime.fromisoformat(candidate)
+                    except (ValueError, TypeError):
+                        pass
+                    try:
+                        return datetime.strptime(s[:10], "%Y-%m-%d")
+                    except (ValueError, TypeError):
+                        return None
+
+                def _is_late_completed(t: dict) -> bool:
+                    if t.get("status") != "completed":
+                        return False
+                    co = _parse_dt(t.get("completed_on"))
+                    due = _parse_dt(t.get("due_date"))
+                    if not co or not due:
+                        return False
+                    co_naive = co.replace(tzinfo=None)
+                    due_naive = due.replace(tzinfo=None)
+                    return co_naive > due_naive
 
                 def _matches(t: dict) -> bool:
                     if project_id is not None and t.get("project") and \
@@ -704,24 +747,26 @@ class QanotPlugin(Plugin):
                         return False
                     if overdue_only:
                         # Overdue = due_date in the past AND status != completed
-                        due = t.get("due_date") or ""
                         if t.get("status") == "completed":
                             return False
+                        due = _parse_dt(t.get("due_date"))
                         if not due:
                             return False
-                        try:
-                            from datetime import datetime
-                            due_dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
-                            if due_dt.timestamp() >= datetime.now(due_dt.tzinfo).timestamp():
-                                return False
-                        except (ValueError, TypeError):
+                        now = datetime.now(due.tzinfo) if due.tzinfo else datetime.now()
+                        if due >= now:
                             return False
+                    if late_completed_only and not _is_late_completed(t):
+                        return False
                     return True
 
                 filtered = [t for t in items if _matches(t)]
                 # Aggregate stats so the agent has counts without iterating
                 from collections import Counter
                 status_counts = Counter(t.get("status") for t in filtered)
+                # Late-completed count across the FILTERED set (so e.g. the
+                # agent can ask "how many tasks did Davron complete late?"
+                # by filtering by assigned_to and reading this number).
+                late_completed_count = sum(1 for t in filtered if _is_late_completed(t))
                 return self._maybe_spool(
                     "tasks",
                     filtered,
@@ -729,10 +774,12 @@ class QanotPlugin(Plugin):
                         "fetched_total": len(items),
                         "match_total": len(filtered),
                         "status_counts": dict(status_counts),
+                        "late_completed_count": late_completed_count,
                         "filters_applied": {
                             "project_id": project_id, "assigned_to": assigned_to,
                             "status": status, "board_column_id": board_column_id,
                             "overdue_only": overdue_only,
+                            "late_completed_only": late_completed_only,
                         },
                     },
                 )
@@ -742,10 +789,13 @@ class QanotPlugin(Plugin):
             "topkey_list_tasks",
             (
                 "TopKey: Hamma vazifalarni avtomatik to'la ro'yxatdan o'tkazib oladi (auto-pagination). "
+                "Har vazifada `completed_on` (bajarilgan sana) maydoni ham keladi. "
                 "Filterlar Python tomonida qo'llaniladi (server filterlari ishonchsiz). "
                 "100+ qator natija avtomatik Excel faylga saqlanadi → preview + file_path qaytadi. "
                 "Filter: project_id, assigned_to (user_id), status (completed/incomplete/in_progress), "
-                "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan)."
+                "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan), "
+                "late_completed_only (true: bajarilgan, lekin completed_on > due_date — kechikib bajarilgan). "
+                "Javobda `late_completed_count` ham qaytadi — filtrdan o'tgan to'plamdagi kechikib bajarilganlar soni."
             ),
             {"type": "object", "properties": {
                 "project_id": {"type": "number"},
@@ -753,6 +803,7 @@ class QanotPlugin(Plugin):
                 "status": {"type": "string", "description": "completed | incomplete | in_progress | review"},
                 "board_column_id": {"type": "number"},
                 "overdue_only": {"type": "boolean", "description": "Faqat muddati o'tgan + bajarilmaganlar"},
+                "late_completed_only": {"type": "boolean", "description": "Faqat kechikib bajarilganlar (completed_on > due_date)"},
             }},
             list_tasks,
         ))

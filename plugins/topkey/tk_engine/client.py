@@ -120,12 +120,17 @@ class TopKeyClient:
         # Track our own page counter for mobile-style endpoints that return
         # last_page but not current_page in the meta block.
         page_counter = 1
+        # Froiden's `meta.paging.links.next` URL does NOT preserve our
+        # `?fields=` (or other) query params — the server rebuilds the link
+        # from scratch. We re-merge caller params onto each follow-up URL so
+        # custom field selection is consistent across pages.
+        persist_params = {k: v for k, v in (params or {}).items() if v is not None and v != ""}
 
         for _ in range(max_pages):
             if next_url is None:
                 data = await self.get(path, first_params)
             else:
-                data = await self._request("GET", next_url, absolute=True)
+                data = await self._request("GET", next_url, absolute=True, params=persist_params or None)
 
             items, meta = self._unwrap_list(data)
             all_items.extend(items)
