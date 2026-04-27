@@ -113,7 +113,7 @@ deploy_video() {
             SECRET=$(openssl rand -hex 32)
             cat > /root/.env.qanot-video <<EOF
 SERVICE_SECRET=$SECRET
-HOST=127.0.0.1
+HOST=0.0.0.0
 PORT=8770
 DB_PATH=/data/video/jobs.db
 OUTPUT_DIR=/data/video/renders
@@ -122,7 +122,16 @@ EOF
             chmod 600 /root/.env.qanot-video
             echo "   Generated new SERVICE_SECRET (first deploy)."
         else
-            echo "   Existing /root/.env.qanot-video kept."
+            # Migrate older env files that bound to 127.0.0.1. The service
+            # runs inside a docker network (qanot-cloud-net), so 0.0.0.0 only
+            # exposes within that network -- not publicly. Bots reach via
+            # http://qanot-video:8770 (Docker DNS).
+            if grep -q "^HOST=127" /root/.env.qanot-video; then
+                sed -i "s/^HOST=127.*/HOST=0.0.0.0/" /root/.env.qanot-video
+                echo "   Migrated HOST=127.0.0.1 -> HOST=0.0.0.0 in env file."
+            else
+                echo "   Existing /root/.env.qanot-video kept."
+            fi
         fi'
     echo "   Done."
 
