@@ -949,13 +949,14 @@ class QanotPlugin(Plugin):
                 "'aprel hisoboti' uchun created_after='2026-04-01', created_before='2026-04-30' bering, "
                 "kun-bo'yicha taxmin qilmang). "
                 "Javobda `completion_breakdown` qaytadi: {on_time, late, unknown_date}. "
-                "Har vazifaga `completed_on_source` qo'shiladi: 'raw' (asl maydon), "
-                "'history' (transition tarixidan tiklangan, taxminiy), 'missing' (umuman noma'lum). "
-                "MUHIM: `unknown_date` — bajarilgan deb belgilangan, lekin `completed_on` sanasi "
-                "umuman topilmagan vazifalar (history ham bo'sh). Bu sonni hech qachon "
-                "'o'z vaqtida bajarilgan' deb sanama. Hisobotda alohida ko'rsat: "
-                "'O'z vaqtida: X, Kechikkan: Y, Sana noma'lum: Z'. "
-                "`history` source bilan keluvchi sanalarni '(taxminiy)' deb belgila."
+                "Har vazifaga `completed_on_source` qo'shiladi: 'raw' (asl `completed_on` "
+                "maydonidan, kun aniqligida), 'history' (audit jurnalidagi 'Bajarilgan' "
+                "ustuniga ko'chish vaqti, soat-daqiqa aniqligida — 'raw'dan ko'ra aniqroq), "
+                "'missing' (`completed_on` ham yo'q, history'da ham 'completed' transition yo'q). "
+                "MUHIM: `unknown_date` — faqat `missing` source bilan keluvchi vazifalar. "
+                "Bu sonni hech qachon 'o'z vaqtida bajarilgan' deb sanama. "
+                "'history' sanalarini 'taxminiy' deb belgilamang — ular real wall-clock timestamp. "
+                "Hisobotda alohida ko'rsat: 'O'z vaqtida: X, Kechikkan: Y, Sana noma'lum: Z'."
             ),
             {"type": "object", "properties": {
                 "project_id": {"type": "number"},
