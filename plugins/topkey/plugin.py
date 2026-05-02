@@ -195,6 +195,17 @@ class QanotPlugin(Plugin):
         # ── HR / EMPLOYEES (5) ───────────────────────────────
 
         async def list_employees(p: dict) -> str:
+            """Auto-paginated employee list. The /employee endpoint
+            historically returned only a single page (~10 rows) which
+            forced agents to fish through tasks for user IDs when the
+            target wasn't in page 1. Always uses get_all now.
+
+            NOTE: /employee covers formally-registered employees only —
+            it does NOT include all task-assignable users. For "find
+            person X by name" lookups, prefer topkey_list_users (covers
+            the broader /user table including contractors, partners,
+            external collaborators).
+            """
             try:
                 params: dict[str, Any] = {}
                 if "department_id" in p:
@@ -203,23 +214,29 @@ class QanotPlugin(Plugin):
                     params["designation_id"] = p["designation_id"]
                 if "status" in p:
                     params["status"] = p["status"]
-                if "page" in p:
-                    params["page"] = p["page"]
-                if "per_page" in p:
-                    params["per_page"] = p["per_page"]
-                result = await c.get("/employee", params or None)
-                return self._ok(result)
+                got = await c.get_all("/employee", params or None,
+                                       max_pages=50, max_items=2000)
+                return self._ok({
+                    "items": got.get("items", []),
+                    "total": got.get("total", 0),
+                })
             except Exception as e:
                 return self._err(str(e))
         tools.append(ToolDef(
             "topkey_list_employees",
-            "TopKey: Xodimlar ro'yxati. Filter: department_id, designation_id, status. Paginatsiya: page, per_page.",
+            (
+                "TopKey: BARCHA xodimlar ro'yxati (avtomatik to'liq paginatsiya). "
+                "Filter: department_id, designation_id, status. "
+                "MUHIM: bu faqat rasmiy xodimlar — kontraktorlar, hamkorlar yoki "
+                "vazifaga biriktirilgan boshqa foydalanuvchilar bu yerda yo'q. "
+                "Agar shaxsni ismi bo'yicha qidirayotgan bo'lsangiz va `/employee` "
+                "ro'yxatida topmasangiz, `topkey_list_users` ni ishlatib ko'ring "
+                "(u kengroq /user jadvalini yoritadi)."
+            ),
             {"type": "object", "properties": {
                 "department_id": {"type": "number"},
                 "designation_id": {"type": "number"},
                 "status": {"type": "string", "description": "active | deactive"},
-                "page": {"type": "number"},
-                "per_page": {"type": "number"},
             }},
             list_employees,
         ))
@@ -719,7 +736,10 @@ class QanotPlugin(Plugin):
                 # this, ~55 of 125 completed tasks reported null completed_on
                 # despite the column being populated).
                 fetch_params = {
-                    "fields": "id,heading,status,due_date,completed_on,project,users,board_column_id,priority",
+                    "fields": (
+                        "id,heading,status,due_date,start_date,completed_on,"
+                        "created_at,updated_at,project,users,board_column_id,priority"
+                    ),
                 }
                 got = await c.get_all("/task", fetch_params, max_pages=200, max_items=5000)
                 items = got.get("items", []) or []
@@ -731,6 +751,8 @@ class QanotPlugin(Plugin):
                 board_column_id = p.get("board_column_id")
                 overdue_only = bool(p.get("overdue_only"))
                 late_completed_only = bool(p.get("late_completed_only"))
+                created_after = p.get("created_after")
+                created_before = p.get("created_before")
 
                 from datetime import datetime
 
@@ -788,6 +810,19 @@ class QanotPlugin(Plugin):
                         return False
                     if board_column_id is not None and t.get("board_column_id") != int(board_column_id):
                         return False
+                    # Date range — compare against created_at (when the
+                    # task was assigned). Falls back to start_date when
+                    # created_at is missing. Inclusive on both ends:
+                    # YYYY-MM-DD strings are compared as date prefixes.
+                    if created_after or created_before:
+                        ts = t.get("created_at") or t.get("start_date") or ""
+                        ts_date = ts[:10] if isinstance(ts, str) else ""
+                        if not ts_date:
+                            return False
+                        if created_after and ts_date < str(created_after)[:10]:
+                            return False
+                        if created_before and ts_date > str(created_before)[:10]:
+                            return False
                     if overdue_only:
                         # Overdue = due_date in the past AND status != completed
                         if t.get("status") == "completed":
@@ -909,7 +944,10 @@ class QanotPlugin(Plugin):
                 "100+ qator natija avtomatik Excel faylga saqlanadi → preview + file_path qaytadi. "
                 "Filter: project_id, assigned_to (user_id), status (completed/incomplete/in_progress), "
                 "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan), "
-                "late_completed_only (true: bajarilgan, lekin completed_on > due_date — kechikib bajarilgan). "
+                "late_completed_only (true: bajarilgan, lekin completed_on > due_date — kechikib bajarilgan), "
+                "created_after / created_before (YYYY-MM-DD — vazifa yaratilgan davr bo'yicha; "
+                "'aprel hisoboti' uchun created_after='2026-04-01', created_before='2026-04-30' bering, "
+                "kun-bo'yicha taxmin qilmang). "
                 "Javobda `completion_breakdown` qaytadi: {on_time, late, unknown_date}. "
                 "Har vazifaga `completed_on_source` qo'shiladi: 'raw' (asl maydon), "
                 "'history' (transition tarixidan tiklangan, taxminiy), 'missing' (umuman noma'lum). "
@@ -927,6 +965,8 @@ class QanotPlugin(Plugin):
                 "overdue_only": {"type": "boolean", "description": "Faqat muddati o'tgan + bajarilmaganlar"},
                 "late_completed_only": {"type": "boolean", "description": "Faqat kechikib bajarilganlar (completed_on > due_date)"},
                 "enrich_history": {"type": "boolean", "description": "Default true: completed_on null bo'lsa, history'dan tiklash"},
+                "created_after": {"type": "string", "description": "YYYY-MM-DD (inclusive) — created_at >= bu sana"},
+                "created_before": {"type": "string", "description": "YYYY-MM-DD (inclusive) — created_at <= bu sana"},
             }},
             list_tasks,
         ))
@@ -1148,22 +1188,27 @@ class QanotPlugin(Plugin):
         ))
 
         async def list_users(p: dict) -> str:
+            """Auto-paginated /user list. Includes EVERY task-assignable
+            user (employees, contractors, external collaborators) — use
+            this for "find person by name" lookups, not list_employees
+            (which only covers formally-registered employees).
+            """
             try:
-                params: dict[str, Any] = {}
-                if "page" in p:
-                    params["page"] = p["page"]
-                if "per_page" in p:
-                    params["per_page"] = p["per_page"]
-                return self._ok(await c.get("/user", params or None))
+                got = await c.get_all("/user", None, max_pages=50, max_items=2000)
+                return self._ok({
+                    "items": got.get("items", []),
+                    "total": got.get("total", 0),
+                })
             except Exception as e:
                 return self._err(str(e))
         tools.append(ToolDef(
             "topkey_list_users",
-            "TopKey: Tizim foydalanuvchilari ro'yxati (admin only).",
-            {"type": "object", "properties": {
-                "page": {"type": "number"},
-                "per_page": {"type": "number"},
-            }},
+            (
+                "TopKey: BARCHA tizim foydalanuvchilari ro'yxati (avtomatik to'liq paginatsiya). "
+                "Vazifa biriktirilgan istalgan shaxsni topish uchun bu — to'g'ri tool. "
+                "list_employees'da topilmagan kishi bu yerda topiladi (kontraktorlar, hamkorlar)."
+            ),
+            {"type": "object", "properties": {}},
             list_users,
         ))
 

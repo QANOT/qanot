@@ -126,22 +126,26 @@ async def test_setup_missing_config_no_crash(caplog):
 async def test_list_employees_url_and_filters():
     client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
     client.token = "tok"
+    # Auto-paginated now — page/per_page no longer user-facing params,
+    # the tool walks the cursor itself. Single page response with no
+    # `next` link → only one HTTP call, exposed as `items` + `total`.
     session = _attach_session(client, [
-        (200, {"data": [{"id": 1, "name": "Ali"}], "meta": {"total": 1}}),
+        (200, {"data": [{"id": 1, "name": "Ali"}], "meta": {"paging": {"total": 1}}}),
     ])
     p = QanotPlugin()
     p.client = client
     tool = next(t for t in p.get_tools() if t.name == "topkey_list_employees")
-    raw = await tool.handler({"department_id": 5, "status": "active", "page": 2})
+    raw = await tool.handler({"department_id": 5, "status": "active"})
     parsed = json.loads(raw)
     assert "error" not in parsed
+    assert parsed["items"] == [{"id": 1, "name": "Ali"}]
+    assert parsed["total"] == 1
     call = session.calls[0]
     assert call["method"] == "GET"
     assert call["url"] == "https://topkey.uz/api/v1/employee"
-    # Params get stringified by the client.
+    # Filters pass through; pagination params are tool-internal.
     assert call["params"]["department_id"] == "5"
     assert call["params"]["status"] == "active"
-    assert call["params"]["page"] == "2"
     assert call["headers"]["Authorization"] == "Bearer tok"
 
 
@@ -770,3 +774,50 @@ async def test_list_tasks_skips_enrichment_when_disabled():
     # Only the list call hit the network — no history GETs.
     history_calls = [c for c in session.calls if "/history" in c["url"]]
     assert history_calls == [], f"expected no history fetches, got {history_calls}"
+
+
+# ── 17. created_after / created_before — date range filter ───
+@pytest.mark.asyncio
+async def test_list_tasks_created_at_range_filter():
+    """`aprel hisoboti` queries should use created_after/created_before to
+    catch every task assigned in the period — including tasks without a
+    start_date or due_date in April. Filter compares against created_at
+    first, falls back to start_date when created_at is missing.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    fixture = {"data": [
+        # In range (created_at within April)
+        {"id": 1, "heading": "april task", "status": "completed",
+         "due_date": "2026-04-30", "created_at": "2026-04-15T10:00:00+05:00",
+         "users": [], "project": None},
+        # Out of range (created in March)
+        {"id": 2, "heading": "march task", "status": "completed",
+         "due_date": "2026-04-15", "created_at": "2026-03-30T10:00:00+05:00",
+         "users": [], "project": None},
+        # Out of range (created in May)
+        {"id": 3, "heading": "may task", "status": "incomplete",
+         "due_date": "2026-05-10", "created_at": "2026-05-01T10:00:00+05:00",
+         "users": [], "project": None},
+        # In range, fallback path: no created_at, use start_date
+        {"id": 4, "heading": "no created_at", "status": "completed",
+         "due_date": "2026-04-20", "created_at": None,
+         "start_date": "2026-04-10T10:00:00+05:00",
+         "users": [], "project": None},
+        # Excluded — neither created_at nor start_date
+        {"id": 5, "heading": "no timestamps", "status": "incomplete",
+         "due_date": "2026-04-10", "created_at": None, "start_date": None,
+         "users": [], "project": None},
+    ], "meta": {"paging": {"total": 5}}}
+    _attach_session(client, [(200, fixture)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+
+    parsed = json.loads(await tool.handler({
+        "created_after": "2026-04-01",
+        "created_before": "2026-04-30",
+        "enrich_history": False,
+    }))
+    assert {t["id"] for t in parsed["items"]} == {1, 4}, parsed["items"]
+    assert parsed["match_total"] == 2
