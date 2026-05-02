@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 # Qanot AI — production deploy script
-# Usage: ./scripts/deploy.sh [qanot|cloud|all] [--rebuild]
+# Usage:
+#   ./scripts/deploy.sh qanot <bot-container>   # recreate one bot (preferred)
+#   ./scripts/deploy.sh qanot --all-bots        # recreate every qanot-* bot
+#   ./scripts/deploy.sh qanot                   # build image only, no recreate
+#   ./scripts/deploy.sh cloud|video|all [--rebuild]
 set -euo pipefail
 
 SERVER="root@46.62.250.72"
 TARGET="${1:-all}"
 REBUILD=""
-for arg in "$@"; do [[ "$arg" == "--rebuild" ]] && REBUILD="--no-cache"; done
+BOT_NAME=""
+ALL_BOTS=""
+for arg in "${@:2}"; do
+    case "$arg" in
+        --rebuild)   REBUILD="--no-cache" ;;
+        --all-bots)  ALL_BOTS="1" ;;
+        --*)         ;;  # unknown flag, ignore
+        *)           BOT_NAME="$arg" ;;
+    esac
+done
 
 # ═══════════════════════════════════════
 # QANOT FRAMEWORK
@@ -38,15 +51,29 @@ print(\"core OK\")
 
     echo "[4/5] Recreating bot containers..."
     scp -q "$(cd "$(dirname "$0")" && pwd)/recreate_containers.py" "$SERVER:/tmp/recreate_containers.py"
-    ssh "$SERVER" "python3 /tmp/recreate_containers.py"
+    if [[ -n "$BOT_NAME" ]]; then
+        echo "   Target: $BOT_NAME (single bot)"
+        ssh "$SERVER" "python3 /tmp/recreate_containers.py --name $BOT_NAME"
+    elif [[ -n "$ALL_BOTS" ]]; then
+        echo "   Target: ALL qanot-* bots (--all-bots)"
+        ssh "$SERVER" "python3 /tmp/recreate_containers.py --all"
+    else
+        echo "   Skipping recreate (no bot specified)."
+        echo "   Pass <container-name> or --all-bots to roll out the new image."
+    fi
     echo "   Done."
 
     echo "[5/5] Health check..."
-    sleep 8
-    ssh "$SERVER" 'for name in $(docker ps --filter "name=qanot-" --format "{{.Names}}" 2>/dev/null); do
-        status=$(docker inspect "$name" --format "{{.State.Status}}" 2>/dev/null)
-        echo "   $name: $status"
-    done'
+    if [[ -n "$BOT_NAME" ]]; then
+        sleep 4
+        ssh "$SERVER" "docker inspect $BOT_NAME --format '   {{.Name}}: {{.State.Status}}' 2>/dev/null | sed 's|/||'"
+    elif [[ -n "$ALL_BOTS" ]]; then
+        sleep 8
+        ssh "$SERVER" 'for name in $(docker ps --filter "name=qanot-" --format "{{.Names}}" 2>/dev/null); do
+            status=$(docker inspect "$name" --format "{{.State.Status}}" 2>/dev/null)
+            echo "   $name: $status"
+        done'
+    fi
     echo ""
 }
 

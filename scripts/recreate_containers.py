@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""Recreate qanot-bot containers with the latest image, preserving config."""
+"""Recreate qanot-bot containers with the latest image, preserving config.
 
+Usage:
+    recreate_containers.py --name <container>   # target one bot (preferred)
+    recreate_containers.py --all                # recreate every qanot-* bot
+
+One of --name or --all is required. Refusing to default to bulk recreate
+prevents accidents where a single-bot change reboots every container.
+"""
+
+import argparse
 import json
 import os
 import subprocess
@@ -32,21 +41,45 @@ def _read_video_secret() -> str | None:
     return None
 
 
-def main():
-    # Match all containers under the qanot-* naming convention, but exclude
-    # service containers that use other images. Bot naming is inconsistent
-    # (qanot-bot-<tg_id> vs qanot-<username>), so a single `name=` filter
-    # cannot reliably hit only the bots; we filter broadly and skip
-    # services explicitly.
+SERVICE_CONTAINERS = {"qanot-video"}  # add future services here
+
+
+def _list_bot_containers() -> list[str]:
     result = subprocess.run(
         ["docker", "ps", "-a", "--filter", "name=qanot-", "--format", "{{.Names}}"],
         capture_output=True, text=True,
     )
-    SERVICE_CONTAINERS = {"qanot-video"}  # add future services here
-    names = [
+    return [
         n.strip() for n in result.stdout.strip().split("\n")
         if n.strip() and n.strip() not in SERVICE_CONTAINERS
     ]
+
+
+def _container_exists(name: str) -> bool:
+    r = subprocess.run(
+        ["docker", "inspect", name], capture_output=True, text=True,
+    )
+    return r.returncode == 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--name", help="recreate this single bot container")
+    group.add_argument("--all", action="store_true",
+                       help="recreate every qanot-* bot (excluding services)")
+    args = parser.parse_args()
+
+    if args.name:
+        if args.name in SERVICE_CONTAINERS:
+            print(f"   Refusing: {args.name} is a service container, not a bot.")
+            sys.exit(2)
+        if not _container_exists(args.name):
+            print(f"   Container not found: {args.name}")
+            sys.exit(2)
+        names = [args.name]
+    else:
+        names = _list_bot_containers()
 
     if not names:
         print("   No bot containers found.")
