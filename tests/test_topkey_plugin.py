@@ -105,7 +105,7 @@ async def test_setup_valid_config_logs_in():
         })
     assert p.client is not None
     assert p.client.token == "tok-123"
-    assert len(p.get_tools()) == 28
+    assert len(p.get_tools()) == 29
 
 
 # ── 2. Setup with missing config logs warning, no crash ──────
@@ -285,13 +285,13 @@ async def test_missing_required_param_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_all_28_tools_registered():
+async def test_all_29_tools_registered():
     client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
     client.token = "tok"
     p = QanotPlugin()
     p.client = client
     tools = p.get_tools()
-    assert len(tools) == 28
+    assert len(tools) == 29
     # Every tool has the required ToolDef fields.
     names = []
     for t in tools:
@@ -557,14 +557,17 @@ async def test_list_tasks_requests_completed_on_field_and_filters_late_completed
     p.client = client
     tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
 
-    parsed = json.loads(await tool.handler({"late_completed_only": True}))
+    # Disable history enrichment in this test — it's exercised separately.
+    # Without disabling, the enrichment path consumes extra fixture responses
+    # for task id=4 (null completed_on) and confuses the queued sequence.
+    parsed = json.loads(await tool.handler({"late_completed_only": True, "enrich_history": False}))
     assert parsed["match_total"] == 2
     assert {t["id"] for t in parsed["items"]} == {2, 5}
     assert parsed["late_completed_count"] == 2
 
     # Even without the filter, late_completed_count must be reported across
     # the matched set so summary queries don't need to iterate items.
-    parsed_all = json.loads(await tool.handler({}))
+    parsed_all = json.loads(await tool.handler({"enrich_history": False}))
     assert parsed_all["match_total"] == 5
     assert parsed_all["late_completed_count"] == 2
 
@@ -623,3 +626,147 @@ async def test_list_tasks_returns_completion_breakdown_with_unknown_bucket():
     assert parsed["late_completed_count"] == 1
     # Total completed = on_time + late + unknown (4); incomplete (1) excluded.
     assert sum(breakdown.values()) == 4
+
+
+# ── 15. topkey_get_task_history: transitions + completed_at ──
+@pytest.mark.asyncio
+async def test_get_task_history_extracts_completed_at_from_completed_slug():
+    """The vendor exposed task_history.created_at on 2026-05-02. The new
+    tool returns the full transition list AND surfaces the most recent
+    move into a 'completed'-slug column as `completed_at` so the agent
+    doesn't need to scan the list itself.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    history_payload = {"data": [
+        # Most recent first (server sorts by id desc, == created_at desc).
+        {"id": 165, "task_id": 27, "user_id": 3, "board_column_id": 24,
+         "created_at": "2026-04-27T15:32:18+05:00",
+         "board_column": {"id": 24, "slug": "completed", "column_name": "Bajarilgan"}},
+        {"id": 148, "task_id": 27, "user_id": 3, "board_column_id": 23,
+         "created_at": "2026-04-20T10:15:00+05:00",
+         "board_column": {"id": 23, "slug": "doing", "column_name": "Bajarilmoqda"}},
+        {"id": 124, "task_id": 27, "user_id": 3, "board_column_id": 22,
+         "created_at": "2026-04-13T09:00:00+05:00",
+         "board_column": {"id": 22, "slug": "to_do", "column_name": "Bajarilishi kerak"}},
+    ]}
+    _attach_session(client, [(200, history_payload)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_get_task_history")
+
+    parsed = json.loads(await tool.handler({"task_id": 27}))
+    assert parsed["task_id"] == 27
+    assert parsed["completed_at"] == "2026-04-27T15:32:18+05:00"
+    assert len(parsed["transitions"]) == 3
+    # First transition (most recent) is the completed one.
+    first = parsed["transitions"][0]
+    assert first["to_column_slug"] == "completed"
+    assert first["moved_at"] == "2026-04-27T15:32:18+05:00"
+
+
+@pytest.mark.asyncio
+async def test_get_task_history_completed_at_null_when_never_completed():
+    """If the task never moved into a 'completed' column, completed_at is
+    None — the agent must not fall back to e.g. the latest 'doing' move.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    history_payload = {"data": [
+        {"id": 200, "task_id": 99, "user_id": 3, "board_column_id": 23,
+         "created_at": "2026-04-20T10:00:00+05:00",
+         "board_column": {"id": 23, "slug": "doing", "column_name": "Bajarilmoqda"}},
+    ]}
+    _attach_session(client, [(200, history_payload)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_get_task_history")
+    parsed = json.loads(await tool.handler({"task_id": 99}))
+    assert parsed["completed_at"] is None
+    assert len(parsed["transitions"]) == 1
+
+
+# ── 16. list_tasks history enrichment recovers null completed_on ──
+@pytest.mark.asyncio
+async def test_list_tasks_enriches_null_completed_on_from_history():
+    """Completed task with `completed_on=null` should get its timestamp
+    backfilled from /task/{id}/history (most recent move into completed
+    column). After enrichment, the task should reclassify from
+    `unknown_date` to either on_time or late, and carry
+    `completed_on_source: "history"` so the agent can label it taxminiy.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    list_payload = {"data": [
+        # Has raw completed_on (no enrichment needed).
+        {"id": 1, "heading": "raw on-time", "status": "completed",
+         "due_date": "2026-04-15", "completed_on": "2026-04-10 10:00:00",
+         "users": [], "project": None},
+        # Null completed_on but completed → must enrich; history says
+        # 2026-04-20 (after due 2026-04-15) → reclassifies to LATE.
+        {"id": 2, "heading": "missing date", "status": "completed",
+         "due_date": "2026-04-15", "completed_on": None,
+         "users": [], "project": None},
+        # Null completed_on; history empty → stays unknown_date.
+        {"id": 3, "heading": "no history", "status": "completed",
+         "due_date": "2026-04-15", "completed_on": None,
+         "users": [], "project": None},
+    ], "meta": {"paging": {"total": 3}}}
+    history_for_2 = {"data": [
+        {"id": 50, "task_id": 2, "user_id": 3, "board_column_id": 24,
+         "created_at": "2026-04-20T11:00:00+05:00",
+         "board_column": {"id": 24, "slug": "completed", "column_name": "Bajarilgan"}},
+    ]}
+    history_for_3: dict = {"data": []}
+    _attach_session(client, [
+        (200, list_payload),
+        (200, history_for_2),
+        (200, history_for_3),
+    ])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+
+    parsed = json.loads(await tool.handler({}))
+    by_id = {t["id"]: t for t in parsed["items"]}
+
+    # Task 1: raw timestamp untouched, source labelled "raw".
+    assert by_id[1]["completed_on"] == "2026-04-10 10:00:00"
+    assert by_id[1]["completed_on_source"] == "raw"
+
+    # Task 2: enriched from history, now LATE (20-apr > 15-apr due).
+    assert by_id[2]["completed_on"] == "2026-04-20T11:00:00+05:00"
+    assert by_id[2]["completed_on_source"] == "history"
+
+    # Task 3: history empty → stays unknown, source "missing".
+    assert by_id[3].get("completed_on") in (None, "")
+    assert by_id[3]["completed_on_source"] == "missing"
+
+    # Breakdown reflects post-enrichment state: 1 on-time + 1 late + 1 unknown.
+    assert parsed["completion_breakdown"] == {"on_time": 1, "late": 1, "unknown_date": 1}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_skips_enrichment_when_disabled():
+    """`enrich_history=False` should skip the history-fetch pass entirely —
+    useful for callers that don't care about completion-time recovery
+    (e.g. quick status counts) and want to avoid N round-trips.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    list_payload = {"data": [
+        {"id": 1, "heading": "missing", "status": "completed",
+         "due_date": "2026-04-15", "completed_on": None,
+         "users": [], "project": None},
+    ], "meta": {"paging": {"total": 1}}}
+    session = _attach_session(client, [(200, list_payload)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+
+    parsed = json.loads(await tool.handler({"enrich_history": False}))
+    # Task remains unknown — no enrichment attempted.
+    assert parsed["completion_breakdown"]["unknown_date"] == 1
+    # Only the list call hit the network — no history GETs.
+    history_calls = [c for c in session.calls if "/history" in c["url"]]
+    assert history_calls == [], f"expected no history fetches, got {history_calls}"

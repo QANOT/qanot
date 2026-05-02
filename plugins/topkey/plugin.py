@@ -13,6 +13,35 @@ from qanot.secrets import resolve_secret
 logger = logging.getLogger(__name__)
 
 
+def _extract_completed_at_from_history(rows: Any) -> str | None:
+    """Find the most recent transition into a 'completed'-slug column.
+
+    TopKey vendor exposed `created_at` on `task_history` rows on
+    2026-05-02. This recovers the actual completion moment for tasks
+    where `completed_on` is null but the user moved the card to the
+    Bajarilgan column.
+
+    Returns the ISO timestamp string of the latest completed-column
+    transition, or None if no such transition is found.
+
+    Strategy: history rows already arrive ordered by `id desc` (=
+    insertion order desc, equivalent to created_at desc since rows are
+    insert-only). Walk in order, return the first match's timestamp.
+    """
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        col = row.get("board_column")
+        slug = col.get("slug") if isinstance(col, dict) else None
+        if slug == "completed":
+            ts = row.get("created_at") or row.get("updated_at")
+            if isinstance(ts, str) and ts:
+                return ts
+    return None
+
+
 def _import_client():
     """Import the HTTP client lazily.
 
@@ -769,11 +798,69 @@ class QanotPlugin(Plugin):
                         now = datetime.now(due.tzinfo) if due.tzinfo else datetime.now()
                         if due >= now:
                             return False
-                    if late_completed_only and not _is_late_completed(t):
-                        return False
+                    # NOTE: late_completed_only is applied AFTER history
+                    # enrichment below, not here — otherwise tasks with
+                    # null completed_on get rejected before we have a
+                    # chance to recover their timestamp from history.
                     return True
 
                 filtered = [t for t in items if _matches(t)]
+
+                # ── HISTORY ENRICHMENT ──────────────────────────────
+                # When `completed_on` is null but the task is marked
+                # completed, we now have a recovery path: TopKey's
+                # `/task/{id}/history` endpoint exposes board-column
+                # transitions with `created_at` timestamps (vendor fix
+                # 2026-05-02 — see claudedocs/topkey-api-task-completion-
+                # timestamps.md). The most recent transition into a
+                # column with slug=="completed" IS the actual completion
+                # moment. We tag the source so the agent can label
+                # inferred values as "(taxminiy)" if useful.
+                enrich_history = p.get("enrich_history", True)
+                tasks_to_enrich = [
+                    t for t in filtered
+                    if t.get("status") == "completed"
+                    and not t.get("completed_on")
+                ] if enrich_history else []
+
+                if tasks_to_enrich:
+                    import asyncio
+                    sem = asyncio.Semaphore(8)
+
+                    async def _fetch_one(task_id: int) -> tuple[int, str | None]:
+                        async with sem:
+                            try:
+                                resp = await c.get(f"/task/{task_id}/history")
+                                rows = resp.get("data") if isinstance(resp, dict) else resp
+                                return task_id, _extract_completed_at_from_history(rows)
+                            except Exception as e:
+                                logger.warning("history fetch failed for task %s: %s", task_id, e)
+                                return task_id, None
+
+                    results = await asyncio.gather(*(
+                        _fetch_one(int(t["id"])) for t in tasks_to_enrich if t.get("id") is not None
+                    ))
+                    inferred_by_id = {tid: ts for tid, ts in results}
+                    for t in filtered:
+                        tid = t.get("id")
+                        if tid in inferred_by_id and inferred_by_id[tid]:
+                            t["completed_on"] = inferred_by_id[tid]
+                            t["completed_on_source"] = "history"
+                        elif (t.get("status") == "completed"
+                              and not t.get("completed_on")
+                              and tid in inferred_by_id):
+                            t["completed_on_source"] = "missing"
+                    # Mark raw values explicitly for tasks we didn't touch.
+                    for t in filtered:
+                        if "completed_on_source" not in t and t.get("completed_on"):
+                            t["completed_on_source"] = "raw"
+
+                # Re-apply late_completed_only NOW that completed_on may
+                # have been enriched — a task previously rejected as
+                # "unknown" might now classify as late after history fetch.
+                if late_completed_only:
+                    filtered = [t for t in filtered if _is_late_completed(t)]
+
                 # Aggregate stats so the agent has counts without iterating
                 from collections import Counter
                 status_counts = Counter(t.get("status") for t in filtered)
@@ -824,10 +911,13 @@ class QanotPlugin(Plugin):
                 "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan), "
                 "late_completed_only (true: bajarilgan, lekin completed_on > due_date — kechikib bajarilgan). "
                 "Javobda `completion_breakdown` qaytadi: {on_time, late, unknown_date}. "
+                "Har vazifaga `completed_on_source` qo'shiladi: 'raw' (asl maydon), "
+                "'history' (transition tarixidan tiklangan, taxminiy), 'missing' (umuman noma'lum). "
                 "MUHIM: `unknown_date` — bajarilgan deb belgilangan, lekin `completed_on` sanasi "
-                "kiritilmagan vazifalar. Bu sonni hech qachon 'o'z vaqtida bajarilgan' deb sanama — "
-                "haqiqiy bajarish vaqti noma'lum. Hisobotda alohida ko'rsat: "
-                "'O'z vaqtida: X, Kechikkan: Y, Sana noma'lum: Z'."
+                "umuman topilmagan vazifalar (history ham bo'sh). Bu sonni hech qachon "
+                "'o'z vaqtida bajarilgan' deb sanama. Hisobotda alohida ko'rsat: "
+                "'O'z vaqtida: X, Kechikkan: Y, Sana noma'lum: Z'. "
+                "`history` source bilan keluvchi sanalarni '(taxminiy)' deb belgila."
             ),
             {"type": "object", "properties": {
                 "project_id": {"type": "number"},
@@ -836,8 +926,50 @@ class QanotPlugin(Plugin):
                 "board_column_id": {"type": "number"},
                 "overdue_only": {"type": "boolean", "description": "Faqat muddati o'tgan + bajarilmaganlar"},
                 "late_completed_only": {"type": "boolean", "description": "Faqat kechikib bajarilganlar (completed_on > due_date)"},
+                "enrich_history": {"type": "boolean", "description": "Default true: completed_on null bo'lsa, history'dan tiklash"},
             }},
             list_tasks,
+        ))
+
+        async def get_task_history(p: dict) -> str:
+            if "task_id" not in p:
+                return self._err("task_id is required")
+            try:
+                tid = int(p["task_id"])
+                resp = await c.get(f"/task/{tid}/history")
+                rows = resp.get("data") if isinstance(resp, dict) else resp
+                rows = rows if isinstance(rows, list) else []
+                transitions = []
+                for row in rows:
+                    col = row.get("board_column") if isinstance(row, dict) else None
+                    transitions.append({
+                        "id": row.get("id"),
+                        "moved_at": row.get("created_at"),
+                        "moved_by_user_id": row.get("user_id"),
+                        "to_column_id": row.get("board_column_id"),
+                        "to_column_name": col.get("column_name") if isinstance(col, dict) else None,
+                        "to_column_slug": col.get("slug") if isinstance(col, dict) else None,
+                    })
+                return self._ok({
+                    "task_id": tid,
+                    "completed_at": _extract_completed_at_from_history(rows),
+                    "transitions": transitions,
+                })
+            except Exception as e:
+                return self._err(str(e))
+        tools.append(ToolDef(
+            "topkey_get_task_history",
+            (
+                "TopKey: Vazifaning board column o'tishlari tarixi (Kanban transitions). "
+                "Har transitionda `moved_at` (vaqt), `to_column_slug` ('to_do'/'doing'/'completed'), "
+                "`moved_by_user_id` qaytadi. Eng so'nggi 'completed' transition `completed_at` "
+                "maydonida alohida ko'rsatiladi — bu vazifa qachon yopilganligi (completed_on null bo'lsa ham). "
+                "Foydalanuvchiga column slug yoki ID emas, oddiy tilda gapir: 'Bajarildi: 27-aprel'."
+            ),
+            {"type": "object", "required": ["task_id"], "properties": {
+                "task_id": {"type": "number"},
+            }},
+            get_task_history,
         ))
 
         async def get_task(p: dict) -> str:
