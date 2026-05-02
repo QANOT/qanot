@@ -574,3 +574,52 @@ async def test_list_tasks_requests_completed_on_field_and_filters_late_completed
     first_get = next(c for c in session.calls if c["method"] == "GET" and "/task" in c["url"])
     fields_param = first_get["params"].get("fields", "")
     assert "completed_on" in fields_param, f"fields= must include completed_on; got {fields_param!r}"
+
+
+# ── 14b. completion_breakdown: 3-bucket honest classifier ─────
+@pytest.mark.asyncio
+async def test_list_tasks_returns_completion_breakdown_with_unknown_bucket():
+    """A completed task with no `completed_on` MUST count as `unknown_date`,
+    NOT as `on_time`. TopKey's UI lets users mark tasks complete without
+    filling the date — the prior bug treated silence as on-time delivery,
+    inflating success rates in management reports.
+
+    The breakdown must always report all three buckets so the agent can
+    surface "Sana noma'lum: N" prominently instead of burying it.
+    """
+    client = TopKeyClient("https://topkey.uz", "a@b.c", "x")
+    client.token = "tok"
+    fixture_payload = {"data": [
+        # on_time: completed before due
+        {"id": 1, "heading": "on-time", "status": "completed",
+         "due_date": "2026-04-15", "completed_on": "2026-04-10 10:00:00",
+         "users": [], "project": None},
+        # late: completed after due
+        {"id": 2, "heading": "late", "status": "completed",
+         "due_date": "2026-04-10", "completed_on": "2026-04-20 10:00:00",
+         "users": [], "project": None},
+        # unknown: completed but no completed_on
+        {"id": 3, "heading": "unknown date", "status": "completed",
+         "due_date": "2026-04-10", "completed_on": None,
+         "users": [], "project": None},
+        # unknown: completed but no due date either (still unknowable)
+        {"id": 4, "heading": "no due", "status": "completed",
+         "due_date": None, "completed_on": "2026-04-15 10:00:00",
+         "users": [], "project": None},
+        # not completed → not in any bucket
+        {"id": 5, "heading": "open", "status": "incomplete",
+         "due_date": "2026-04-10", "completed_on": None,
+         "users": [], "project": None},
+    ], "meta": {"paging": {"total": 5}}}
+    _attach_session(client, [(200, fixture_payload)])
+    p = QanotPlugin()
+    p.client = client
+    tool = next(t for t in p.get_tools() if t.name == "topkey_list_tasks")
+
+    parsed = json.loads(await tool.handler({}))
+    breakdown = parsed["completion_breakdown"]
+    assert breakdown == {"on_time": 1, "late": 1, "unknown_date": 2}, breakdown
+    # Back-compat: late_completed_count must still match the late bucket.
+    assert parsed["late_completed_count"] == 1
+    # Total completed = on_time + late + unknown (4); incomplete (1) excluded.
+    assert sum(breakdown.values()) == 4

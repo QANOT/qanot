@@ -722,16 +722,30 @@ class QanotPlugin(Plugin):
                     except (ValueError, TypeError):
                         return None
 
-                def _is_late_completed(t: dict) -> bool:
+                def _completion_bucket(t: dict) -> str | None:
+                    """Classify a completed task as on_time / late / unknown.
+
+                    Returns None for non-completed tasks. Returns "unknown"
+                    when completed_on is missing — TopKey lets users mark
+                    tasks complete without filling in the actual date, so
+                    silence MUST NOT be conflated with on-time delivery
+                    (the previous bug: 'no date' was implicitly counted as
+                    on-time, inflating success rates).
+                    """
                     if t.get("status") != "completed":
-                        return False
+                        return None
                     co = _parse_dt(t.get("completed_on"))
+                    if not co:
+                        return "unknown"
                     due = _parse_dt(t.get("due_date"))
-                    if not co or not due:
-                        return False
+                    if not due:
+                        return "unknown"
                     co_naive = co.replace(tzinfo=None)
                     due_naive = due.replace(tzinfo=None)
-                    return co_naive > due_naive
+                    return "late" if co_naive > due_naive else "on_time"
+
+                def _is_late_completed(t: dict) -> bool:
+                    return _completion_bucket(t) == "late"
 
                 def _matches(t: dict) -> bool:
                     if project_id is not None and t.get("project") and \
@@ -763,10 +777,22 @@ class QanotPlugin(Plugin):
                 # Aggregate stats so the agent has counts without iterating
                 from collections import Counter
                 status_counts = Counter(t.get("status") for t in filtered)
-                # Late-completed count across the FILTERED set (so e.g. the
-                # agent can ask "how many tasks did Davron complete late?"
-                # by filtering by assigned_to and reading this number).
-                late_completed_count = sum(1 for t in filtered if _is_late_completed(t))
+                # 3-bucket completion classifier across the FILTERED set:
+                #   on_time   = completed AND completed_on <= due_date
+                #   late      = completed AND completed_on > due_date
+                #   unknown   = completed BUT completed_on missing (or due missing)
+                # The "unknown" bucket exists because TopKey users routinely
+                # mark tasks complete without filling in the actual date —
+                # silence is NOT on-time. The agent must surface this count
+                # prominently in reports, not bury it in a footnote.
+                bucket_counts = Counter(
+                    b for t in filtered if (b := _completion_bucket(t)) is not None
+                )
+                completion_breakdown = {
+                    "on_time": bucket_counts.get("on_time", 0),
+                    "late": bucket_counts.get("late", 0),
+                    "unknown_date": bucket_counts.get("unknown", 0),
+                }
                 return self._maybe_spool(
                     "tasks",
                     filtered,
@@ -774,7 +800,9 @@ class QanotPlugin(Plugin):
                         "fetched_total": len(items),
                         "match_total": len(filtered),
                         "status_counts": dict(status_counts),
-                        "late_completed_count": late_completed_count,
+                        # Back-compat alias (existing callers / tests).
+                        "late_completed_count": completion_breakdown["late"],
+                        "completion_breakdown": completion_breakdown,
                         "filters_applied": {
                             "project_id": project_id, "assigned_to": assigned_to,
                             "status": status, "board_column_id": board_column_id,
@@ -795,7 +823,11 @@ class QanotPlugin(Plugin):
                 "Filter: project_id, assigned_to (user_id), status (completed/incomplete/in_progress), "
                 "board_column_id, overdue_only (true: muddati o'tgan + bajarilmagan), "
                 "late_completed_only (true: bajarilgan, lekin completed_on > due_date — kechikib bajarilgan). "
-                "Javobda `late_completed_count` ham qaytadi — filtrdan o'tgan to'plamdagi kechikib bajarilganlar soni."
+                "Javobda `completion_breakdown` qaytadi: {on_time, late, unknown_date}. "
+                "MUHIM: `unknown_date` — bajarilgan deb belgilangan, lekin `completed_on` sanasi "
+                "kiritilmagan vazifalar. Bu sonni hech qachon 'o'z vaqtida bajarilgan' deb sanama — "
+                "haqiqiy bajarish vaqti noma'lum. Hisobotda alohida ko'rsat: "
+                "'O'z vaqtida: X, Kechikkan: Y, Sana noma'lum: Z'."
             ),
             {"type": "object", "properties": {
                 "project_id": {"type": "number"},
