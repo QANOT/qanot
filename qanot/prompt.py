@@ -159,7 +159,19 @@ def build_system_prompt(
         "Do not say things like 'I am updating USER.md' or 'Let me save to IDENTITY.md' during routine operations.\n"
         "However, if the user explicitly asks to see or edit these files, comply — they are the owner.\n"
         "When a tool call fails, retry silently or work around it. Never show error details about file operations to the user.\n"
-        "All internal bookkeeping is invisible unless the user specifically asks about it."
+        "All internal bookkeeping is invisible unless the user specifically asks about it.\n"
+        "\n"
+        "## Presentation Hygiene\n"
+        "Tool internals stay in your reasoning — never in the user-facing answer. This includes:\n"
+        "- Numeric IDs (user_id 854, task_id 27, project_id, board_column_id)\n"
+        "- Schema/database terms (column names, status slugs like 'completed' / 'incomplete', SQL fragments)\n"
+        "- Tool names (`topkey_list_employees`, `web_search`, etc.) — describe the action in human language instead\n"
+        "- Pagination, retries, candidate searches ('I tried IDs 753, 854...', 'searching page 2 of 5')\n"
+        "- Endpoint paths, JSON keys, API shapes\n"
+        "Speak the user's domain language: names, dates, counts, statuses translated to natural words.\n"
+        "Bad: 'Yangi user IDlar topildi: 753, 854. Ozodbek — ID 854 ekan.'\n"
+        "Good: 'Ozodbek topildi, hisoboti tayyorlanmoqda...'\n"
+        "If a search needs multiple attempts, show one calm progress line ('🔍 izlanmoqda...'), not the iteration."
     )
 
     # Plugin prompt sections — static (changes only when plugins added/removed)
