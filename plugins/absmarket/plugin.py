@@ -168,6 +168,7 @@ class QanotPlugin(Plugin):
             return []
         tools = self._build_api_tools()
         if self._db_pool:
+            tools.append(self._build_cashier_daily_report_tool())
             tools.append(self._build_query_tool())
         logger.info("[absmarket] %d tools registered", len(tools))
         return tools
@@ -400,6 +401,249 @@ class QanotPlugin(Plugin):
 
         return tools
 
+    def _build_cashier_daily_report_tool(self) -> ToolDef:
+        """Canonical "kassir kunlik hisoboti" — replaces ad-hoc SQL fishing.
+
+        The agent was producing inconsistent answers (21 vs 40 sales for
+        the same query) because each retry used a slightly different SQL
+        WHERE clause. This tool encapsulates the canonical logic so one
+        call returns one deterministic answer.
+
+        Returns three perspectives on a cashier's day, with STRICT being
+        the primary answer (sales the cashier explicitly rang up):
+          - strict: employee_id == cashier_user_id at outlet
+          - shift_window: all sales at the outlet during her register
+            session(s) — diagnostic, includes other cashiers when shifts
+            overlap (e.g. two cashiers at the same outlet on the same day)
+          - customers_added_today: tbl_customers.user_id = cashier_user_id
+        """
+        async def cashier_daily_report(p: dict) -> str:
+            try:
+                cashier_user_id = int(p["cashier_user_id"])
+            except (KeyError, TypeError, ValueError):
+                return self._err("cashier_user_id (number) is required")
+            date = (p.get("date") or "").strip()
+            if not date or len(date) != 10:
+                return self._err("date (YYYY-MM-DD) is required")
+            outlet_filter_id = p.get("outlet_id")
+
+            async with self._db_pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    # 1. Cashier identity → company_id (avoid hardcoding).
+                    await cur.execute(
+                        "SELECT id, full_name, company_id FROM tbl_users "
+                        "WHERE id = %s AND del_status = 'Live' LIMIT 1",
+                        (cashier_user_id,),
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        return self._err(f"cashier user_id {cashier_user_id} not found")
+                    cashier_id, cashier_name, company_id = row
+
+                    # 2. Default customer per company. Asia Home has multiple
+                    # customer_type='default' rows, so customer_type alone
+                    # isn't a clean filter — tbl_companies.default_customer
+                    # is the authoritative pointer.
+                    await cur.execute(
+                        "SELECT default_customer FROM tbl_companies WHERE id = %s LIMIT 1",
+                        (company_id,),
+                    )
+                    row = await cur.fetchone()
+                    default_customer_id = int(row[0]) if row and row[0] else 0
+
+                    # 3. Register sessions (drawer open/close) for the cashier.
+                    register_q = (
+                        "SELECT r.id, r.outlet_id, COALESCE(o.outlet_name, ''), "
+                        "       r.opening_balance_date_time, r.closing_balance_date_time, "
+                        "       r.opening_balance, r.closing_balance "
+                        "FROM tbl_register r "
+                        "LEFT JOIN tbl_outlets o ON o.id = r.outlet_id "
+                        "WHERE r.user_id = %s "
+                        "  AND DATE(r.opening_balance_date_time) = %s "
+                        "  AND r.del_status = 'Live' "
+                        "  AND r.company_id = %s"
+                    )
+                    register_args: list = [cashier_user_id, date, company_id]
+                    if outlet_filter_id is not None:
+                        register_q += " AND r.outlet_id = %s"
+                        register_args.append(int(outlet_filter_id))
+                    register_q += " ORDER BY r.opening_balance_date_time"
+                    await cur.execute(register_q, tuple(register_args))
+                    sessions = await cur.fetchall()
+
+                    outlets_map: dict = {}
+                    for rid, oid, oname, opened, closed, ob, cb in sessions:
+                        outlets_map.setdefault(oid, {
+                            "outlet_id": oid,
+                            "outlet_name": oname,
+                            "register_sessions": [],
+                        })["register_sessions"].append({
+                            "register_id": rid,
+                            "opened_at": str(opened) if opened else None,
+                            "closed_at": str(closed) if closed else None,
+                            "opening_balance": float(ob) if ob is not None else 0.0,
+                            "closing_balance": float(cb) if cb is not None else 0.0,
+                        })
+
+                    # 4. Per-outlet aggregation. Strict = primary answer
+                    # (employee_id == cashier_user_id). Shift-window =
+                    # diagnostic, includes other cashiers when shifts overlap.
+                    for oid, outlet_data in outlets_map.items():
+                        # STRICT
+                        await cur.execute(
+                            "SELECT COUNT(*), "
+                            "       COALESCE(SUM(s.total_payable), 0), "
+                            "       COALESCE(SUM(s.paid_amount), 0), "
+                            "       COALESCE(SUM(s.due_amount), 0), "
+                            "       COUNT(CASE WHEN s.customer_id <> %s THEN 1 END), "
+                            "       COUNT(CASE WHEN s.customer_id = %s THEN 1 END) "
+                            "FROM tbl_sales s "
+                            "WHERE s.employee_id = %s "
+                            "  AND s.outlet_id = %s "
+                            "  AND s.sale_date = %s "
+                            "  AND s.del_status = 'Live' "
+                            "  AND (s.delivery_status IS NULL OR s.delivery_status <> 'Returned') "
+                            "  AND s.company_id = %s",
+                            (default_customer_id, default_customer_id,
+                             cashier_user_id, oid, date, company_id),
+                        )
+                        sc, st, sp, sd, stagged, sdef = await cur.fetchone()
+                        outlet_data["strict"] = {
+                            "comment": ("Sales explicitly rang up by this cashier "
+                                        "(employee_id = cashier_user_id). PRIMARY ANSWER."),
+                            "sales_count": int(sc),
+                            "total_payable": float(st),
+                            "paid_amount": float(sp),
+                            "due_amount": float(sd),
+                            "customers_tagged_count": int(stagged),
+                            "customers_default_count": int(sdef),
+                        }
+
+                        # SHIFT WINDOW + employee breakdown
+                        await cur.execute(
+                            "SELECT COUNT(*), "
+                            "       COALESCE(SUM(s.total_payable), 0), "
+                            "       COALESCE(SUM(s.paid_amount), 0), "
+                            "       COALESCE(SUM(s.due_amount), 0), "
+                            "       COUNT(CASE WHEN s.customer_id <> %s THEN 1 END), "
+                            "       COUNT(CASE WHEN s.customer_id = %s THEN 1 END) "
+                            "FROM tbl_sales s "
+                            "WHERE s.outlet_id = %s "
+                            "  AND s.sale_date = %s "
+                            "  AND s.del_status = 'Live' "
+                            "  AND (s.delivery_status IS NULL OR s.delivery_status <> 'Returned') "
+                            "  AND s.company_id = %s "
+                            "  AND EXISTS ("
+                            "    SELECT 1 FROM tbl_register r "
+                            "    WHERE r.user_id = %s "
+                            "      AND r.outlet_id = s.outlet_id "
+                            "      AND DATE(r.opening_balance_date_time) = %s "
+                            "      AND r.del_status = 'Live' "
+                            "      AND s.date_time BETWEEN r.opening_balance_date_time "
+                            "                          AND COALESCE(r.closing_balance_date_time, NOW()) "
+                            "  )",
+                            (default_customer_id, default_customer_id,
+                             oid, date, company_id, cashier_user_id, date),
+                        )
+                        wc, wt, wp, wd, wtagged, wdef = await cur.fetchone()
+                        await cur.execute(
+                            "SELECT s.employee_id, COUNT(*) "
+                            "FROM tbl_sales s "
+                            "WHERE s.outlet_id = %s "
+                            "  AND s.sale_date = %s "
+                            "  AND s.del_status = 'Live' "
+                            "  AND (s.delivery_status IS NULL OR s.delivery_status <> 'Returned') "
+                            "  AND s.company_id = %s "
+                            "  AND EXISTS ("
+                            "    SELECT 1 FROM tbl_register r "
+                            "    WHERE r.user_id = %s "
+                            "      AND r.outlet_id = s.outlet_id "
+                            "      AND DATE(r.opening_balance_date_time) = %s "
+                            "      AND r.del_status = 'Live' "
+                            "      AND s.date_time BETWEEN r.opening_balance_date_time "
+                            "                          AND COALESCE(r.closing_balance_date_time, NOW()) "
+                            "  ) "
+                            "GROUP BY s.employee_id",
+                            (oid, date, company_id, cashier_user_id, date),
+                        )
+                        breakdown = {
+                            str(eid if eid is not None else 0): int(cnt)
+                            for eid, cnt in await cur.fetchall()
+                        }
+                        outlet_data["shift_window"] = {
+                            "comment": ("All sales at this outlet during the cashier's "
+                                        "register session(s), regardless of who rang them up. "
+                                        "DIAGNOSTIC ONLY — when multiple cashiers share an outlet, "
+                                        "this counts the OTHER cashiers' sales too. Use STRICT "
+                                        "for the primary 'her sales' answer."),
+                            "sales_count": int(wc),
+                            "total_payable": float(wt),
+                            "paid_amount": float(wp),
+                            "due_amount": float(wd),
+                            "customers_tagged_count": int(wtagged),
+                            "customers_default_count": int(wdef),
+                            "employee_id_breakdown": breakdown,
+                        }
+
+                    # 5. Customers added today by this cashier.
+                    await cur.execute(
+                        "SELECT id, name, phone, added_date "
+                        "FROM tbl_customers "
+                        "WHERE user_id = %s "
+                        "  AND DATE(added_date) = %s "
+                        "  AND del_status = 'Live' "
+                        "  AND company_id = %s "
+                        "ORDER BY added_date ASC",
+                        (cashier_user_id, date, company_id),
+                    )
+                    customers_added = [
+                        {"customer_id": int(cid), "name": name,
+                         "phone": phone, "added_date": str(added) if added else None}
+                        for cid, name, phone, added in await cur.fetchall()
+                    ]
+
+            return self._ok({
+                "cashier": {"user_id": int(cashier_id), "full_name": cashier_name},
+                "date": date,
+                "company_id": int(company_id),
+                "default_customer_id": default_customer_id,
+                "outlets": list(outlets_map.values()),
+                "customers_added_today": {
+                    "comment": ("Customers added by this cashier on the date "
+                                "(tbl_customers.user_id = cashier_user_id, "
+                                "DATE(added_date) = date)."),
+                    "count": len(customers_added),
+                    "items": customers_added,
+                },
+            })
+
+        return ToolDef(
+            name="absmarket_get_cashier_daily_report",
+            description=(
+                "AbsMarket: Kassirning bir kunlik faoliyat hisoboti. "
+                "BIR MARTA chaqiring, BIR XIL javob keladi — qayta tekshirib "
+                "boshqa raqam olmaysiz. Bu tool kassir savollarining KANONIK "
+                "javob manbai. Raw SQL yozmang; bu toolni ishlating. "
+                "Javob tarkibi: cashier (ism), default_customer_id, outlets[] "
+                "(har do'kon uchun register_sessions, strict, shift_window), "
+                "customers_added_today. "
+                "STRICT = kassir o'zi sotgan vazifalar (employee_id = cashier_user_id) — "
+                "ASOSIY javob, foydalanuvchiga shu raqamni aytkang. "
+                "SHIFT_WINDOW = uning smenasi davomida shu do'konda bo'lgan BARCHA sotuvlar "
+                "(boshqa kassirlar ham bo'lishi mumkin) — DIAGNOSTIK, asosiy javob emas."
+            ),
+            parameters={
+                "type": "object",
+                "required": ["cashier_user_id", "date"],
+                "properties": {
+                    "cashier_user_id": {"type": "number", "description": "Kassir user_id (tbl_users.id)"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "outlet_id": {"type": "number", "description": "Faqat shu do'kon (ixtiyoriy)"},
+                },
+            },
+            handler=cashier_daily_report,
+        )
+
     def _build_query_tool(self) -> ToolDef:
         """Build the MySQL query tool."""
         import re
@@ -498,6 +742,9 @@ class QanotPlugin(Plugin):
         return ToolDef(
             name="absmarket_query",
             description=(
+                "ESCAPE HATCH — faqat domen toollar (absmarket_get_*) yetishmagan holatlarda ishlating. "
+                "**KASSIR HISOBOTI uchun BU EMAS, `absmarket_get_cashier_daily_report` ni ishlating** — "
+                "u bir xil javob qaytaradi, bu raw SQL har gal turlicha. "
                 "MySQL bazaga SELECT so'rov yuborish. Faqat SELECT ruxsat etilgan. "
                 "Asosiy jadvallar: tbl_sales, tbl_sales_details, tbl_items, tbl_item_categories, "
                 "tbl_customers, tbl_suppliers, tbl_purchase, tbl_expenses. "
