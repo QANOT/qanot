@@ -1,0 +1,81 @@
+name: Eval
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'qanot/**'
+      - 'plugins/**'
+      - 'evals/**'
+      - '.github/workflows/eval.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'evals/**'
+
+jobs:
+  eval:
+    # Skip on PRs from forks where the API key isn't available.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install anthropic pyyaml
+
+      - name: Run eval (strict mode — fail on any case failure)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m evals.runner --strict --json eval-results.json --workers 4
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-results.json
+          retention-days: 30
+
+      - name: Comment results on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const data = JSON.parse(fs.readFileSync('eval-results.json', 'utf8'));
+              let body = '## Eval results\n\n';
+              let passed = 0, failed = 0, errored = 0;
+              for (const r of data.results) {
+                if (r.status === 'pass') passed++;
+                else if (r.status === 'fail') failed++;
+                else errored++;
+              }
+              body += `**${passed} passed · ${failed} failed · ${errored} errors**\n\n`;
+              body += '| Case | Status | Score | Summary |\n|---|---|---|---|\n';
+              for (const r of data.results) {
+                const score = r.verdict ? r.verdict.score.toFixed(1) : '-';
+                const summary = r.verdict ? (r.verdict.summary || '').slice(0, 80)
+                                          : (r.error || '').slice(0, 80);
+                const icon = r.status === 'pass' ? '✅' : (r.status === 'fail' ? '❌' : '⚠️');
+                body += `| ${r.case_id} | ${icon} ${r.status} | ${score} | ${summary} |\n`;
+              }
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            } catch (e) {
+              core.warning(`Could not post eval comment: ${e.message}`);
+            }

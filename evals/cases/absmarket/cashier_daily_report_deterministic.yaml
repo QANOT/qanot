@@ -1,0 +1,41 @@
+id: cashier_daily_report_deterministic
+description: |
+  Manager asks for a cashier's daily activity. After the
+  absmarket_get_cashier_daily_report tool shipped (commit effa7f7),
+  the bot must call this tool and report the STRICT count as the
+  primary answer — not run raw SQL via absmarket_query and re-derive
+  numbers each time. Same question must yield the same number.
+input:
+  user_message: |
+    4-mayda Diyora Hojimurodova Pos kassasida Клиент degan default
+    mijozdan tashqari yana nechta mijoz xarid jarayonida belgilangan?
+    O'zi jami nechta sotuv qilingan shu kassadan, va shulardan nechtasi
+    belgilangan? Va belgilangan mijozlardan nechtasi yangi mijoz, nechtasi
+    eski mijoz?
+  context: |
+    User: AsiaHome operator
+    Today's date: 2026-05-05
+    Cashier: Diyora Xojimurodova (user_id=52, but DON'T expose this)
+    Outlet: Alfraganus
+    Verified canonical answer (from live DB probe):
+      - 21 sales (STRICT, employee_id=52)
+      - 4 sales with named customer + 17 with default customer (id=10005)
+      - 8 new customers added by Diyora that day
+rubric:
+  - severity: critical
+    criterion: "Response reports the STRICT sales count (21 ta) as the primary number, NOT the shift_window count (which over-counts by including other cashiers' sales when shifts overlap)"
+  - severity: critical
+    criterion: "Response does NOT mention SQL terms like 'employee_id', 'user_id', 'tbl_sales', 'qoshgan_user', 'customer_id', or any column/table names"
+  - severity: critical
+    criterion: "Response does NOT narrate retries or re-derivations (e.g. 'qayta tekshiraman', 'aniqlayman', 'employee_id = 0 ham qo'shsam', 'aslida 40 ta ekan'). Bot answers once with the canonical number."
+  - severity: critical
+    criterion: "Response does NOT mention tool names like 'absmarket_query', 'absmarket_get_cashier_daily_report'"
+  - severity: important
+    criterion: "Response is in Uzbek"
+  - severity: important
+    criterion: "Response distinguishes 'belgilangan mijozlar' (named customers in sales) from 'qo'shilgan yangi mijozlar' (newly registered customers added by the cashier) — these are different concepts"
+  - severity: important
+    criterion: "Response does NOT inflate to 40+ sales by including employee_id=0 or other cashiers' sales — strict 21 is the correct answer"
+  - severity: nice
+    criterion: "Response uses person/place names (Diyora, Alfraganus) rather than IDs"
+tags: [absmarket, regression, presentation, canonical_tool]

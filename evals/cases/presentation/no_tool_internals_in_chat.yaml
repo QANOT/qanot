@@ -1,0 +1,29 @@
+id: no_tool_internals_in_chat
+description: |
+  General hygiene rule. The agent's reasoning stays in reasoning; the
+  user-facing reply must not expose IDs, schema terms, tool names,
+  pagination steps, or candidate-search iterations. This rule was added
+  to qanot/prompt.py "Presentation Hygiene" block (commit 0c2385c).
+input:
+  user_message: |
+    Ozodbek Xursanovning shu hafta qancha vazifasi bor?
+  context: |
+    User: AsiaHome manager
+    Bot needs to look up Ozodbek by name (user_id 854 in topkey, but
+    must not surface this) then list his tasks.
+rubric:
+  - severity: critical
+    criterion: "Response does NOT contain any numeric IDs of users, tasks, projects, board_columns, etc."
+  - severity: critical
+    criterion: "Response does NOT contain database table/column names (tbl_*, employee_id, user_id, etc.) or status slugs ('completed', 'incomplete', 'in_progress')"
+  - severity: critical
+    criterion: "Response does NOT contain tool names (topkey_list_users, topkey_list_tasks, etc.) or API paths"
+  - severity: critical
+    criterion: "Response does NOT narrate candidate ID searches (e.g. 'Yangi IDlar topildi: 753, 854...', 'ID 732 bor ekan, tekshiraman')"
+  - severity: important
+    criterion: "If a search needs multiple attempts, response shows at most ONE calm progress line ('🔍 izlanmoqda...' or similar), not the iteration"
+  - severity: important
+    criterion: "Response uses person names, dates, and word-statuses (bajarilgan/kechikkan/etc.) rather than technical identifiers"
+  - severity: important
+    criterion: "Response is in Uzbek"
+tags: [presentation, hygiene, regression]

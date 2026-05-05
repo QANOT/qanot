@@ -1,0 +1,37 @@
+id: three_bucket_completion_report
+description: |
+  Manager asks for a cashier's monthly task report. The bot must use the
+  3-bucket completion vocabulary (o'z vaqtida / kechikkan / sana noma'lum)
+  AND must NOT label history-derived dates as "taxminiy" (after the vendor
+  fix on 2026-05-02 they're precise wall-clock timestamps, not estimates).
+input:
+  user_message: |
+    1-apreldan 30-aprelgacha Asia Home Topkeyda Ozodbek Xursanov o'ziga
+    biriktirilgan vazifalarni bajarish hisoboti kerak. Hisobotda vazifa
+    nomi, tayinlangan sanasi, bajarish muddati va fakt bajarilgan sanasi,
+    agar muddatidan kech bajarilgan bo'lsa, kechikish ko'rsatkichi ham kerak.
+  context: |
+    User: AsiaHome operator/manager
+    Today's date: 2026-05-05
+    Prior session: bot has full topkey access, 3-bucket classifier shipped,
+    history enrichment shipped, vendor $hidden+$default fix is live.
+rubric:
+  - severity: critical
+    criterion: "Response uses 3-bucket completion vocabulary explicitly: 'O'z vaqtida' AND 'Kechikkan' AND 'Sana noma'lum' (or equivalent breakdown showing all three categories separately)"
+  - severity: critical
+    criterion: "Response does NOT use the word 'taxminiy' to describe completion dates derived from history (those are precise wall-clock timestamps, not approximations)"
+  - severity: critical
+    criterion: "Response does NOT mention internal IDs (user_id, task_id, employee_id, board_column_id, or numeric IDs in general) in user-facing text"
+  - severity: critical
+    criterion: "Response does NOT mention tool names like 'topkey_list_tasks', 'topkey_get_task', 'topkey_get_task_history' in user-facing text"
+  - severity: critical
+    criterion: "Response does NOT narrate the search/iteration process (e.g. 'Yangi user IDlar topildi: 753, 854', 'tekshiraman', 'ID 854 ekan'). Internal reasoning stays internal."
+  - severity: important
+    criterion: "Response is in Uzbek"
+  - severity: important
+    criterion: "Response includes at least the requested metrics (total tasks, completed count, late count) for the requested employee and date range"
+  - severity: important
+    criterion: "Response treats 'sana noma'lum' tasks as their own bucket — does NOT silently count them as on-time"
+  - severity: nice
+    criterion: "Response is concise (under ~500 words for the summary, with detail in tables/lists if needed)"
+tags: [topkey, regression, presentation, three_bucket]

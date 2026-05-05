@@ -1,0 +1,8 @@
+{
+  "case_id": "presentation/no_tool_internals_in_chat",
+  "recorded_at": "2026-05-05T20:30:00+05:00",
+  "agent_version": "af9e246-clean",
+  "source": "synthetic — what a clean response should look like after presentation hygiene rules are followed",
+  "notes": "Reference 'good' recording for the no-tool-internals rule. Should PASS all critical rubric items. Compare with the failing recordings for topkey__auto_paginate_user_lookup which violates these rules.",
+  "response": "Ozodbekning shu hafta vazifalari:\n\nJami 6 ta vazifa biriktirilgan:\n- ✅ Bajarilgan: 4 ta\n- 🔄 Davom etmoqda: 1 ta\n- ⏳ Kutilmoqda: 1 ta\n\nBatafsil ma'lumot kerakmi yoki Excel hisobot tayyorlaymi?"
+}

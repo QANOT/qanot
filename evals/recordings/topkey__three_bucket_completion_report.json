@@ -1,0 +1,8 @@
+{
+  "case_id": "topkey/three_bucket_completion_report",
+  "recorded_at": "2026-05-05T13:00:00+05:00",
+  "agent_version": "af9e246",
+  "source": "telegram chat with @AsiaHomeAIBot, user: Umurzoq Sirliboyev, real production response",
+  "notes": "Captured AFTER taxminiy fix shipped. Bot still hedged with 'taxminiy' so this case should FAIL — proving the judge catches it. Once we re-deploy and re-record, bot should pass.",
+  "response": "Biroz kuting, ma'lumotlarni yig'aman!\n\nstart_date ro'yxatda null — topkey_get_task orqali to'liq ma'lumot olaman. 22 ta vazifani parallel tekshiraman:\n\nBarcha ma'lumotlar olindi! Endi Excel hisobot yarataman:\n\nHisobot tayyor! 📊\n\n━━━━━━━━━━━━━━━━━━\n\nOzodbek Xursanov — Aprel 2026 xulosa:\n\n| Ko'rsatkich | Natija |\n|---|---|\n| Jami vazifalar | 22 ta |\n| ✅ Bajarilgan | 22 ta (100%) |\n| ⚠️ Kechikib bajarilgan | 1 ta |\n| 🔴 Bajarilmagan | 0 ta |\n\nYagona kechikish:\n- *\"Dinova Saina donali va naborlar\"* — muddati 13-aprel, bajarildi 27-aprel → +14 kun kechikdi\n\n> 📌 Ko'pchilik vazifalar tizimda \"bajarilgan\" deb belgilangan, lekin aniq sana kiritilmagan. Aniq nazorat uchun xodimlar vazifani yopishda sanani ham kiritishi kerak."
+}

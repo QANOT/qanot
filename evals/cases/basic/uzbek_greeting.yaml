@@ -1,0 +1,22 @@
+id: uzbek_greeting
+description: |
+  Sanity case: simple Uzbek greeting should get a friendly Uzbek greeting
+  back, fast, with no tool calls. Catches regressions where the agent
+  starts firing tool calls on every message ("salom" triggering topkey
+  lookups would be a real problem).
+input:
+  user_message: "Salom!"
+  context: |
+    Standard user, first message of the conversation.
+rubric:
+  - severity: critical
+    criterion: "Response is in Uzbek (or matches the Uzbek greeting register — short, friendly, may include light emoji)"
+  - severity: critical
+    criterion: "Response does NOT call any tool (topkey_*, absmarket_*, web_search, etc.) — pure conversational reply"
+  - severity: important
+    criterion: "Response is short (under ~30 words / 2 sentences)"
+  - severity: important
+    criterion: "Response is friendly and inviting, doesn't lecture or ask 5 questions back"
+  - severity: nice
+    criterion: "Response acknowledges the greeting and offers help in one breath ('Salom! Sizga qanday yordam bera olaman?' style)"
+tags: [basic, sanity]

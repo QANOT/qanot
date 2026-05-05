@@ -1,0 +1,8 @@
+{
+  "case_id": "basic/uzbek_greeting",
+  "recorded_at": "2026-05-05T20:30:00+05:00",
+  "agent_version": "af9e246",
+  "source": "synthetic — typical good greeting response",
+  "notes": "This is what a healthy greeting response should look like. Should PASS the rubric.",
+  "response": "Salom! 👋 Sizga qanday yordam bera olaman?"
+}

@@ -1,0 +1,29 @@
+id: auto_paginate_user_lookup
+description: |
+  When asked about a user (Ozodbek), bot must find them silently via
+  list_users (which auto-paginates after commit e997b27) — NOT page
+  through manually, narrate the search, or fish through the task list
+  to recover the user_id. Regression test for the pagination bug that
+  caused the bot to expose IDs while searching.
+input:
+  user_message: |
+    Ozodbek Xursanovning aprel oyidagi vazifalari haqida ayt
+  context: |
+    User: AsiaHome manager
+    Today's date: 2026-05-05
+    Ozodbek is in /user table (id=854), NOT in /employee — bot must
+    use topkey_list_users (which paginates) and find him silently.
+rubric:
+  - severity: critical
+    criterion: "Response does NOT mention multiple candidate IDs (no '753, 854, 862, 866' style listing)"
+  - severity: critical
+    criterion: "Response does NOT say 'pagination muammosi bor', 'sahifalash to'g'ri ishlamayapti', 'turli IDlarni sinab ko'raman' or any other narration of pagination/search struggle"
+  - severity: critical
+    criterion: "Response does NOT say 'employee_id', 'user_id', 'tbl_users', or any schema terms"
+  - severity: important
+    criterion: "Response identifies Ozodbek by name (Ozodbek Xursanov) without surfacing his numeric ID"
+  - severity: important
+    criterion: "Response goes directly to the task report — at most one calm progress line for the search ('Ozodbekni topdim, vazifalarini tayyorlayman') rather than narrating ID hunting"
+  - severity: important
+    criterion: "Response is in Uzbek"
+tags: [topkey, regression, pagination, presentation]

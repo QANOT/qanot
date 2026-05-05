@@ -1,0 +1,8 @@
+{
+  "case_id": "absmarket/cashier_daily_report_deterministic",
+  "recorded_at": "2026-05-04T20:13:00+05:00",
+  "agent_version": "before-cashier-tool",
+  "source": "telegram chat with @AsiaHomeAIBot, user: Davron, real production response",
+  "notes": "Captured BEFORE absmarket_get_cashier_daily_report shipped. Bot ran raw SQL twice and gave inconsistent answers (21 → 40). This recording should FAIL the rubric — it leaks SQL terms ('employee_id = 0', 'user_id = 52'), narrates re-derivations, and reports the wrong inflated number. After we deploy commit effa7f7 and re-record, the same question should pass.",
+  "response": "Aniq tekshiraman. Diyoraning POS sessiyasidagi BARCHA sotuvlarni ko'raman — employee_id = 52 ham, employee_id = 0 ham:\n\nEndi aniq ko'rinib turibdi. employee_id = 0 bo'lgan cheklarda boshqa kassirlar (user_id = 29, 32, 56) qo'shgan mijozlar ham bor — ular Diyoraning kassasiga tegishli emas.\n\nFaqat qoshgan_user = 52 bo'lgan belgilangan mijozlarni sanab chiqaman:\n\nDiyora qo'shgan (user_id=52) mijozlar:\n1. Mehmankulova Nadira (10856) — eski (1-maydan)\n2. Muhammadjonov Abdujavlon (10966) — yangi\n3. Zarina Begisheva (10967) — yangi\n4. Muxlisa Rasulxodjayeva (10968) — yangi\n5. Qosimjon (10969) — yangi\n6. Muhabbat Tlegenova (10970) — yangi\n7. Umida Aripxodjayeva (10973) — yangi\n8. Sultonova Dilnoza (10979) — yangi\n\n━━━━━━━━━━━━━━━━━━\n\nDiyora Xojimurodova — 4-may 2026, to'g'ri hisob:\n\n| Ko'rsatkich | Soni |\n|---|---|\n| 🧾 Jami sotuvlar (52 + 0) | 40 ta |\n| ✅ Belgilangan mijozlar | 8 ta |\n| 👤 \"Клиент\" default | 32 ta |"
+}
