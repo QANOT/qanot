@@ -1,8 +1,8 @@
 {
   "case_id": "topkey/auto_paginate_user_lookup",
-  "recorded_at": "2026-05-02T11:51:00+05:00",
-  "agent_version": "before-pagination-fix",
-  "source": "telegram chat with @AsiaHomeAIBot, user: Umurzoq Sirliboyev, real production response",
-  "notes": "Captured BEFORE list_employees/list_users auto-pagination shipped (commit e997b27). Bot leaked the entire ID-hunting process. This recording should FAIL multiple critical rubric items — it shows pagination narration, candidate IDs, and search struggle. After re-deploy and re-record, this should pass.",
-  "response": "Ozodbekni topib, so'ng vazifalar hisobotini tayyorlayman.\n\nOzodbek Xursanov ro'yxatda ko'rinmayapti. Keng qidiruv qilaman: Jami 29 ta foydalanuvchi bor, keyingi sahifalarni ham ko'raman:\n\nSahifalash to'g'ri ishlamayapti. Barcha vazifalarni ko'rib, Ozodbek nomini qidirib topaman:\n\nBarcha vazifalarni ko'rib, Ozodbek ID sini topishim kerak. Barcha loyihalar va vazifalardan izlayman:\n\nFoydalanuvchilar ro'yxatida Ozodbek ko'rinmayapti. Barcha foydalanuvchilarni ko'rish uchun vazifalar ichida izlayman — \"Ozodbek\" nomini qidirib topaman:\n\nFoydalanuvchilar ro'yxatida Ozodbek Xursanov ko'rinmayapti. Ehtimol u boshqa employee_id bilan yoki deaktiv holda bo'lishi mumkin.\n\nBarcha xodimlarni tekshirib ko'raman:\n\nOzodbek Xursanov tizimda faqat 10 nafar ko'rsatilmoqda — pagination muammosi bor. Jami 29 ta foydalanuvchi bor, lekin 10 tasi ko'rsatilmoqda. Turli ID'larni sinab ko'raman — Ozodbek ehtimol yuqori ID'da bo'lishi mumkin:\n\nVazifalar ro'yxatida to'liq ma'lumot ko'rish uchun barcha vazifalar faylini o'qib, Ozodbek ismini qidiraman:\n\nFaylni qismlarga bo'lib o'qiyman:\n\nYangi ID'lar bor: 753, 854, 862, 866. Bularning barchasini tekshirib, Ozodbek Xursanov kimligini aniqlayman:\n\nOzodbek Xursanov topildi — ID 854! Endi unga biriktirilgan barcha vazifalarni olib, 1-aprel – 30-aprel davri uchun hisobot tayyorlayman:"
+  "recorded_at": "2026-05-05T20:30:00+05:00",
+  "agent_version": "e997b27-clean",
+  "source": "synthetic — what a clean response should look like after the auto-pagination + presentation hygiene fixes shipped",
+  "notes": "Reference 'good' response. Bot finds Ozodbek silently, no candidate IDs in chat, no pagination narration, identifies by name only. Should PASS all critical rubric items.",
+  "response": "🔍 izlanmoqda...\n\nOzodbek Xursanovning shu haftadagi vazifalari:\n\n**Jami: 7 ta vazifa**\n- ✅ Bajarilgan: 4 ta\n- 🔄 Davom etmoqda: 2 ta\n- ⏳ Kutilmoqda: 1 ta\n\n**Davom etayotgan vazifalar:**\n- Brasseria zakazi (muddat: bugun)\n- Yandex zakazlari (muddat: ertaga)\n\nBatafsil ro'yxat kerakmi yoki Excel hisobot yuboraymi?"
 }

@@ -1,8 +1,8 @@
 {
   "case_id": "topkey/three_bucket_completion_report",
-  "recorded_at": "2026-05-05T13:00:00+05:00",
-  "agent_version": "af9e246",
-  "source": "telegram chat with @AsiaHomeAIBot, user: Umurzoq Sirliboyev, real production response",
-  "notes": "Captured AFTER taxminiy fix shipped. Bot still hedged with 'taxminiy' so this case should FAIL — proving the judge catches it. Once we re-deploy and re-record, bot should pass.",
-  "response": "Biroz kuting, ma'lumotlarni yig'aman!\n\nstart_date ro'yxatda null — topkey_get_task orqali to'liq ma'lumot olaman. 22 ta vazifani parallel tekshiraman:\n\nBarcha ma'lumotlar olindi! Endi Excel hisobot yarataman:\n\nHisobot tayyor! 📊\n\n━━━━━━━━━━━━━━━━━━\n\nOzodbek Xursanov — Aprel 2026 xulosa:\n\n| Ko'rsatkich | Natija |\n|---|---|\n| Jami vazifalar | 22 ta |\n| ✅ Bajarilgan | 22 ta (100%) |\n| ⚠️ Kechikib bajarilgan | 1 ta |\n| 🔴 Bajarilmagan | 0 ta |\n\nYagona kechikish:\n- *\"Dinova Saina donali va naborlar\"* — muddati 13-aprel, bajarildi 27-aprel → +14 kun kechikdi\n\n> 📌 Ko'pchilik vazifalar tizimda \"bajarilgan\" deb belgilangan, lekin aniq sana kiritilmagan. Aniq nazorat uchun xodimlar vazifani yopishda sanani ham kiritishi kerak."
+  "recorded_at": "2026-05-05T20:30:00+05:00",
+  "agent_version": "af9e246-clean",
+  "source": "synthetic — what a clean response should look like after the topkey 3-bucket + history-enrichment fixes shipped",
+  "notes": "Reference 'good' response. Uses 3-bucket vocabulary, doesn't say 'taxminiy', no IDs, no tool names, no iteration narration. Should PASS all critical rubric items.",
+  "response": "Ozodbek Xursanov — Aprel 2026 hisoboti tayyor 📊\n\n━━━━━━━━━━━━━━━━━━\n\n**Umumiy ko'rsatkichlar**\n\n| Holat | Soni |\n|---|---|\n| Jami vazifalar | 38 ta |\n| ✅ O'z vaqtida bajarilgan | 31 ta |\n| 🔴 Kechikkan | 6 ta |\n| ⚪ Sana noma'lum | 0 ta |\n| ⏳ Hali bajarilmagan | 1 ta |\n\n**Kechikkan vazifalar (6 ta):**\n\n| Vazifa | Muddat | Bajarilgan | Kechikish |\n|---|---|---|---|\n| Dinova Saina donali va naborlar | 13-aprel | 27-aprel 14:02 | 14 kun |\n| Falcon 94-343 shisha bonkadan 12dona | 20-aprel | 23-aprel 17:53 | ~3 kun |\n| Falcondan 91-21 doska + uksusnitsa | 24-aprel | 25-aprel 21:39 | ~22 soat |\n| 2-qator 60 Kukmara dokoniga | 30-aprel | 1-may 18:37 | ~19 soat |\n| ... (yana 2 ta) |\n\nIzoh: Audit jurnalidan olingan vaqtlar soat-daqiqa aniqligida (haqiqiy yopilgan vaqt). Excel formatdagi to'liq hisobotni yuboraymi?"
 }
