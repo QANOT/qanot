@@ -33,6 +33,32 @@ Severity = Literal["critical", "important", "nice"]
 RubricResult = Literal["pass", "fail", "n/a"]
 
 
+def _is_oauth_token(key: str) -> bool:
+    """OAuth access tokens (sk-ant-oat01-) need Claude Code identity headers
+    and a 'You are Claude Code' system prompt block to access Sonnet/Opus.
+    Regular API keys (sk-ant-api03-) use plain x-api-key auth."""
+    return key.startswith("sk-ant-oat01-")
+
+
+def _build_client(api_key: str) -> anthropic.Anthropic:
+    """Build an Anthropic client that handles both API keys and OAuth tokens."""
+    if _is_oauth_token(api_key):
+        return anthropic.Anthropic(
+            api_key=None,
+            auth_token=api_key,
+            default_headers={
+                "anthropic-dangerous-direct-browser-access": "true",
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                "user-agent": "claude-cli/1.0.0",
+                "x-app": "cli",
+            },
+        )
+    return anthropic.Anthropic(api_key=api_key)
+
+
+CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
 @dataclass
 class RubricItem:
     criterion: str
@@ -92,16 +118,28 @@ The criterion field MUST exactly match the input criterion text. Do not paraphra
 
 
 def _build_user_prompt(user_message: str, response: str, rubric: list[RubricItem], case_id: str) -> str:
-    rubric_lines = "\n".join(
-        f"  - [{item.severity}] {item.criterion}" for item in rubric
-    )
+    # Send criteria WITHOUT the severity tag so the judge echoes them back
+    # exactly (we match by string equality on return). Severity stays in our
+    # internal rubric for scoring.
+    rubric_lines = "\n".join(f"  - {item.criterion}" for item in rubric)
     return (
         f"CASE: {case_id}\n\n"
         f"USER MESSAGE:\n{user_message}\n\n"
         f"AGENT RESPONSE:\n{response}\n\n"
-        f"RUBRIC (severity in brackets):\n{rubric_lines}\n\n"
-        "Evaluate each rubric item and return the JSON verdict."
+        f"RUBRIC (criteria to evaluate):\n{rubric_lines}\n\n"
+        "Evaluate each criterion above and return the JSON verdict. The "
+        "`criterion` field in your response MUST be copied verbatim from the "
+        "rubric above — no paraphrasing, no severity tags, no truncation."
     )
+
+
+def _normalize_criterion(s: str) -> str:
+    """Strip leading severity tags like '[critical]' that judges sometimes
+    add despite the instruction. Returns the bare criterion text."""
+    s = s.strip()
+    if s.startswith("[") and "]" in s[:20]:
+        s = s.split("]", 1)[1].strip()
+    return s
 
 
 def _parse_judge_output(raw: str) -> dict[str, Any]:
@@ -144,7 +182,9 @@ def judge(
     """Score one recorded response against a rubric. Synchronous (judge calls
     are infrequent and parallelism is handled at the runner level)."""
     if client is None:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client = _build_client(os.environ["ANTHROPIC_API_KEY"])
+    is_oauth = _is_oauth_token(os.environ.get("ANTHROPIC_API_KEY", "")) or \
+               getattr(client, "auth_token", None) is not None
 
     user_prompt = _build_user_prompt(user_message, response, rubric, case_id)
     last_error = ""
@@ -156,10 +196,19 @@ def judge(
             else f"\n\nYour previous response was not valid JSON: {last_error}. "
                  "Return ONLY the JSON object, no markdown fences, no prose."
         )
+        # OAuth tokens require "You are Claude Code" as the first system block
+        # to access Sonnet/Opus. Standard API keys use plain system prompt.
+        if is_oauth:
+            system_blocks = [
+                {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+                {"type": "text", "text": JUDGE_SYSTEM_PROMPT + nudge},
+            ]
+        else:
+            system_blocks = JUDGE_SYSTEM_PROMPT + nudge
         msg = client.messages.create(
             model=JUDGE_MODEL,
             max_tokens=2048,
-            system=JUDGE_SYSTEM_PROMPT + nudge,
+            system=system_blocks,
             messages=[{"role": "user", "content": user_prompt}],
         )
         raw_output = "".join(b.text for b in msg.content if hasattr(b, "text"))
@@ -177,22 +226,33 @@ def judge(
         )
 
     rubric_by_criterion = {item.criterion: item for item in rubric}
+    rubric_by_normalized = {_normalize_criterion(item.criterion): item for item in rubric}
     results: list[RubricItemResult] = []
     for r in parsed.get("rubric_results", []):
-        crit = r.get("criterion", "")
-        item = rubric_by_criterion.get(crit)
+        raw_crit = r.get("criterion", "")
+        # Try exact match first, then normalized (strips '[critical]' prefix
+        # that judges sometimes prepend despite instructions).
+        item = rubric_by_criterion.get(raw_crit) or rubric_by_normalized.get(_normalize_criterion(raw_crit))
         if item is None:
-            # Judge invented a criterion — log and skip rather than crash;
-            # treat as a judge error since we can't score what we didn't ask.
-            logger.warning("Judge returned unknown criterion: %r", crit)
+            logger.warning("Judge returned unknown criterion: %r", raw_crit)
             continue
         result_val = r.get("result", "n/a")
         if result_val not in ("pass", "fail", "n/a"):
             result_val = "n/a"
         results.append(RubricItemResult(
-            criterion=crit, severity=item.severity,
+            criterion=item.criterion, severity=item.severity,
             result=result_val, reason=r.get("reason", ""),
         ))
+
+    # If the judge returned items but NONE matched our rubric, that's a
+    # judge_error — we can't score what we couldn't link back. Empty rubric
+    # results when rubric WAS provided also = judge_error (judge skipped all).
+    if rubric and not results:
+        return JudgeVerdict(
+            case_id=case_id, verdict="judge_error", score=0.0,
+            summary=f"Judge returned no recognizable rubric results (raw: {len(parsed.get('rubric_results', []))} items)",
+            raw_judge_output=raw_output,
+        )
 
     # Add n/a for any rubric items the judge skipped.
     seen = {r.criterion for r in results}
