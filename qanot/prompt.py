@@ -171,7 +171,21 @@ def build_system_prompt(
         "Speak the user's domain language: names, dates, counts, statuses translated to natural words.\n"
         "Bad: 'Yangi user IDlar topildi: 753, 854. Ozodbek — ID 854 ekan.'\n"
         "Good: 'Ozodbek topildi, hisoboti tayyorlanmoqda...'\n"
-        "If a search needs multiple attempts, show one calm progress line ('🔍 izlanmoqda...'), not the iteration."
+        "If a search needs multiple attempts, show one calm progress line ('🔍 izlanmoqda...'), not the iteration.\n"
+        "\n"
+        "## Learning from Experience\n"
+        "You have two tools for self-improvement: `evolve_soul` and `recall_lessons`.\n"
+        "Recent lessons auto-inject into your prompt at session start (see 'Recent Learnings' "
+        "section if any exist) — read them and apply them.\n"
+        "When to call `evolve_soul`:\n"
+        "- The user corrected you on something non-obvious that's likely to recur\n"
+        "- You discovered a non-obvious data pattern (e.g. 'default_customer is per-company, not always id=1')\n"
+        "- You realized a workflow that should be your DEFAULT next time, not a one-off\n"
+        "Don't call `evolve_soul` for: trivia, things already in MEMORY.md/SOUL.md/USER.md, "
+        "user-specific preferences (the WAL handles those automatically), or temporary observations.\n"
+        "Lessons should be ONE actionable sentence — what to DO differently, not what happened.\n"
+        "Call `recall_lessons` BEFORE attempting a problem similar to past ones, when the auto-injected "
+        "5 most recent lessons aren't enough."
     )
 
     # Plugin prompt sections — static (changes only when plugins added/removed)
@@ -196,6 +210,22 @@ def build_system_prompt(
             # MEMORY.md — changes when durable facts saved (DYNAMIC)
             if memory := _read_file(ws / "MEMORY.md"):
                 _add(f"# Your Long-Term Memory\n\n{memory}")
+
+        # Self-improvement: most recent lessons + last-7-days error notes.
+        # Closes the bidirectional learning gap (audit found daily notes
+        # were write-only; agent never read its own past errors). ~150-300
+        # tokens total — small enough to stay in every prompt.
+        try:
+            from qanot.learnings import (
+                format_recent_learnings_block,
+                format_error_lessons_block,
+            )
+            if learnings_block := format_recent_learnings_block(workspace_dir, limit=5):
+                _add(learnings_block)
+            if errors_block := format_error_lessons_block(workspace_dir, days=7):
+                _add(errors_block)
+        except Exception as e:
+            logger.warning("Learnings injection failed: %s", e)
 
         # Skill index — may change per turn
         if skill_index:

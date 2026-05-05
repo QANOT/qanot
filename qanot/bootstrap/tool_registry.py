@@ -21,6 +21,7 @@ from qanot.tools.builtin import register_builtin_tools
 from qanot.tools.cron import register_cron_tools
 from qanot.tools.doctor import register_doctor_tool
 from qanot.tools.documents import register_document_tools
+from qanot.tools.learnings import register_learning_tools
 
 if TYPE_CHECKING:
     from qanot.agent import Agent
@@ -94,6 +95,17 @@ async def register_pre_agent_tools(
 
     # Doctor diagnostics tool
     register_doctor_tool(tool_registry, config, context)
+
+    # Self-improvement: evolve_soul + recall_lessons tools.
+    # Recent learnings auto-inject into the system prompt at session start
+    # (see qanot/prompt.py); these tools let the agent write new lessons
+    # and recall older ones. Closes the bidirectional learning gap from
+    # the audit (daily notes were write-only; agent never read its own
+    # past errors).
+    register_learning_tools(
+        tool_registry, config.workspace_dir,
+        get_user_id=lambda: agent_ref[0].current_user_id if agent_ref else "",
+    )
 
     # Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
     if config.local_business_tools_enabled:
