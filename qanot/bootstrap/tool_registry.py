@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from qanot.tools.builtin import register_builtin_tools
 from qanot.tools.cron import register_cron_tools
+from qanot.tools.diagnostics import register_diagnostics_tools
 from qanot.tools.doctor import register_doctor_tool
 from qanot.tools.documents import register_document_tools
 from qanot.tools.learnings import register_learning_tools
@@ -106,6 +107,10 @@ async def register_pre_agent_tools(
         tool_registry, config.workspace_dir,
         get_user_id=lambda: agent_ref[0].current_user_id if agent_ref else "",
     )
+
+    # Diagnostic tools (compaction_stats etc.) — operator-facing
+    # introspection for the self-tuning substrate.
+    register_diagnostics_tools(tool_registry, config.workspace_dir)
 
     # Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
     if config.local_business_tools_enabled:

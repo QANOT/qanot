@@ -84,6 +84,13 @@ def append_learning(
         "observation": obs,
         "lesson": les,
         "tags": _normalize_tags(tags),
+        # Quality signals filled in later by verify_lesson:
+        #   "quality_score": 0-100 from meta-judge (None = unscored)
+        #   "revoked": {"ts": ..., "reason": ...} when an operator
+        #              marks the lesson as bad (stops injecting; stays
+        #              as audit trail rather than disappearing)
+        "quality_score": None,
+        "revoked": None,
     }
     line = json.dumps(entry, ensure_ascii=False)
     if len(line.encode("utf-8")) > MAX_BYTES_PER_ENTRY:
@@ -109,8 +116,18 @@ def _prune_if_needed(path: Path) -> None:
     path.write_text("\n".join(keep) + "\n", encoding="utf-8")
 
 
-def load_learnings(workspace_dir: str, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Load all learnings, newest first. Tolerates corrupt lines (skips them)."""
+def load_learnings(
+    workspace_dir: str,
+    *,
+    limit: int | None = None,
+    include_revoked: bool = False,
+) -> list[dict[str, Any]]:
+    """Load all learnings, newest first. Tolerates corrupt lines (skips them).
+
+    Revoked lessons are filtered out by default (they no longer inject
+    into the prompt) but kept on disk as audit trail. Pass
+    include_revoked=True to inspect the full history.
+    """
     path = Path(workspace_dir) / LEARNINGS_FILENAME
     if not path.exists():
         return []
@@ -127,12 +144,95 @@ def load_learnings(workspace_dir: str, *, limit: int | None = None) -> list[dict
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and obj.get("lesson"):
-            entries.append(obj)
+        if not (isinstance(obj, dict) and obj.get("lesson")):
+            continue
+        if not include_revoked and obj.get("revoked"):
+            continue
+        entries.append(obj)
     entries.reverse()  # newest first
     if limit is not None and limit > 0:
         entries = entries[:limit]
     return entries
+
+
+def revoke_learning(
+    workspace_dir: str,
+    ts: str,
+    reason: str,
+    *,
+    revoked_by: str = "",
+) -> dict[str, Any] | None:
+    """Mark a lesson as revoked by ts. Returns the updated entry or None if
+    not found. Revocation is durable — the entry stays in the JSONL for
+    audit, but will be filtered from prompt injection and recall by default.
+    """
+    path = Path(workspace_dir) / LEARNINGS_FILENAME
+    if not path.exists():
+        return None
+    lines: list[str] = []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    found_entry: dict[str, Any] | None = None
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            lines.append(line)
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        if isinstance(obj, dict) and obj.get("ts") == ts and not obj.get("revoked"):
+            obj["revoked"] = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "reason": (reason or "").strip()[:300] or "no reason given",
+                "by": (revoked_by or "").strip()[:64],
+            }
+            lines.append(json.dumps(obj, ensure_ascii=False))
+            found_entry = obj
+        else:
+            lines.append(line)
+    if found_entry is None:
+        return None
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return found_entry
+
+
+def set_quality_score(workspace_dir: str, ts: str, score: float, judge_summary: str = "") -> bool:
+    """Write a quality score back to a lesson entry. Returns True on hit."""
+    path = Path(workspace_dir) / LEARNINGS_FILENAME
+    if not path.exists():
+        return False
+    lines: list[str] = []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    found = False
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            lines.append(line)
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        if isinstance(obj, dict) and obj.get("ts") == ts:
+            obj["quality_score"] = round(float(score), 1)
+            if judge_summary:
+                obj["quality_summary"] = judge_summary[:300]
+            lines.append(json.dumps(obj, ensure_ascii=False))
+            found = True
+        else:
+            lines.append(line)
+    if found:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return found
 
 
 def search_learnings(

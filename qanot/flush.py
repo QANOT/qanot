@@ -206,6 +206,13 @@ async def summarize_for_compaction(
     # Determine number of parts based on size
     parts = 2 if total_tokens < 50_000 else 3
 
+    # Capture metrics for the event log. Best-effort: never crashes the
+    # main path. Foundation for self-tuning compaction (Tier 4 roadmap).
+    from qanot.compaction_metrics import log_compaction_event
+    started_at = time.monotonic()
+    summary: str | None = None
+    error_msg = ""
+
     try:
         summary = await summarize_in_stages(
             provider=provider,
@@ -215,9 +222,43 @@ async def summarize_for_compaction(
         )
         if summary and len(summary) > 20:
             logger.info("Multi-stage compaction summary: %d chars", len(summary))
-            return summary
     except Exception as e:
         logger.warning("Multi-stage compaction failed, falling back to truncation: %s", e)
+        error_msg = str(e)[:300]
+
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    if summary and len(summary) > 20:
+        # Heuristic stage detection: if the summary is much shorter than
+        # input, multi-stage merge succeeded. If it's longer relative to
+        # parts, partial summaries may have been concatenated.
+        approx_summary_tokens = max(1, len(summary) // 4)
+        log_compaction_event(
+            config.workspace_dir,
+            tokens_before=total_tokens,
+            tokens_after=approx_summary_tokens,
+            messages_before=len(middle),
+            messages_after=1,
+            stage="full",
+            parts_attempted=parts,
+            parts_succeeded=parts,
+            merge_succeeded=True,
+            duration_ms=duration_ms,
+        )
+        return summary
+    else:
+        log_compaction_event(
+            config.workspace_dir,
+            tokens_before=total_tokens,
+            tokens_after=0,
+            messages_before=len(middle),
+            messages_after=0,
+            stage="error" if error_msg else "skipped",
+            parts_attempted=parts,
+            parts_succeeded=0,
+            merge_succeeded=False,
+            duration_ms=duration_ms,
+            error=error_msg,
+        )
 
     return None
 

@@ -303,3 +303,161 @@ def test_recall_lessons_clamps_limit(tmp_path: Path):
     result = asyncio.run(handler({"limit": 999}))
     parsed = json.loads(result)
     assert parsed["count"] == 20
+
+
+# ── revoke + quality scoring ───────────────────────────────────
+
+
+def test_revoke_marks_entry_and_filters_from_load(tmp_path: Path):
+    e1 = L.append_learning(str(tmp_path), "obs1", "good lesson")
+    e2 = L.append_learning(str(tmp_path), "obs2", "bad lesson")
+
+    revoked = L.revoke_learning(str(tmp_path), e2["ts"], "duplicate")
+    assert revoked is not None
+    assert revoked["revoked"]["reason"] == "duplicate"
+
+    # Default load filters revoked
+    visible = L.load_learnings(str(tmp_path))
+    assert {e["lesson"] for e in visible} == {"good lesson"}
+
+    # include_revoked surfaces both
+    all_entries = L.load_learnings(str(tmp_path), include_revoked=True)
+    assert len(all_entries) == 2
+
+
+def test_revoke_unknown_ts_returns_none(tmp_path: Path):
+    L.append_learning(str(tmp_path), "obs", "lesson")
+    assert L.revoke_learning(str(tmp_path), "2099-01-01T00:00:00", "x") is None
+
+
+def test_revoke_idempotent(tmp_path: Path):
+    """Revoking an already-revoked lesson is a no-op (returns None)."""
+    e = L.append_learning(str(tmp_path), "obs", "lesson")
+    L.revoke_learning(str(tmp_path), e["ts"], "first")
+    second = L.revoke_learning(str(tmp_path), e["ts"], "second")
+    assert second is None
+    # The original revocation remains untouched.
+    all_entries = L.load_learnings(str(tmp_path), include_revoked=True)
+    assert all_entries[0]["revoked"]["reason"] == "first"
+
+
+def test_format_block_excludes_revoked(tmp_path: Path):
+    e1 = L.append_learning(str(tmp_path), "good obs", "good lesson")
+    e2 = L.append_learning(str(tmp_path), "bad obs", "bad lesson")
+    L.revoke_learning(str(tmp_path), e2["ts"], "wrong")
+    block = L.format_recent_learnings_block(str(tmp_path))
+    assert "good lesson" in block
+    assert "bad lesson" not in block
+
+
+def test_search_excludes_revoked(tmp_path: Path):
+    e = L.append_learning(str(tmp_path), "obs", "specific keyword here")
+    L.revoke_learning(str(tmp_path), e["ts"], "x")
+    matches = L.search_learnings(str(tmp_path), "specific keyword")
+    assert len(matches) == 0
+
+
+def test_set_quality_score_persists(tmp_path: Path):
+    e = L.append_learning(str(tmp_path), "obs", "lesson")
+    ok = L.set_quality_score(str(tmp_path), e["ts"], 87.5, "looks good")
+    assert ok is True
+    loaded = L.load_learnings(str(tmp_path))[0]
+    assert loaded["quality_score"] == 87.5
+    assert loaded["quality_summary"] == "looks good"
+
+
+def test_set_quality_score_unknown_ts_returns_false(tmp_path: Path):
+    assert L.set_quality_score(str(tmp_path), "2099-01-01T00:00:00", 50.0) is False
+
+
+def test_revoke_lesson_tool_envelope(tmp_path: Path):
+    e = L.append_learning(str(tmp_path), "obs", "lesson")
+    registry = ToolRegistry()
+    register_learning_tools(registry, str(tmp_path))
+    handler = registry.get_handler("revoke_lesson")
+    assert handler is not None
+
+    # Missing reason
+    result = asyncio.run(handler({"ts": e["ts"]}))
+    assert "error" in json.loads(result)
+
+    # Successful revoke
+    result = asyncio.run(handler({"ts": e["ts"], "reason": "made me sad"}))
+    parsed = json.loads(result)
+    assert parsed["success"] is True
+    assert parsed["reason"] == "made me sad"
+
+    # Re-revoke fails
+    result = asyncio.run(handler({"ts": e["ts"], "reason": "again"}))
+    assert "error" in json.loads(result)
+
+
+# ── compaction event metrics ───────────────────────────────────
+
+
+def test_compaction_event_logs_to_jsonl(tmp_path: Path):
+    from qanot.compaction_metrics import log_compaction_event, load_events
+    log_compaction_event(
+        str(tmp_path),
+        tokens_before=15000, tokens_after=2500,
+        messages_before=20, messages_after=1,
+        stage="full", parts_attempted=3, parts_succeeded=3,
+        merge_succeeded=True, duration_ms=4200,
+    )
+    events = load_events(str(tmp_path))
+    assert len(events) == 1
+    e = events[0]
+    assert e["stage"] == "full"
+    assert e["tokens_before"] == 15000
+    assert e["tokens_after"] == 2500
+
+
+def test_compaction_event_logger_never_raises(tmp_path: Path):
+    """Best-effort writer — must not crash the agent main path."""
+    from qanot.compaction_metrics import log_compaction_event
+    # Pass non-numeric values that would normally raise
+    log_compaction_event(
+        str(tmp_path),
+        tokens_before="not a number",  # type: ignore[arg-type]
+        stage="invalid-stage-name",
+    )
+    # No assertion on output — assertion is "doesn't raise".
+
+
+def test_summarize_events_aggregates(tmp_path: Path):
+    from qanot.compaction_metrics import log_compaction_event, load_events, summarize_events
+    for i in range(5):
+        log_compaction_event(
+            str(tmp_path),
+            tokens_before=10000, tokens_after=2000,
+            stage="full", duration_ms=3000,
+        )
+    log_compaction_event(
+        str(tmp_path),
+        tokens_before=10000, tokens_after=0,
+        stage="error", duration_ms=1500, error="provider timeout",
+    )
+    events = load_events(str(tmp_path))
+    s = summarize_events(events)
+    assert s["count"] == 6
+    assert s["by_stage"]["full"] == 5
+    assert s["by_stage"]["error"] == 1
+    assert s["errors"] == 1
+    assert s["error_rate"] > 0.16 and s["error_rate"] < 0.17
+    # 5 successful = 80% compression each. Errored has 0/10000 = 100% reduction.
+    # Aggregate avg compression isn't 0.8 because of the error row.
+    assert s["avg_compression_ratio"] > 0.8
+
+
+def test_compaction_stats_tool(tmp_path: Path):
+    from qanot.compaction_metrics import log_compaction_event
+    from qanot.tools.diagnostics import register_diagnostics_tools
+    log_compaction_event(str(tmp_path), tokens_before=5000, tokens_after=1000, stage="full")
+    registry = ToolRegistry()
+    register_diagnostics_tools(registry, str(tmp_path))
+    handler = registry.get_handler("compaction_stats")
+    assert handler is not None
+    result = asyncio.run(handler({"days": 7}))
+    parsed = json.loads(result)
+    assert parsed["summary"]["count"] == 1
+    assert parsed["summary"]["by_stage"]["full"] == 1
