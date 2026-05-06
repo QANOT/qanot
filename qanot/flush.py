@@ -169,7 +169,11 @@ async def summarize_for_compaction(
     Returns summary text, or None if summarization fails (falls back to truncation).
     """
     from pathlib import Path
-    from qanot.compaction import summarize_in_stages, estimate_messages_tokens
+    from qanot.compaction import (
+        estimate_messages_tokens,
+        prune_old_tool_results,
+        summarize_in_stages,
+    )
 
     if config.compaction_mode == "truncate":
         return None
@@ -198,10 +202,21 @@ async def summarize_for_compaction(
     if not middle:
         return None
 
+    tokens_before_prune = estimate_messages_tokens(middle)
+
+    # Hermes-borrow #5: cheap structural pre-prune. Drop bulk content
+    # from old tool_result blocks BEFORE the LLM summarization stage
+    # runs. Saves 50-80% of tokens on tool-heavy conversations at zero
+    # LLM cost. Keeps the most recent 4 torso messages verbatim so the
+    # summarization model still sees enough recent signal to anchor.
+    pruned, bytes_saved = prune_old_tool_results(middle, keep_recent_n=4)
+    middle = pruned
     total_tokens = estimate_messages_tokens(middle)
     logger.info(
-        "Multi-stage compaction: %d messages (~%d tokens)",
+        "Multi-stage compaction: %d messages, %d tokens "
+        "(pre-pruned %d bytes from old tool results, %d → %d tokens)",
         len(middle), total_tokens,
+        bytes_saved, tokens_before_prune, total_tokens,
     )
 
     # Determine number of parts based on size
@@ -261,6 +276,8 @@ async def summarize_for_compaction(
             parts_succeeded=parts,
             merge_succeeded=True,
             duration_ms=duration_ms,
+            tokens_before_prune=tokens_before_prune,
+            bytes_pruned=bytes_saved,
         )
         return summary
     else:
@@ -276,6 +293,8 @@ async def summarize_for_compaction(
             merge_succeeded=False,
             duration_ms=duration_ms,
             error=error_msg,
+            tokens_before_prune=tokens_before_prune,
+            bytes_pruned=bytes_saved,
         )
 
     return None

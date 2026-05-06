@@ -57,6 +57,8 @@ def log_compaction_event(
     duration_ms: int = 0,
     user_id: str = "",
     error: str = "",
+    tokens_before_prune: int = 0,
+    bytes_pruned: int = 0,
 ) -> None:
     """Append one compaction event. Best-effort — never raises.
 
@@ -82,6 +84,10 @@ def log_compaction_event(
         }
         if error:
             record["error"] = str(error)[:300]
+        if tokens_before_prune:
+            record["tokens_before_prune"] = int(tokens_before_prune)
+        if bytes_pruned:
+            record["bytes_pruned"] = int(bytes_pruned)
 
         path = Path(workspace_dir) / EVENTS_FILENAME
         path.parent.mkdir(parents=True, exist_ok=True)
