@@ -162,6 +162,7 @@ async def summarize_for_compaction(
     provider: LLMProvider,
     config: Config,
     context: ContextTracker,
+    hooks=None,
 ) -> str | None:
     """Use multi-stage LLM summarization for compaction (OpenClaw-style).
 
@@ -227,6 +228,23 @@ async def summarize_for_compaction(
         error_msg = str(e)[:300]
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
+
+    # on_compaction hook fires regardless of success/failure so plugins
+    # observing compaction health (cost tracking, alerting, telemetry)
+    # see every event. Best-effort — never blocks the main path.
+    if hooks is not None:
+        try:
+            await hooks.fire(
+                "on_compaction",
+                tokens_before=total_tokens,
+                summary_chars=len(summary) if summary else 0,
+                duration_ms=duration_ms,
+                stage="full" if (summary and len(summary) > 20) else ("error" if error_msg else "skipped"),
+                error=error_msg,
+            )
+        except Exception as e:
+            logger.warning("on_compaction hook fire failed: %s", e)
+
     if summary and len(summary) > 20:
         # Heuristic stage detection: if the summary is much shorter than
         # input, multi-stage merge succeeded. If it's longer relative to

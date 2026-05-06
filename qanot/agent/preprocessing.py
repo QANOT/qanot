@@ -256,6 +256,7 @@ class _PreprocessingMixin:
             )
             summary = await summarize_for_compaction(
                 messages, self.provider, self.config, self.context,
+                hooks=self.hooks,
             )
             compacted = self.context.compact_messages(messages, summary_text=summary)
             self._conv_manager.set_messages(user_id, compacted)

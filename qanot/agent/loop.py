@@ -183,11 +183,14 @@ class _LoopMixin:
 
     async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
         """Execute tool calls and return (tool_result blocks, combined result hash)."""
+        import time as _time
         tool_results: list[dict] = []
         result_parts: list[str] = []
         for tc in tool_calls:
             logger.info("Executing tool: %s", tc.name)
             timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
+            tool_started = _time.monotonic()
+            tool_error: str | None = None
             try:
                 result = await self.tools.execute(
                     tc.name, tc.input, timeout=timeout,
@@ -195,6 +198,7 @@ class _LoopMixin:
                 )
             except Exception as e:
                 logger.error("Tool %s raised unexpected exception: %s", tc.name, e)
+                tool_error = f"{type(e).__name__}: {e}"
                 result = json.dumps({"error": f"Tool execution failed: {type(e).__name__}"})
 
             # Strip verbose detail fields from JSON results to save context
@@ -207,6 +211,25 @@ class _LoopMixin:
                     result = json.dumps(result_data)
                 except (json.JSONDecodeError, TypeError):
                     pass
+
+            duration_ms = int((_time.monotonic() - tool_started) * 1000)
+
+            # on_tool_use hook fires after every tool execution. Plugins
+            # can subscribe for audit logging, cost tracking, redaction
+            # of secrets in results, or anomaly detection. Best-effort —
+            # exceptions in handlers are swallowed by the registry.
+            try:
+                await self.hooks.fire(
+                    "on_tool_use",
+                    tool_name=tc.name,
+                    tool_input=tc.input,
+                    result=result,
+                    duration_ms=duration_ms,
+                    error=tool_error,
+                    user_id=getattr(self, "current_user_id", "") or "",
+                )
+            except Exception as e:
+                logger.warning("on_tool_use hook fire failed: %s", e)
 
             tool_results.append({
                 "type": "tool_result",
@@ -344,6 +367,21 @@ class _LoopMixin:
                 except Exception as e:
                     error_type = classify_error(e)
                     logger.error("Provider failed after retries: %s [%s]", e, error_type)
+
+                    # on_error hook fires on provider failures so plugins
+                    # can alert / page / log to external systems. Best-
+                    # effort. Fires BEFORE recovery attempt so handlers
+                    # see the failure even when we recover gracefully.
+                    try:
+                        await self.hooks.fire(
+                            "on_error",
+                            error_type=error_type,
+                            error=str(e),
+                            user_id=user_id or "",
+                            recoverable=(error_type == ERROR_CONTEXT_OVERFLOW),
+                        )
+                    except Exception as hook_e:
+                        logger.warning("on_error hook fire failed: %s", hook_e)
 
                     if error_type == ERROR_CONTEXT_OVERFLOW and overflow_retries < MAX_COMPACTION_RETRIES:
                         overflow_retries += 1

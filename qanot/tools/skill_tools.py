@@ -15,6 +15,107 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+_HEADING_RE = None  # lazy compile
+
+
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    """Return (frontmatter_with_delimiters, body). Empty frontmatter on miss."""
+    if not text.startswith("---"):
+        return "", text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return "", text
+    boundary = end + 4  # past the closing '\n---'
+    if boundary < len(text) and text[boundary] == "\n":
+        boundary += 1
+    return text[:boundary], text[boundary:]
+
+
+def _find_section(body: str, heading: str) -> tuple[int, int] | None:
+    """Locate a markdown section by exact heading match.
+
+    Returns (start_of_heading_line, end_of_section_exclusive) or None.
+    The section ends at the start of the next heading at the same OR
+    higher level (fewer #), or end of file.
+    """
+    import re
+    target_level = len(heading) - len(heading.lstrip("#"))
+    if target_level == 0:
+        return None
+    target_text = heading.strip()
+
+    lines = body.splitlines(keepends=True)
+    start_line = None
+    for i, line in enumerate(lines):
+        if line.rstrip("\n") == target_text:
+            start_line = i
+            break
+    if start_line is None:
+        return None
+
+    end_line = len(lines)
+    same_or_higher = re.compile(r"^#{1," + str(target_level) + r"}\s+\S")
+    for j in range(start_line + 1, len(lines)):
+        if same_or_higher.match(lines[j]):
+            end_line = j
+            break
+
+    start_offset = sum(len(lines[k]) for k in range(start_line))
+    end_offset = sum(len(lines[k]) for k in range(end_line))
+    return start_offset, end_offset
+
+
+def _apply_patch(
+    *,
+    original: str,
+    mode: str,
+    content: str,
+    section: str,
+) -> tuple[str | None, str]:
+    """Apply a patch to a SKILL.md body. Returns (new_text_or_None, description).
+
+    Returns (None, ...) when the requested section can't be found
+    (replace_section / append_to_section modes).
+    """
+    fm, body = _split_frontmatter(original)
+
+    if mode == "append":
+        sep = "\n" if body and not body.endswith("\n") else ""
+        new_body = body + sep + content
+        return fm + new_body, f"appended {len(content)} bytes"
+
+    if mode == "prepend":
+        new_body = content + ("\n" if not content.endswith("\n") else "") + body
+        return fm + new_body, f"prepended {len(content)} bytes"
+
+    span = _find_section(body, section)
+    if span is None:
+        return None, f"section {section!r} not found"
+
+    start, end = span
+    section_block = body[start:end]
+    # Capture the heading line so we can preserve it across replace.
+    heading_end = section_block.find("\n")
+    if heading_end < 0:
+        heading_end = len(section_block)
+    heading_line = section_block[: heading_end + 1]
+
+    if mode == "replace_section":
+        new_block = heading_line + (content if content.endswith("\n") else content + "\n")
+        new_body = body[:start] + new_block + body[end:]
+        return fm + new_body, f"replaced body of {section!r}"
+
+    if mode == "append_to_section":
+        # Strip trailing whitespace from existing block, append, restore newline.
+        existing = section_block.rstrip("\n")
+        addition = content if content.endswith("\n") else content + "\n"
+        new_block = existing + "\n" + addition
+        new_body = body[:start] + new_block + body[end:]
+        return fm + new_body, f"appended to {section!r}"
+
+    return None, f"unknown mode {mode!r}"
+
+
 def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> None:
     """Register skill management tools.
 
@@ -476,4 +577,132 @@ def register_skill_tools(registry, workspace_dir: str, reload_callback=None) -> 
         category="core",
     )
 
-    logger.info("Skill tools registered: create_skill, list_skills, run_skill_script, delete_skill")
+    # ── update_skill ────────────────────────────────────────────
+    async def update_skill(params: dict) -> str:
+        """Patch an existing SKILL.md without rewriting the whole file.
+
+        The Hermes-borrow item #2 from the 2026 roadmap: cheap
+        incremental edits via `patch` mode. Encourages iterative skill
+        evolution instead of throwing away and recreating, which
+        preserves edit history (via git) and minimizes surface area
+        for accidental regression.
+        """
+        name = (params.get("name") or "").strip()
+        mode = (params.get("mode") or "").strip()
+        content = params.get("content") or ""
+        section = (params.get("section") or "").strip()
+
+        if not name:
+            return json.dumps({"error": "name is required"})
+        if mode not in ("replace_section", "append_to_section", "append", "prepend"):
+            return json.dumps({
+                "error": (
+                    "mode must be one of: replace_section, append_to_section, "
+                    "append, prepend"
+                ),
+            })
+        if not isinstance(content, str) or not content.strip():
+            return json.dumps({"error": "content (string) is required"})
+        if mode in ("replace_section", "append_to_section") and not section:
+            return json.dumps({
+                "error": f"section header is required for mode={mode!r} (e.g. '## Examples')",
+            })
+
+        skill_md = skills_dir / name / "SKILL.md"
+        if not skill_md.exists():
+            return json.dumps({
+                "error": f"skill '{name}' has no SKILL.md (use create_skill first)",
+            })
+
+        # Path-traversal defence (skill name validated up to here).
+        from qanot.fs_safe import resolve_workspace_path
+        _, err = resolve_workspace_path(str(skill_md), str(skills_dir))
+        if err:
+            return json.dumps({"error": "path traversal blocked"})
+
+        try:
+            original = skill_md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            return json.dumps({"error": f"could not read SKILL.md: {e}"})
+
+        new_text, change_description = _apply_patch(
+            original=original,
+            mode=mode,
+            content=content.strip("\n") + "\n",
+            section=section,
+        )
+        if new_text is None:
+            return json.dumps({
+                "error": (
+                    f"section {section!r} not found in SKILL.md — "
+                    "use append mode to add a new section, or list_skills to inspect"
+                ),
+            })
+
+        # Cap total file size (skills should stay tight — large means
+        # this should probably be split into multiple skills).
+        if len(new_text.encode("utf-8")) > 64_000:
+            return json.dumps({
+                "error": (
+                    "SKILL.md would exceed 64KB after patch — split into "
+                    "multiple skills or trim before patching"
+                ),
+            })
+
+        skill_md.write_text(new_text, encoding="utf-8")
+        if reload_callback:
+            try:
+                reload_callback()
+            except Exception as e:
+                logger.warning("Skill reload after patch failed: %s", e)
+
+        logger.info("Skill patched: %s (%s)", name, change_description)
+        return json.dumps({
+            "success": True,
+            "skill": name,
+            "mode": mode,
+            "section": section or None,
+            "bytes_added": len(new_text.encode("utf-8")) - len(original.encode("utf-8")),
+            "change": change_description,
+        }, ensure_ascii=False)
+
+    registry.register(
+        name="update_skill",
+        description=(
+            "Incrementally patch an existing skill's SKILL.md without rewriting it. "
+            "Prefer this over delete + create_skill — it preserves edit history "
+            "and minimizes surface area for regression. Modes:\n"
+            "  - replace_section: overwrite the body of a markdown section "
+            "(keeps the heading, replaces lines until the next heading)\n"
+            "  - append_to_section: add lines at the end of an existing section\n"
+            "  - append: add a new section/lines at the end of the file\n"
+            "  - prepend: add lines after the YAML frontmatter (top of body)\n"
+            "Section headers must include the leading hashes (e.g. '## Examples')."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["name", "mode", "content"],
+            "properties": {
+                "name": {"type": "string", "description": "Skill name (matches the directory)"},
+                "mode": {
+                    "type": "string",
+                    "description": "replace_section | append_to_section | append | prepend",
+                },
+                "content": {"type": "string", "description": "Markdown content to insert"},
+                "section": {
+                    "type": "string",
+                    "description": (
+                        "Required for replace_section / append_to_section. "
+                        "The heading line including hashes, e.g. '## Examples' or '### Edge cases'."
+                    ),
+                },
+            },
+        },
+        handler=update_skill,
+        category="core",
+    )
+
+    logger.info(
+        "Skill tools registered: create_skill, list_skills, run_skill_script, "
+        "delete_skill, install_skill_from_github, update_skill"
+    )
