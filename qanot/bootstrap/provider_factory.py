@@ -34,6 +34,8 @@ def _anthropic_thinking_kwargs(provider_type: str, config: Config) -> dict:
             "context_editing_trigger_tokens": config.context_editing_trigger_tokens,
             "context_editing_keep_tool_uses": config.context_editing_keep_tool_uses,
             "context_editing_clear_at_least_tokens": config.context_editing_clear_at_least_tokens,
+            "tool_search_enabled": getattr(config, "tool_search_enabled", False),
+            "eager_tool_prefixes": getattr(config, "eager_tool_prefixes", None),
         }
     return {}
 

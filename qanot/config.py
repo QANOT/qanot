@@ -166,6 +166,31 @@ class Config:
     # Memory consolidation (Auto Dream-style weekly pass)
     consolidation_enabled: bool = True
     consolidation_schedule: str = "0 4 * * 0"  # Default: Sunday 04:00 local
+    # Tool Search Tool (Anthropic Jan 2026 — server-side tool retrieval).
+    # When enabled, tools NOT matching any eager_tool_prefixes get
+    # defer_loading=True. Anthropic injects them as tool_reference blocks
+    # only when needed, keeping the cached tools-prefix byte-identical.
+    # Trade-off: ~+200ms per discovery turn vs ~40% tool-token cost
+    # reduction + ~+8pp accuracy gain at 50+ tool counts.
+    # Off by default — opt in per-bot after canary measurement.
+    tool_search_enabled: bool = False
+    # Tools whose names start with any of these prefixes stay eager
+    # (always loaded). Everything else gets defer_loading=True.
+    # Default keeps the core/filesystem/web/memory/orchestration set
+    # always available; defers all domain plugins (topkey_*, absmarket_*,
+    # documents_*, etc).
+    eager_tool_prefixes: list[str] = field(default_factory=lambda: [
+        "read_", "write_", "list_", "run_",       # filesystem + shell
+        "web_search", "web_fetch",                # web
+        "memory_", "recall_lessons",              # memory + lessons
+        "evolve_soul", "verify_lesson", "revoke_lesson",  # learning
+        "execute_code",                           # multi-step orchestration
+        "send_file", "send_message",              # telegram interaction
+        "session_status", "cost_status",          # introspection
+        "compaction_stats", "cache_stats",        # diagnostics
+        "spawn_agent", "list_agents",             # orchestrator
+    ])
+
     # Memory injection budget
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
     # Session history replay

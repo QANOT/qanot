@@ -57,6 +57,9 @@ class ProviderProfile:
     context_editing_trigger_tokens: int = 30000
     context_editing_keep_tool_uses: int = 3
     context_editing_clear_at_least_tokens: int = 5000
+    # Tool Search Tool (defer_loading + server-side BM25 retrieval)
+    tool_search_enabled: bool = False
+    eager_tool_prefixes: list[str] | None = None
     # Runtime state
     _cooldown_until: float = field(default=0.0, repr=False)
     _failure_count: int = field(default=0, repr=False)
@@ -150,6 +153,8 @@ def _create_single_provider(profile: ProviderProfile) -> LLMProvider:
             context_editing_trigger_tokens=profile.context_editing_trigger_tokens,
             context_editing_keep_tool_uses=profile.context_editing_keep_tool_uses,
             context_editing_clear_at_least_tokens=profile.context_editing_clear_at_least_tokens,
+            tool_search_enabled=getattr(profile, "tool_search_enabled", False),
+            eager_tool_prefixes=getattr(profile, "eager_tool_prefixes", None),
         )
     elif profile.provider_type == "openai":
         from qanot.providers.openai import OpenAIProvider

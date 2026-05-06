@@ -142,7 +142,11 @@ class AnthropicProvider(LLMProvider):
         context_editing_trigger_tokens: int = 30000,
         context_editing_keep_tool_uses: int = 3,
         context_editing_clear_at_least_tokens: int = 5000,
+        tool_search_enabled: bool = False,
+        eager_tool_prefixes: list[str] | None = None,
     ):
+        self._tool_search_enabled = tool_search_enabled
+        self._eager_tool_prefixes = tuple(eager_tool_prefixes or ())
         self._is_oauth = _is_oauth_token(api_key)
         # Base beta headers — context editing is opt-in because the beta
         # header appearing in EVERY request invalidates Anthropic's prefix
@@ -296,6 +300,59 @@ class AnthropicProvider(LLMProvider):
         if changed:
             kwargs["tools"] = tools
 
+    def _is_eager_tool(self, tool_name: str) -> bool:
+        """Match a tool name against eager_tool_prefixes; True = stay loaded."""
+        if not self._eager_tool_prefixes:
+            return True  # If no prefixes configured, treat all as eager (no defer).
+        for prefix in self._eager_tool_prefixes:
+            if tool_name == prefix or tool_name.startswith(prefix):
+                return True
+        return False
+
+    def _apply_tool_search(self, tools: list[dict] | None) -> list[dict] | None:
+        """Mark non-eager tools with defer_loading + add Tool Search Tool.
+
+        Anthropic's deferred-loading pattern (Jan 2026) keeps the cached
+        tools-prefix byte-identical: deferred tools are NOT in the
+        prefix at all. The model fires tool_search_tool_bm25 server-side
+        when it needs them; Anthropic injects the matched tool's
+        definition as a tool_reference block AFTER the cached prefix.
+
+        Result: cache stays warm + ~+8pp tool selection accuracy + ~40%
+        tool-token cost reduction at 50+ tool counts.
+        """
+        if not self._tool_search_enabled or not tools:
+            return tools
+
+        new_tools: list[dict] = []
+        for t in tools:
+            name = t.get("name", "")
+            # Skip server tools (memory_20250818, code_execution_*, etc.) —
+            # they don't have user-facing names matching our prefix list
+            # but should always stay eager.
+            t_type = t.get("type", "")
+            if t_type and not name:
+                new_tools.append(t)
+                continue
+            if self._is_eager_tool(name):
+                new_tools.append(t)
+            else:
+                # Deferred — mark and keep. Anthropic's API moves it out
+                # of the cached prefix server-side.
+                deferred = dict(t)
+                deferred["defer_loading"] = True
+                new_tools.append(deferred)
+
+        # Add the BM25 Tool Search Tool. Server-side; the agent calls it
+        # when it needs a deferred tool. Returns matched tool_reference
+        # blocks the model can then invoke.
+        new_tools.append({
+            "type": "tool_search_tool_bm25_20251119",
+            "name": "tool_search",
+        })
+
+        return new_tools
+
     def _capture_container(self, response) -> None:
         """Capture container ID from response for cross-turn reuse."""
         container = getattr(response, "container", None)
@@ -395,7 +452,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = self._build_system_blocks(system)
 
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._apply_tool_search(tools)
 
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
@@ -520,7 +577,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = self._build_system_blocks(system)
 
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._apply_tool_search(tools)
 
         self._apply_thinking_kwargs(kwargs)
         self._inject_server_tools(kwargs)
