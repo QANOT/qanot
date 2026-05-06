@@ -198,6 +198,14 @@ async def main() -> None:
     # Plugins: discover, register tools, wire lifecycle hooks, freeze registry.
     await setup_plugins(config, tool_registry, agent_hooks, logger)
 
+    # Programmatic tool calling — must register AFTER plugins so its
+    # whitelist filter sees plugin tools (topkey_*, absmarket_*, etc).
+    # Lets the agent compose multi-step workflows in Python without
+    # each intermediate result entering the LLM's context. ~50-90%
+    # token reduction on tool-heavy turns. See qanot/code_exec.py.
+    from qanot.tools.code_exec import register_code_exec_tool
+    register_code_exec_tool(tool_registry, config.workspace_dir)
+
     # Log registered tools
     logger.info("Tools registered: %s", ", ".join(tool_registry.tool_names))
 

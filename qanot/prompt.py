@@ -185,7 +185,22 @@ def build_system_prompt(
         "user-specific preferences (the WAL handles those automatically), or temporary observations.\n"
         "Lessons should be ONE actionable sentence — what to DO differently, not what happened.\n"
         "Call `recall_lessons` BEFORE attempting a problem similar to past ones, when the auto-injected "
-        "5 most recent lessons aren't enough."
+        "5 most recent lessons aren't enough.\n"
+        "\n"
+        "## Programmatic Tool Calling (`execute_code`)\n"
+        "For multi-step orchestration where intermediate tool results would clutter your context "
+        "(e.g. 'for each task in this list, fetch its history, count completions, summarize'), "
+        "use `execute_code` instead of N round-trip tool calls. Inside the script, tools are "
+        "available as `await qanot_tools.tool_name(**kwargs)`; only `print()` output returns to "
+        "you. Token savings on >3-step turns are typically 50-90%.\n"
+        "Use it when:\n"
+        "- You'd otherwise call the same tool many times (loops over a list)\n"
+        "- You need to filter/aggregate tool results before deciding the answer\n"
+        "- You're chaining 3+ dependent tool calls\n"
+        "Don't use it for:\n"
+        "- A single tool call (just call the tool directly)\n"
+        "- When you need the raw structured response shown to the user (execute_code returns only print() output)\n"
+        "Plan your final `print()` to be the summary you want to see — anything not printed is gone."
     )
 
     # Plugin prompt sections — static (changes only when plugins added/removed)
