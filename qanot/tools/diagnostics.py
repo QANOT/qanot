@@ -1,12 +1,17 @@
 """Diagnostic tools — operator-facing introspection.
 
-For now: compaction_stats. Future: memory_stats, eval_history, etc.
+Tools: compaction_stats, cache_stats. Future: memory_stats, eval_history.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+from qanot.cache_stats import (
+    aggregate_session_files,
+    format_health_assessment,
+)
 from qanot.compaction_metrics import load_events, summarize_events
 from qanot.registry import ToolRegistry
 
@@ -63,4 +68,58 @@ def register_diagnostics_tools(registry: ToolRegistry, workspace_dir: str) -> No
             },
         },
         handler=compaction_stats,
+    )
+
+    async def cache_stats(params: dict) -> str:
+        try:
+            days = int(params.get("days") or 7)
+        except (TypeError, ValueError):
+            days = 7
+        days = max(1, min(days, 90))
+
+        # Sessions live at <workspace>/sessions/. Standard layout per
+        # qanot/session.py.
+        sessions_dir = Path(workspace_dir) / "sessions"
+        summary = aggregate_session_files(sessions_dir, days=days)
+        return json.dumps({
+            "window_days": days,
+            "summary": summary.to_dict(),
+            "health": format_health_assessment(summary),
+            "interpretation": {
+                "cache_read_ratio": (
+                    "cache_read_tokens / (cache_read + input + cache_write). "
+                    "≥0.85 = excellent, ≥0.70 = healthy, <0.50 = cache thrash."
+                ),
+                "avg_input_per_turn": (
+                    "Uncached prefix tokens billed per turn. Should be small "
+                    "(only the dynamic suffix). Climbing = stable prefix is "
+                    "mutating mid-conversation."
+                ),
+            },
+            "note": (
+                "Aggregated from session JSONL files. Lower cache_read_ratio "
+                "suggests the stable prefix is changing more than expected — "
+                "audit recent SOUL.md/USER.md/TOOLS.md edits or plugin reloads."
+            ),
+        }, ensure_ascii=False)
+
+    registry.register(
+        name="cache_stats",
+        description=(
+            "Aggregate Anthropic prompt-cache hit rate across recent sessions. "
+            "Reports cache_read_ratio (1.0 = perfect, ~0.85+ = healthy), avg "
+            "tokens per turn, and total cost. `days` (1-90, default 7) is the "
+            "lookback window. Operator-facing diagnostic — use to spot prefix "
+            "mutations that are tanking the cache."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "number",
+                    "description": "Lookback window in days (default 7, max 90).",
+                },
+            },
+        },
+        handler=cache_stats,
     )

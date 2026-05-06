@@ -59,6 +59,14 @@ _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
 # Anthropic provider uses this to set cache_control on the stable prefix.
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 
+# Cap on the dynamic (post-boundary) suffix. Hermes-borrow #4: keep the
+# uncached portion small so we pay the full input price for as few tokens
+# as possible per turn. SESSION-STATE.md / MEMORY.md / learnings / error
+# notes / skill_index / active_skills / session info all share this budget.
+# Sized for ~5 lessons + ~5 error notes + ~2KB MEMORY + ~1KB SESSION-STATE
+# + skill content + 200 chars session info. Comfortable headroom.
+MAX_DYNAMIC_SUFFIX_CHARS = 12_000
+
 
 def build_system_prompt(
     workspace_dir: str = "/data/workspace",
@@ -200,7 +208,16 @@ def build_system_prompt(
         "Don't use it for:\n"
         "- A single tool call (just call the tool directly)\n"
         "- When you need the raw structured response shown to the user (execute_code returns only print() output)\n"
-        "Plan your final `print()` to be the summary you want to see — anything not printed is gone."
+        "Plan your final `print()` to be the summary you want to see — anything not printed is gone.\n"
+        "\n"
+        "## Cache-Stable Prefix\n"
+        "Your system prompt has a stable prefix (this section, plus SOUL/IDENTITY/TOOLS/AGENTS/USER/plugins) "
+        "and a dynamic suffix (MEMORY/SESSION-STATE/lessons/skills/session-info). The stable prefix is cached "
+        "by Anthropic — keeping it identical across turns is ~10× cheaper than re-billing it every request.\n"
+        "Don't mutate stable-prefix files DURING a conversation: SOUL.md, IDENTITY.md, TOOLS.md, AGENTS.md, "
+        "USER.md, BOOTSTRAP.md. If you must edit them (rare — at user request only), expect cache invalidation "
+        "for the rest of that user's session. The dynamic-suffix files (MEMORY.md, SESSION-STATE.md, lessons "
+        "ledger, daily notes) ARE safe to update mid-conversation — they live below the cache boundary."
     )
 
     # Plugin prompt sections — static (changes only when plugins added/removed)
@@ -212,6 +229,32 @@ def build_system_prompt(
     # Everything BELOW = changes frequently (memory, session state, skills, session info)
     parts.append(_CACHE_BOUNDARY)
 
+    # Hermes-borrow #4: track post-boundary char usage separately and
+    # enforce MAX_DYNAMIC_SUFFIX_CHARS. Anthropic prompt cache reads are
+    # ~10× cheaper than uncached input; the post-boundary content is the
+    # ONLY part billed at full input price every turn. Keeping it small
+    # is the highest-leverage cost lever after caching itself.
+    dynamic_chars = 0
+
+    def _add_dynamic(content: str, label: str = "") -> None:
+        """Append to post-boundary section, respecting dynamic budget."""
+        nonlocal dynamic_chars, total_chars
+        if not content:
+            return
+        remaining_dynamic = MAX_DYNAMIC_SUFFIX_CHARS - dynamic_chars
+        remaining_total = MAX_TOTAL_CHARS - total_chars
+        budget = min(remaining_dynamic, remaining_total, MAX_FILE_CHARS)
+        if budget <= 0:
+            logger.debug(
+                "Dynamic suffix budget exhausted before %s (used %d/%d)",
+                label or "section", dynamic_chars, MAX_DYNAMIC_SUFFIX_CHARS,
+            )
+            return
+        content = _truncate_content(content, budget)
+        parts.append(content)
+        dynamic_chars += len(content)
+        total_chars += len(content)
+
     if mode == "full":
         # Legacy memory injection: SESSION-STATE.md + MEMORY.md in the prompt.
         # When disabled (the production setting once the memory tool is
@@ -220,11 +263,11 @@ def build_system_prompt(
         if inject_legacy_memory:
             # SESSION-STATE.md — changes on every WAL write (DYNAMIC)
             if state := _read_file(ws / "SESSION-STATE.md"):
-                _add(f"# Current Session State\n\n{state}")
+                _add_dynamic(f"# Current Session State\n\n{state}", "SESSION-STATE")
 
             # MEMORY.md — changes when durable facts saved (DYNAMIC)
             if memory := _read_file(ws / "MEMORY.md"):
-                _add(f"# Your Long-Term Memory\n\n{memory}")
+                _add_dynamic(f"# Your Long-Term Memory\n\n{memory}", "MEMORY")
 
         # Self-improvement: most recent lessons + last-7-days error notes.
         # Closes the bidirectional learning gap (audit found daily notes
@@ -236,19 +279,19 @@ def build_system_prompt(
                 format_error_lessons_block,
             )
             if learnings_block := format_recent_learnings_block(workspace_dir, limit=5):
-                _add(learnings_block)
+                _add_dynamic(learnings_block, "learnings")
             if errors_block := format_error_lessons_block(workspace_dir, days=7):
-                _add(errors_block)
+                _add_dynamic(errors_block, "error-notes")
         except Exception as e:
             logger.warning("Learnings injection failed: %s", e)
 
         # Skill index — may change per turn
         if skill_index:
-            _add(skill_index)
+            _add_dynamic(skill_index, "skill_index")
 
         # Active skill content — changes per turn
         if active_skills_content:
-            _add(active_skills_content)
+            _add_dynamic(active_skills_content, "active_skills")
 
     # Session info — changes every request.
     # IMPORTANT: agent has repeatedly miscomputed dates when only given UTC,
