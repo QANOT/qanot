@@ -45,7 +45,7 @@ local = ["fastembed>=0.4"]
 mysql = ["aiomysql>=0.2"]
 mcp = ["mcp>=1.0"]
 browser = ["playwright>=1.40"]
-dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=1.0", "pyyaml>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/QANOT/qanot"
