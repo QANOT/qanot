@@ -157,7 +157,7 @@ def test_cache_stats_tool_envelope(tmp_path: Path):
                    "cost": {"total": 0.001}}},
     ])
     registry = ToolRegistry()
-    register_diagnostics_tools(registry, str(tmp_path))
+    register_diagnostics_tools(registry, str(tmp_path), sessions_dir=str(sessions))
     handler = registry.get_handler("cache_stats")
     assert handler is not None
     result = asyncio.run(handler({"days": 7}))
@@ -170,9 +170,10 @@ def test_cache_stats_tool_envelope(tmp_path: Path):
 
 def test_cache_stats_tool_clamps_days(tmp_path: Path):
     from qanot.tools.diagnostics import register_diagnostics_tools
-    (tmp_path / "sessions").mkdir()
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
     registry = ToolRegistry()
-    register_diagnostics_tools(registry, str(tmp_path))
+    register_diagnostics_tools(registry, str(tmp_path), sessions_dir=str(sessions))
     handler = registry.get_handler("cache_stats")
     result = asyncio.run(handler({"days": 999}))
     parsed = json.loads(result)

@@ -108,9 +108,13 @@ async def register_pre_agent_tools(
         get_user_id=lambda: agent_ref[0].current_user_id if agent_ref else "",
     )
 
-    # Diagnostic tools (compaction_stats etc.) — operator-facing
+    # Diagnostic tools (compaction_stats, cache_stats) — operator-facing
     # introspection for the self-tuning substrate.
-    register_diagnostics_tools(tool_registry, config.workspace_dir)
+    register_diagnostics_tools(
+        tool_registry,
+        config.workspace_dir,
+        sessions_dir=config.sessions_dir,
+    )
 
     # Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
     if config.local_business_tools_enabled:

@@ -16,7 +16,16 @@ from qanot.compaction_metrics import load_events, summarize_events
 from qanot.registry import ToolRegistry
 
 
-def register_diagnostics_tools(registry: ToolRegistry, workspace_dir: str) -> None:
+def register_diagnostics_tools(
+    registry: ToolRegistry,
+    workspace_dir: str,
+    sessions_dir: str = "",
+) -> None:
+    # Sessions live OUTSIDE the workspace by default (Config default:
+    # /data/sessions). Caller passes the config value so cache_stats
+    # finds the right directory.
+    if not sessions_dir:
+        sessions_dir = "/data/sessions"
     async def compaction_stats(params: dict) -> str:
         try:
             days = int(params.get("days") or 7)
@@ -77,10 +86,7 @@ def register_diagnostics_tools(registry: ToolRegistry, workspace_dir: str) -> No
             days = 7
         days = max(1, min(days, 90))
 
-        # Sessions live at <workspace>/sessions/. Standard layout per
-        # qanot/session.py.
-        sessions_dir = Path(workspace_dir) / "sessions"
-        summary = aggregate_session_files(sessions_dir, days=days)
+        summary = aggregate_session_files(Path(sessions_dir), days=days)
         return json.dumps({
             "window_days": days,
             "summary": summary.to_dict(),
