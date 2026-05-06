@@ -143,6 +143,12 @@ class Config:
     # Cost budget (0 = unlimited)
     daily_budget_usd: float = 0.0  # Max daily spend in USD per user (0 = no limit)
     budget_warning_pct: int = 80  # Warn user when reaching this % of daily budget
+    # Per-turn caps — guards against runaway loops within a single turn.
+    # The "$4,200 in 63 hours" failure mode is one runaway turn that burns
+    # tokens before any daily cap can reset. max_iterations bounds COUNT;
+    # these bound TOKENS and COST. Either being 0 disables that check.
+    tokens_per_turn_max: int = 0          # 0 = unlimited
+    cost_per_turn_max_usd: float = 0.0    # 0 = unlimited
     # UX
     reactions_enabled: bool = False  # Send emoji reactions (👀, ✅, ❌) on messages
     reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"

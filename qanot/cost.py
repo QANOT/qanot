@@ -122,6 +122,107 @@ class CostTracker:
         """Increment turn count for a user."""
         self._ensure_user(user_id)["turns"] += 1
 
+    # ── Per-turn budget tracking ──────────────────────────────
+    # Separate from cumulative daily/total — `_turn_state` is reset
+    # at the start of each turn (see start_turn) and accumulates as
+    # iterations run. Used to detect runaway loops within a single
+    # turn (the "$4,200 in 63 hours" failure mode).
+
+    def __post_init__(self) -> None:
+        # Older instances loaded without this attribute via JSON state;
+        # initialize lazily via _ensure_turn_state.
+        pass
+
+    def _ensure_turn_state(self) -> dict:
+        if not hasattr(self, "_turn_state"):
+            self._turn_state: dict[str, dict] = {}
+        return self._turn_state
+
+    def start_turn(self, user_id: str) -> None:
+        """Reset per-turn counters at the beginning of a turn."""
+        self._ensure_turn_state()
+        self._turn_state[user_id] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+            "cost": 0.0,
+            "iterations": 0,
+        }
+
+    def record_iteration(
+        self,
+        user_id: str,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read: int = 0,
+        cache_write: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        """Record one iteration's usage into the per-turn accumulator."""
+        self._ensure_turn_state()
+        s = self._turn_state.setdefault(user_id, {
+            "input_tokens": 0, "output_tokens": 0, "cache_read": 0,
+            "cache_write": 0, "cost": 0.0, "iterations": 0,
+        })
+        s["input_tokens"] += input_tokens
+        s["output_tokens"] += output_tokens
+        s["cache_read"] += cache_read
+        s["cache_write"] += cache_write
+        s["cost"] += cost
+        s["iterations"] += 1
+
+    def get_turn_total_tokens(self, user_id: str) -> int:
+        """Tokens billed this turn (input + output + cache_write).
+
+        cache_read excluded — it's the cheap path, not the cost driver
+        we're guarding against. The "runaway loop" failure mode burns
+        new input/output tokens repeatedly.
+        """
+        self._ensure_turn_state()
+        s = self._turn_state.get(user_id, {})
+        return (
+            int(s.get("input_tokens", 0))
+            + int(s.get("output_tokens", 0))
+            + int(s.get("cache_write", 0))
+        )
+
+    def get_turn_cost(self, user_id: str) -> float:
+        self._ensure_turn_state()
+        s = self._turn_state.get(user_id, {})
+        return float(s.get("cost", 0.0))
+
+    def check_per_turn_caps(
+        self,
+        user_id: str,
+        *,
+        max_tokens: int = 0,
+        max_cost_usd: float = 0.0,
+    ) -> tuple[bool, str]:
+        """Return (within_limits, reason_if_exceeded).
+
+        Either limit being 0 disables that specific check. When both
+        are 0 returns (True, "").
+        """
+        if max_tokens <= 0 and max_cost_usd <= 0.0:
+            return True, ""
+        if max_tokens > 0:
+            tokens = self.get_turn_total_tokens(user_id)
+            if tokens >= max_tokens:
+                return False, (
+                    f"per-turn token cap exceeded ({tokens:,} ≥ {max_tokens:,}). "
+                    "Aborting loop to prevent runaway cost."
+                )
+        if max_cost_usd > 0.0:
+            cost = self.get_turn_cost(user_id)
+            if cost >= max_cost_usd:
+                return False, (
+                    f"per-turn cost cap exceeded (${cost:.4f} ≥ ${max_cost_usd:.4f}). "
+                    "Aborting loop."
+                )
+        return True, ""
+
     def get_user_stats(self, user_id: str) -> dict:
         """Get cost stats for a specific user."""
         return dict(self._ensure_user(user_id))

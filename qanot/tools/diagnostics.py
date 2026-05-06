@@ -129,3 +129,84 @@ def register_diagnostics_tools(
         },
         handler=cache_stats,
     )
+
+    async def cost_stats(params: dict) -> str:
+        """Aggregate per-user cost across the persistent CostTracker ledger
+        (workspace/costs.json). Reports total + daily spend per user,
+        plus top spenders for the lookback window."""
+        try:
+            top_n = int(params.get("top_n") or 10)
+        except (TypeError, ValueError):
+            top_n = 10
+        top_n = max(1, min(top_n, 100))
+        user_filter = (params.get("user_id") or "").strip()
+
+        from qanot.cost import CostTracker
+        tracker = CostTracker(workspace_dir)
+        all_stats = tracker.get_all_stats()
+
+        if user_filter:
+            entry = all_stats.get(user_filter)
+            if entry is None:
+                return json.dumps({"error": f"no cost record for user_id {user_filter!r}"})
+            return json.dumps({
+                "user_id": user_filter,
+                "stats": entry,
+            }, ensure_ascii=False)
+
+        # Sort by total_cost descending
+        ranked = sorted(
+            all_stats.items(),
+            key=lambda kv: float(kv[1].get("total_cost", 0.0) or 0.0),
+            reverse=True,
+        )[:top_n]
+
+        return json.dumps({
+            "total_users_tracked": len(all_stats),
+            "total_cost_usd_all_users": round(tracker.get_total_cost(), 4),
+            "top_spenders": [
+                {
+                    "user_id": uid,
+                    "total_cost_usd": round(float(s.get("total_cost", 0.0) or 0.0), 4),
+                    "daily_cost_usd": round(float(s.get("daily_cost", 0.0) or 0.0), 4),
+                    "daily_date": s.get("daily_date", ""),
+                    "turns": int(s.get("turns", 0) or 0),
+                    "api_calls": int(s.get("api_calls", 0) or 0),
+                    "input_tokens": int(s.get("input_tokens", 0) or 0),
+                    "output_tokens": int(s.get("output_tokens", 0) or 0),
+                    "cache_read_tokens": int(s.get("cache_read_tokens", 0) or 0),
+                }
+                for uid, s in ranked
+            ],
+            "note": (
+                "Aggregated from <workspace>/costs.json (persistent per-user "
+                "ledger). Pass user_id to inspect one user; top_n caps the "
+                "spender list (default 10, max 100)."
+            ),
+        }, ensure_ascii=False)
+
+    registry.register(
+        name="cost_stats",
+        description=(
+            "Per-user cost ledger summary: top spenders, daily/total cost, "
+            "tokens by category. Use to spot users who are burning budget or "
+            "to verify that per-turn caps caught a runaway loop. "
+            "`user_id` (optional): inspect one user's full record. "
+            "`top_n` (default 10, max 100): how many top-spending users to "
+            "list. Operator-facing diagnostic."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "Inspect one user's full record (optional).",
+                },
+                "top_n": {
+                    "type": "number",
+                    "description": "Top spenders to list (default 10, max 100).",
+                },
+            },
+        },
+        handler=cost_stats,
+    )

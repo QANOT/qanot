@@ -188,6 +188,13 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                         f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
                         f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
                     )
+            # Reset per-turn cost counters BEFORE the turn starts so
+            # cumulative checks during the loop reflect this turn only.
+            if user_id:
+                try:
+                    self.cost_tracker.start_turn(str(user_id))
+                except Exception as e:
+                    logger.warning("cost_tracker.start_turn failed: %s", e)
             bump_inflight()
             try:
                 return await self._run_turn_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override)
@@ -248,6 +255,12 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                     )
                     yield StreamEvent(type="done", response=ProviderResponse(content=msg))
                     return
+            # Reset per-turn cost counters before the streaming turn.
+            if user_id:
+                try:
+                    self.cost_tracker.start_turn(str(user_id))
+                except Exception as e:
+                    logger.warning("cost_tracker.start_turn failed: %s", e)
             bump_inflight()
             try:
                 async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):

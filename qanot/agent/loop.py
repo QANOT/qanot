@@ -107,7 +107,9 @@ class _LoopMixin:
             response.usage.input_tokens,
             response.usage.output_tokens,
         )
-        # Per-user cost tracking
+        # Per-user cost tracking — cumulative AND per-turn.
+        # Per-turn record_iteration is what the runaway-loop guard
+        # checks against in _check_per_turn_caps.
         uid = self._current_user_id
         if uid:
             self.cost_tracker.add_usage(
@@ -118,9 +120,39 @@ class _LoopMixin:
                 cache_write=response.usage.cache_creation_input_tokens,
                 cost=response.usage.cost,
             )
+            self.cost_tracker.record_iteration(
+                user_id=uid,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                cache_read=response.usage.cache_read_input_tokens,
+                cache_write=response.usage.cache_creation_input_tokens,
+                cost=response.usage.cost,
+            )
         if self.context.check_threshold():
             logger.warning("Context at %.1f%% — Working Buffer activated",
                          self.context.get_context_percent())
+
+    def _check_per_turn_caps(self) -> str | None:
+        """Per-turn token + cost cap check. Returns reason-for-abort or None.
+
+        Guards against runaway loops within a single turn (the "$4,200
+        in 63 hours" failure mode where one turn burns through tokens
+        across many iterations before any daily reset can fire).
+        """
+        uid = self._current_user_id
+        if not uid:
+            return None
+        max_tokens = getattr(self.config, "tokens_per_turn_max", 0) or 0
+        max_cost = getattr(self.config, "cost_per_turn_max_usd", 0.0) or 0.0
+        if max_tokens <= 0 and max_cost <= 0:
+            return None
+        ok, reason = self.cost_tracker.check_per_turn_caps(
+            uid, max_tokens=max_tokens, max_cost_usd=max_cost,
+        )
+        if ok:
+            return None
+        logger.warning("Per-turn cap exceeded for user=%s: %s", uid, reason)
+        return reason
 
     def _check_loop(
         self, tool_calls: list[ToolCall], recent_fingerprints: list[str]
@@ -400,6 +432,32 @@ class _LoopMixin:
 
             if response:
                 self._track_usage(response)
+
+            # Per-turn token/cost cap — guards against runaway loops
+            # within a single turn. Checked AFTER _track_usage so the
+            # latest iteration is included in the totals. Hard abort:
+            # we yield a final message and return, no more iterations.
+            cap_reason = self._check_per_turn_caps()
+            if cap_reason:
+                # Fire on_error so plugins/observability see the abort
+                # (alongside other unrecoverable error events).
+                try:
+                    await self.hooks.fire(
+                        "on_error",
+                        error_type="per_turn_cap_exceeded",
+                        error=cap_reason,
+                        user_id=user_id or "",
+                        recoverable=False,
+                    )
+                except Exception as hook_e:
+                    logger.warning("on_error hook fire failed: %s", hook_e)
+                self._log_error_lesson("per_turn_cap_exceeded", cap_reason)
+                abort_msg = (
+                    "Bu so'rovni tugatish uchun belgilangan tokenlar/xarajat chegarasiga "
+                    "yetdik. Iltimos savolingizni soddalashtiring yoki adminga murojaat qiling."
+                )
+                yield StreamEvent(type="done", response=ProviderResponse(content=abort_msg))
+                return
 
             stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
             content = response.content if response else ""
