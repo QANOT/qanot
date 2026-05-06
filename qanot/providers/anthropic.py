@@ -346,9 +346,13 @@ class AnthropicProvider(LLMProvider):
         # Add the BM25 Tool Search Tool. Server-side; the agent calls it
         # when it needs a deferred tool. Returns matched tool_reference
         # blocks the model can then invoke.
+        # NB: Anthropic requires `name` match the type stem exactly —
+        # `tool_search_tool_bm25_20251119` → name must be
+        # `tool_search_tool_bm25` (no `_20251119` suffix). Verified by
+        # the API rejecting any other name with a 400 invalid_request.
         new_tools.append({
             "type": "tool_search_tool_bm25_20251119",
-            "name": "tool_search",
+            "name": "tool_search_tool_bm25",
         })
 
         return new_tools

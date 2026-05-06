@@ -97,7 +97,10 @@ def test_enabled_appends_tool_search_tool():
     # Last entry should be the bm25 server tool
     last = out[-1]
     assert last.get("type") == "tool_search_tool_bm25_20251119"
-    assert last.get("name") == "tool_search"
+    # Anthropic requires the name to match the type stem exactly —
+    # `tool_search_tool_bm25` (no version suffix). Other values get a
+    # 400 invalid_request from the API.
+    assert last.get("name") == "tool_search_tool_bm25"
 
 
 def test_enabled_preserves_original_tool_count_plus_search():
