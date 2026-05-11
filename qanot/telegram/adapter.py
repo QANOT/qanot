@@ -612,6 +612,27 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             system_prompt_override = bound_agent.prompt
             logger.info("Topic binding active: %s → agent %s", conv_key, bound_agent.id)
 
+        # Fire-and-forget thread auto-titling (Bot API 10.0 Threaded Mode).
+        # The titler self-dedupes once per (chat,thread), so calling on
+        # every message is cheap — most calls hit the in-memory set and
+        # return immediately. Only the FIRST message in a fresh thread
+        # triggers the LLM call + editForumTopic.
+        titler = getattr(self, "_thread_titler", None)
+        if (
+            titler is not None
+            and thread_id
+            and not self._is_group_chat(message)
+            and text
+        ):
+            try:
+                await titler.maybe_title(
+                    chat_id=message.chat.id,
+                    thread_id=thread_id,
+                    user_message=text,
+                )
+            except Exception as e:
+                logger.warning("thread titler maybe_title failed: %s", e)
+
         mode = self.config.response_mode
         rm = self.config.reply_mode
         if rm == "always":

@@ -255,6 +255,17 @@ async def main() -> None:
         )
         agent.attach_profile_enricher(profile_enricher)
 
+    # Thread auto-titling for private chats with Threaded Mode (Bot API
+    # 10.0). Renames each fresh thread from "New Chat" to a 2-4 word
+    # topic-derived title via a one-shot Haiku call.
+    from qanot.thread_titler import ThreadTitler
+
+    telegram._thread_titler = ThreadTitler(
+        bot=telegram.bot,
+        provider=provider,
+        workspace_dir=config.workspace_dir,
+    )
+
     # Expose MCP manager to Telegram adapter for /mcp command
     if mcp_manager:
         telegram._mcp_manager = mcp_manager
