@@ -24,7 +24,12 @@ def _make_message(*, user_id=12345, chat_id=67890, text=None, sticker=None, from
     msg.video_note = None
     msg.chat = MagicMock()
     msg.chat.id = chat_id
+    msg.chat.type = "private"
     msg.message_id = 999
+    # Default to base-view (no thread). _conv_key now treats truthy
+    # message_thread_id as a thread-scoped private chat (Bot API 10.0),
+    # so a MagicMock default would silently change the conv key.
+    msg.message_thread_id = None
     if from_user:
         msg.from_user = MagicMock()
         msg.from_user.id = user_id

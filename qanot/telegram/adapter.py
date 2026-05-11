@@ -319,12 +319,20 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         return text.replace(f"@{bot_username}", "").strip()
 
     def _conv_key(self, message: Message) -> str:
+        thread_id = getattr(message, "message_thread_id", None)
         if not self._is_group_chat(message):
+            # Private chats with Threaded Mode (Bot API 10.0) on the bot
+            # carry message_thread_id when the user opens a thread from
+            # the base view. Each thread is a separate conversation —
+            # otherwise "Work" and "Personal" threads bleed history.
+            # Base view (no thread_id) keeps the user-id key so existing
+            # conversations from non-threaded bots stay intact.
+            if thread_id:
+                return f"user_{message.from_user.id}_thread_{thread_id}"
             return str(message.from_user.id)
-        # Forum topics: isolate conversations per topic thread
-        topic_id = getattr(message, "message_thread_id", None)
-        if topic_id:
-            return f"group_{message.chat.id}_topic_{topic_id}"
+        # Forum topics in group chats: isolate conversations per topic thread.
+        if thread_id:
+            return f"group_{message.chat.id}_topic_{thread_id}"
         return f"group_{message.chat.id}"
 
     def _check_command_access(self, message: Message) -> tuple[int, str] | None:

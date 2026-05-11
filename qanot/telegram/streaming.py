@@ -55,14 +55,14 @@ class StreamingMixin:
                         now = asyncio.get_running_loop().time()
                         if now - last_flush >= interval and accumulated != last_sent_text:
                             typing_task.cancel()
-                            await self._send_draft(chat_id, draft_id, accumulated)
+                            await self._send_draft(chat_id, draft_id, accumulated, thread_id=thread_id)
                             last_sent_text = accumulated
                             last_flush = now
 
                 elif event.type == "tool_use":
                     drafting_paused = True
                     if accumulated and accumulated != last_sent_text:
-                        await self._send_draft(chat_id, draft_id, accumulated)
+                        await self._send_draft(chat_id, draft_id, accumulated, thread_id=thread_id)
                         last_sent_text = accumulated
                     typing_task.cancel()
                     typing_task = asyncio.create_task(self._typing_loop(chat_id))
@@ -148,14 +148,26 @@ class StreamingMixin:
 
     # ── Low-level send methods ───────────────────────────────
 
-    async def _send_draft(self, chat_id: int, draft_id: int, text: str) -> None:
-        """Send a streaming draft via sendMessageDraft."""
+    async def _send_draft(
+        self, chat_id: int, draft_id: int, text: str,
+        *, thread_id: int | None = None,
+    ) -> None:
+        """Send a streaming draft via sendMessageDraft.
+
+        When ``thread_id`` is set, the draft is delivered into that
+        thread (Bot API 10.0 Threaded Mode). Without it, drafts go to
+        the base view — which would land the streaming output in the
+        wrong place when the user is reading inside a thread.
+        """
         try:
-            await self.bot(SendMessageDraft(
-                chat_id=chat_id,
-                draft_id=draft_id,
-                text=text[:4096],
-            ))
+            kwargs: dict = {
+                "chat_id": chat_id,
+                "draft_id": draft_id,
+                "text": text[:4096],
+            }
+            if thread_id:
+                kwargs["message_thread_id"] = thread_id
+            await self.bot(SendMessageDraft(**kwargs))
         except Exception as e:
             logger.debug("sendMessageDraft failed: %s", e)
 
