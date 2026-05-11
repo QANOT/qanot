@@ -963,6 +963,328 @@ class UserbotPlugin(Plugin):
         return 0
 
     @tool(
+        name="tg_forward_messages",
+        description=(
+            "Forward one or more existing Telegram messages from a source "
+            "chat/channel to a recipient, AS the account owner. BOTH "
+            "source_id and recipient_id MUST be opaque tokens previously "
+            "minted by tg_find_contact / tg_list_recent_chats / "
+            "tg_scan_unread / tg_get_chat_history (tokens expire after "
+            "1 hour). Raw @usernames or chat ids are rejected on purpose — "
+            "this prevents prompt-injection attacks from redirecting "
+            "forwards to attacker-controlled chats. "
+            "message_ids: 1-100 integer ids (Telegram caps batch forward "
+            "at 100). drop_author=true forwards without the \"Forwarded "
+            "from …\" header (Telegram still labels them as forwards on "
+            "the sender side). Same whitelist + rate-limit gates as "
+            "tg_send_message apply to the RECIPIENT."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["source_id", "recipient_id", "message_ids"],
+            "properties": {
+                "source_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque token of the chat/channel to forward FROM "
+                        "(rcp_…). Must be resolved beforehand."
+                    ),
+                },
+                "recipient_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque token of the destination chat (rcp_…)."
+                    ),
+                },
+                "message_ids": {
+                    "type": "array",
+                    "description": (
+                        "Telegram message ids to forward. 1-100 entries. "
+                        "Order is preserved."
+                    ),
+                    "items": {"type": "integer"},
+                },
+                "drop_author": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, hide the \"Forwarded from\" header on the "
+                        "recipient side (default false — normal forward)."
+                    ),
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, validate but do NOT forward. Whitelist "
+                        "still enforced; rate limit bypassed."
+                    ),
+                },
+            },
+        },
+    )
+    async def tg_forward_messages(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        source_id = (params.get("source_id") or "").strip()
+        recipient_id = (params.get("recipient_id") or "").strip()
+        message_ids_raw = params.get("message_ids")
+        drop_author = bool(params.get("drop_author") or False)
+        dry_run = bool(params.get("dry_run") or False)
+
+        if not source_id:
+            return json.dumps(
+                {"status": "error", "error": "source_id is required"},
+                ensure_ascii=False,
+            )
+        if not recipient_id:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id is required"},
+                ensure_ascii=False,
+            )
+        if not isinstance(message_ids_raw, list) or not message_ids_raw:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "message_ids must be a non-empty array of integers",
+                },
+                ensure_ascii=False,
+            )
+
+        # Normalise message_ids: coerce strings → int, drop non-positive,
+        # de-dupe while preserving order. Telegram caps batch forwards at
+        # 100; we fail fast rather than silently truncate.
+        seen: set[int] = set()
+        message_ids: list[int] = []
+        for raw in message_ids_raw:
+            try:
+                mid = int(raw)
+            except (TypeError, ValueError):
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": f"message_ids entry not an integer: {raw!r}",
+                    },
+                    ensure_ascii=False,
+                )
+            if mid <= 0:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": f"message_ids must be positive: {mid}",
+                    },
+                    ensure_ascii=False,
+                )
+            if mid in seen:
+                continue
+            seen.add(mid)
+            message_ids.append(mid)
+
+        if len(message_ids) > 100:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "too many message_ids (max 100 per Telegram batch)",
+                    "count": len(message_ids),
+                },
+                ensure_ascii=False,
+            )
+
+        source_entry = await self._lookup_token(source_id)
+        if source_entry is None:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "source_id noto'g'ri yoki muddati tugagan. Avval "
+                        "tg_find_contact yoki tg_list_recent_chats chaqirib "
+                        "yangi token oling."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        recipient_entry = await self._lookup_token(recipient_id)
+        if recipient_entry is None:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "recipient_id noto'g'ri yoki muddati tugagan. Avval "
+                        "tg_find_contact yoki tg_list_recent_chats chaqirib "
+                        "yangi token oling."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        source_label = self._recipient_label(source_entry)
+        recipient_label = self._recipient_label(recipient_entry)
+
+        # Whitelist gate applies to the RECIPIENT only — restricting which
+        # chats the owner can read from would defeat the dialog-discovery
+        # tools. The whitelist is about who we *send to*.
+        if not self._allowed_by_whitelist(recipient_entry):
+            self._audit.whitelist_reject(recipient=recipient_label)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "Bu oluvchi userbot_recipient_whitelist ro'yxatida "
+                        "yo'q. config.json-dagi whitelist-ga qo'shing yoki "
+                        "boshqa kontaktni tanlang."
+                    ),
+                    "recipient": recipient_label,
+                },
+                ensure_ascii=False,
+            )
+
+        if dry_run:
+            self._audit.dry_run_forward(
+                source_id=source_id,
+                source=source_label,
+                recipient_id=recipient_id,
+                recipient=recipient_label,
+                message_ids=message_ids,
+                drop_author=drop_author,
+            )
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "dry_run": True,
+                    "would_forward": True,
+                    "source": source_label,
+                    "recipient": recipient_label,
+                    "message_ids": message_ids,
+                    "count": len(message_ids),
+                    "drop_author": drop_author,
+                },
+                ensure_ascii=False,
+            )
+
+        # Rate limit gate (real forwards only). One charge per forward call
+        # — matches send_message/send_checklist semantics. A batch of 50
+        # forwarded messages is still ONE operator action.
+        try:
+            self._rate_limiter.check(recipient_id)
+        except Exception as rle:
+            bucket = getattr(rle, "bucket", "unknown")
+            retry = int(getattr(rle, "retry_after_seconds", 0))
+            self._audit.rate_limit(
+                recipient=recipient_label, bucket=bucket, retry_after=retry,
+            )
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": str(rle),
+                    "bucket": bucket,
+                    "retry_after_seconds": retry,
+                },
+                ensure_ascii=False,
+            )
+
+        # Do the actual forward. pyrofork's forward_messages takes a single
+        # int OR a list and returns a Message (single) or list[Message]
+        # (batch). We always pass a list — even singletons — for a uniform
+        # response shape.
+        try:
+            result = await client.forward_messages(
+                chat_id=recipient_entry["peer"],
+                from_chat_id=source_entry["peer"],
+                message_ids=message_ids,
+                drop_author=drop_author,
+            )
+        except TypeError:
+            # Older pyrofork builds may not accept drop_author kw. Retry
+            # without it if the caller didn't explicitly ask for it.
+            if not drop_author:
+                try:
+                    result = await client.forward_messages(
+                        chat_id=recipient_entry["peer"],
+                        from_chat_id=source_entry["peer"],
+                        message_ids=message_ids,
+                    )
+                except Exception as e:
+                    cls, friendly = self._friendly_rpc_error(e)
+                    self._audit.send_error(
+                        recipient=recipient_label, error_class=cls,
+                    )
+                    return json.dumps(
+                        {"status": "error", "error_class": cls, "error": friendly},
+                        ensure_ascii=False,
+                    )
+            else:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": (
+                            "drop_author qo'llab-quvvatlanmaydi (pyrofork "
+                            "versiyasi eskirgan)."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=recipient_label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        # Normalise the response to a list of new message ids on the
+        # destination side. Single-id forwards return a Message; batches
+        # return a list. Empty/None results still record the audit row
+        # (the forward happened — we just couldn't read the new ids back).
+        forwarded_ids: list[int] = []
+        if result is None:
+            forwarded_count = 0
+        elif isinstance(result, list):
+            forwarded_count = len(result)
+            for m in result:
+                mid = int(
+                    getattr(m, "id", 0) or getattr(m, "message_id", 0) or 0,
+                )
+                if mid:
+                    forwarded_ids.append(mid)
+        else:
+            forwarded_count = 1
+            mid = int(
+                getattr(result, "id", 0) or getattr(result, "message_id", 0) or 0,
+            )
+            if mid:
+                forwarded_ids.append(mid)
+
+        self._rate_limiter.record(recipient_id)
+        self._audit.forward(
+            source_id=source_id,
+            source=source_label,
+            recipient_id=recipient_id,
+            recipient=recipient_label,
+            message_ids=message_ids,
+            forwarded_count=forwarded_count,
+            drop_author=drop_author,
+        )
+
+        await self._post_preview_message(
+            f"↪️ {recipient_label} ga {source_label} dan "
+            f"{forwarded_count} ta post forward qilindi.",
+        )
+
+        return json.dumps(
+            {
+                "status": "ok",
+                "ok": True,
+                "source": source_label,
+                "recipient": recipient_label,
+                "requested_count": len(message_ids),
+                "forwarded_count": forwarded_count,
+                "forwarded_message_ids": forwarded_ids,
+                "drop_author": drop_author,
+            },
+            ensure_ascii=False,
+        )
+
+    @tool(
         name="tg_list_recent_chats",
         description=(
             "List the account's most-recently active dialogs (private chats, "

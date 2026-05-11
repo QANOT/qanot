@@ -184,6 +184,48 @@ class AuditLog:
             "others_can_complete": others_can_complete,
         })
 
+    def forward(
+        self,
+        *,
+        source_id: str,
+        source: str,
+        recipient_id: str,
+        recipient: str,
+        message_ids: list[int],
+        forwarded_count: int,
+        drop_author: bool,
+    ) -> None:
+        self._write({
+            "event": "forward",
+            "source_id": source_id,
+            "source": source,
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_ids": list(message_ids),
+            "forwarded_count": forwarded_count,
+            "drop_author": drop_author,
+        })
+
+    def dry_run_forward(
+        self,
+        *,
+        source_id: str,
+        source: str,
+        recipient_id: str,
+        recipient: str,
+        message_ids: list[int],
+        drop_author: bool,
+    ) -> None:
+        self._write({
+            "event": "dry_run_forward",
+            "source_id": source_id,
+            "source": source,
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_ids": list(message_ids),
+            "drop_author": drop_author,
+        })
+
 
 def _utc_iso() -> str:
     t = time.gmtime()

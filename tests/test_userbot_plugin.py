@@ -634,6 +634,7 @@ class TestSetupGate:
             "tg_find_contact",
             "tg_send_message",
             "tg_send_checklist",
+            "tg_forward_messages",
             "tg_list_recent_chats",
             "tg_get_chat_history",
             "tg_scan_unread",

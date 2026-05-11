@@ -144,6 +144,26 @@ class FakeClient:
         self.sent.append(record)
         return SimpleNamespace(id=1000 + len(self.sent))
 
+    async def forward_messages(
+        self, *, chat_id, from_chat_id, message_ids, **kwargs,
+    ):
+        if getattr(self, "forward_should_raise", None) is not None:
+            raise self.forward_should_raise
+        if not hasattr(self, "forwarded"):
+            self.forwarded = []
+        record = {
+            "chat_id": chat_id,
+            "from_chat_id": from_chat_id,
+            "message_ids": list(message_ids),
+            **kwargs,
+        }
+        self.forwarded.append(record)
+        # pyrofork returns a Message for a single int, list[Message] for a
+        # list. Mirror that so the plugin can exercise both branches.
+        if isinstance(message_ids, int):
+            return SimpleNamespace(id=9000 + 1)
+        return [SimpleNamespace(id=9000 + i) for i, _ in enumerate(message_ids, start=1)]
+
 
 # ────────── Plugin fixture ──────────
 
@@ -637,4 +657,320 @@ def test_find_mentions_skips_channels(plugin, fake_client):
         out = await plugin.tg_find_mentions({})
         result = json.loads(out)
         assert result["count"] == 0
+    asyncio.run(go())
+
+
+# ────────── tg_forward_messages ──────────
+
+async def _mint_source_and_recipient(plugin):
+    src = await plugin._mint_token(
+        peer=-100123, username="aa071a", first_name="Stakan Channel",
+        peer_id=-100123, peer_type="channel",
+    )
+    rcp = await plugin._mint_token(
+        peer=555, username="umid", first_name="Umid",
+        peer_id=555, peer_type="user",
+    )
+    return src, rcp
+
+
+def test_forward_messages_happy_path(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [101, 102, 103],
+        })
+        result = json.loads(out)
+        assert result["status"] == "ok"
+        assert result["forwarded_count"] == 3
+        assert result["requested_count"] == 3
+        assert result["recipient"] == "@umid"
+        assert result["source"] == "@aa071a"
+        assert result["drop_author"] is False
+        # Fake client recorded the call with peer ids resolved from tokens.
+        assert len(fake_client.forwarded) == 1
+        call = fake_client.forwarded[0]
+        assert call["chat_id"] == 555
+        assert call["from_chat_id"] == -100123
+        assert call["message_ids"] == [101, 102, 103]
+        assert call["drop_author"] is False
+    asyncio.run(go())
+
+
+def test_forward_messages_drop_author(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [42],
+            "drop_author": True,
+        })
+        result = json.loads(out)
+        assert result["status"] == "ok"
+        assert result["drop_author"] is True
+        assert fake_client.forwarded[0]["drop_author"] is True
+    asyncio.run(go())
+
+
+def test_forward_messages_dry_run_does_not_forward(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1, 2],
+            "dry_run": True,
+        })
+        result = json.loads(out)
+        assert result["status"] == "ok"
+        assert result["dry_run"] is True
+        assert result["would_forward"] is True
+        assert result["message_ids"] == [1, 2]
+        # No real forward happened.
+        assert not hasattr(fake_client, "forwarded") or fake_client.forwarded == []
+    asyncio.run(go())
+
+
+def test_forward_messages_dry_run_audited(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [7],
+            "dry_run": True,
+        })
+        log_path = Path(plugin._audit.path)
+        entry = json.loads(log_path.read_text().splitlines()[-1])
+        assert entry["event"] == "dry_run_forward"
+        assert entry["recipient"] == "@umid"
+        assert entry["source"] == "@aa071a"
+        assert entry["message_ids"] == [7]
+    asyncio.run(go())
+
+
+def test_forward_messages_requires_source_id(plugin, fake_client):
+    async def go():
+        _, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "recipient_id": rcp,
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "source_id" in result["error"]
+    asyncio.run(go())
+
+
+def test_forward_messages_rejects_invalid_source_token(plugin, fake_client):
+    async def go():
+        _, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": "rcp_bogus",
+            "recipient_id": rcp,
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "source_id" in result["error"]
+    asyncio.run(go())
+
+
+def test_forward_messages_rejects_invalid_recipient_token(plugin, fake_client):
+    async def go():
+        src, _ = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": "rcp_nope",
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "recipient_id" in result["error"]
+    asyncio.run(go())
+
+
+def test_forward_messages_empty_ids_rejected(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "non-empty" in result["error"]
+    asyncio.run(go())
+
+
+def test_forward_messages_non_integer_ids_rejected(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": ["not-a-number"],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+    asyncio.run(go())
+
+
+def test_forward_messages_dedupes_ids(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [5, 5, 6, 5, 6],
+        })
+        result = json.loads(out)
+        assert result["status"] == "ok"
+        # Order preserved, duplicates removed.
+        assert fake_client.forwarded[0]["message_ids"] == [5, 6]
+        assert result["requested_count"] == 2
+    asyncio.run(go())
+
+
+def test_forward_messages_caps_at_100(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        ids = list(range(1, 102))  # 101 unique ids
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": ids,
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "100" in result["error"]
+    asyncio.run(go())
+
+
+def test_forward_messages_whitelist_blocks(plugin, fake_client):
+    async def go():
+        plugin._config.userbot_recipient_whitelist = ["@allowed_only"]
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert "whitelist" in result["error"].lower() or "ro'yxat" in result["error"]
+        # No forward happened.
+        assert not hasattr(fake_client, "forwarded") or fake_client.forwarded == []
+    asyncio.run(go())
+
+
+def test_forward_messages_whitelist_blocks_dry_run_too(plugin, fake_client):
+    async def go():
+        plugin._config.userbot_recipient_whitelist = ["@allowed_only"]
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1],
+            "dry_run": True,
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+    asyncio.run(go())
+
+
+def test_forward_messages_rate_limit_charged_per_call(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        # First forward succeeds.
+        out1 = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1, 2, 3],
+        })
+        assert json.loads(out1)["status"] == "ok"
+        # Second within cooldown is blocked.
+        out2 = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [4],
+        })
+        result = json.loads(out2)
+        assert result["status"] == "error"
+        assert result.get("bucket") == "per_recipient"
+    asyncio.run(go())
+
+
+def test_forward_messages_audit_records_success(plugin, fake_client):
+    async def go():
+        src, rcp = await _mint_source_and_recipient(plugin)
+        await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [10, 11],
+            "drop_author": True,
+        })
+        log_path = Path(plugin._audit.path)
+        entries = [
+            json.loads(line)
+            for line in log_path.read_text().splitlines()
+        ]
+        forward_events = [e for e in entries if e.get("event") == "forward"]
+        assert len(forward_events) == 1
+        entry = forward_events[0]
+        assert entry["recipient"] == "@umid"
+        assert entry["source"] == "@aa071a"
+        assert entry["message_ids"] == [10, 11]
+        assert entry["forwarded_count"] == 2
+        assert entry["drop_author"] is True
+    asyncio.run(go())
+
+
+def test_forward_messages_handles_rpc_error(plugin, fake_client):
+    async def go():
+        class FakeChatWriteForbidden(Exception):
+            pass
+
+        fake_client.forward_should_raise = FakeChatWriteForbidden("blocked")
+        src, rcp = await _mint_source_and_recipient(plugin)
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "error"
+        assert result["error_class"] == "FakeChatWriteForbidden"
+    asyncio.run(go())
+
+
+def test_forward_messages_falls_back_when_drop_author_unsupported(plugin, fake_client):
+    """Older pyrofork builds reject the drop_author kwarg with TypeError."""
+    async def go():
+        attempts = []
+        original = fake_client.forward_messages
+
+        async def picky_forward(*args, **kwargs):
+            attempts.append(dict(kwargs))
+            if "drop_author" in kwargs:
+                raise TypeError("forward_messages() got an unexpected keyword argument 'drop_author'")
+            return await original(*args, **kwargs)
+
+        fake_client.forward_messages = picky_forward
+        src, rcp = await _mint_source_and_recipient(plugin)
+        # Default drop_author=False → fallback path retries without the kwarg.
+        out = await plugin.tg_forward_messages({
+            "source_id": src,
+            "recipient_id": rcp,
+            "message_ids": [1],
+        })
+        result = json.loads(out)
+        assert result["status"] == "ok"
+        # Two attempts: first with drop_author, second without.
+        assert len(attempts) == 2
+        assert "drop_author" not in attempts[1]
     asyncio.run(go())
