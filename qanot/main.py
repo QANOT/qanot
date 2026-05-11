@@ -242,6 +242,19 @@ async def main() -> None:
     )
     _telegram_ref.append(telegram)
 
+    # User profile enrichment via Bot API 10.0 ``getUserPersonalChatMessages``.
+    # Needs the live aiogram Bot + a RAG indexer. When RAG is off we skip
+    # — the enriched content has nowhere useful to land otherwise.
+    if rag_indexer is not None:
+        from qanot.user_profile import UserProfileEnricher
+
+        profile_enricher = UserProfileEnricher(
+            bot=telegram.bot,
+            indexer=rag_indexer,
+            workspace_dir=config.workspace_dir,
+        )
+        agent.attach_profile_enricher(profile_enricher)
+
     # Expose MCP manager to Telegram adapter for /mcp command
     if mcp_manager:
         telegram._mcp_manager = mcp_manager

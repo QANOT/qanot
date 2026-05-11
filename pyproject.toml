@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "aiogram>=3.4",
+    "aiogram>=3.28",
     "anthropic>=0.40",
     "openai>=1.50",
     "aiohttp>=3.9",

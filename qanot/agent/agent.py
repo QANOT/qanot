@@ -58,6 +58,7 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         self._current_chat_id: int | None = None
         self._current_message_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
+        self._profile_enricher = None  # Set by main.py after Bot is created
         self.cost_tracker = CostTracker(config.workspace_dir)
         self._max_iterations = max_iterations
         self._is_child = _is_child
@@ -124,6 +125,12 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         """Attach RAG indexer for auto-context injection."""
         self._rag_indexer = rag_indexer
 
+    def attach_profile_enricher(self, enricher) -> None:
+        """Attach the user profile enricher (Bot API 10.0). When set, the
+        agent fires a best-effort enrichment on every turn — the enricher
+        itself dedupes/throttles, so this is safe."""
+        self._profile_enricher = enricher
+
     def load_skills(self, workspace_dir: str) -> None:
         """Discover and load skills from workspace/skills/ directory."""
         from qanot.skills import discover_skills
@@ -174,6 +181,15 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                 "⚙️ Bot sozlama o'zgarishi sababli qayta ishga tushmoqda. "
                 "Iltimos, 10 soniyadan keyin qayta urinib ko'ring."
             )
+
+        # Fire-and-forget profile enrichment (Bot API 10.0). The enricher
+        # dedupes per-user and throttles by cadence — most calls are a
+        # cheap dict lookup.
+        if self._profile_enricher is not None and user_id:
+            try:
+                await self._profile_enricher.maybe_enrich(user_id)
+            except Exception as e:
+                logger.warning("profile_enricher.maybe_enrich failed: %s", e)
 
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
@@ -239,6 +255,14 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                 )),
             )
             return
+
+        # Fire-and-forget profile enrichment (Bot API 10.0). See run_turn
+        # for rationale — the enricher self-throttles, so this is cheap.
+        if self._profile_enricher is not None and user_id:
+            try:
+                await self._profile_enricher.maybe_enrich(user_id)
+            except Exception as e:
+                logger.warning("profile_enricher.maybe_enrich failed: %s", e)
 
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
