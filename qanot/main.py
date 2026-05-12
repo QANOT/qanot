@@ -245,15 +245,17 @@ async def main() -> None:
     # User profile enrichment via Bot API 10.0 ``getUserPersonalChatMessages``.
     # Needs the live aiogram Bot + a RAG indexer. When RAG is off we skip
     # — the enriched content has nowhere useful to land otherwise.
+    # Wired onto the adapter (NOT the agent) so it sees the raw Telegram
+    # user_id rather than the synthetic conv_key (which embeds thread_id
+    # for thread isolation and can't be coerced to int).
     if rag_indexer is not None:
         from qanot.user_profile import UserProfileEnricher
 
-        profile_enricher = UserProfileEnricher(
+        telegram._profile_enricher = UserProfileEnricher(
             bot=telegram.bot,
             indexer=rag_indexer,
             workspace_dir=config.workspace_dir,
         )
-        agent.attach_profile_enricher(profile_enricher)
 
     # Thread auto-titling for private chats with Threaded Mode (Bot API
     # 10.0). Renames each fresh thread from "New Chat" to a 2-4 word

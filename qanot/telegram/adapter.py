@@ -380,6 +380,18 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         if not self._is_allowed(user_id_int):
             return
 
+        # Fire-and-forget profile enrichment (Bot API 10.0) with the RAW
+        # Telegram user id — getUserPersonalChatMessages expects an int,
+        # not the synthetic conv_key we'll build below for per-thread
+        # conversation isolation. The enricher self-throttles via cadence
+        # + per-user dedupe, so calling on every message is cheap.
+        enricher = getattr(self, "_profile_enricher", None)
+        if enricher is not None:
+            try:
+                await enricher.maybe_enrich(user_id_int)
+            except Exception as e:
+                logger.warning("profile_enricher.maybe_enrich failed: %s", e)
+
         user_id = str(user_id_int)  # Convert once at Telegram boundary
         allowed, reason = self._rate_limiter.check(user_id)
         if not allowed:
