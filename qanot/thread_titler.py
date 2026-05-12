@@ -165,35 +165,60 @@ class ThreadTitler:
             self._in_flight.discard(key)
 
     async def _generate_title(self, user_message: str) -> str:
-        """Single Haiku call. Returns trimmed title or empty string."""
+        """Single Haiku call. Returns trimmed title or empty string.
+
+        We bypass ``provider.chat`` and hit the raw Anthropic client
+        directly. The full provider path injects extended thinking,
+        server-side tools (code_execution, memory hint), and context
+        editing — none of which we want for a 2-4 word title. The
+        original symptom: Haiku would emit a thinking block then jump
+        to a tool_use block with zero text content, returning an empty
+        title and leaving threads named "New Chat".
+        """
         truncated = user_message.strip()[:USER_MESSAGE_MAX_CHARS]
         if not truncated:
             return ""
 
-        # Provider model swap pattern — same as qanot/flush.py. Restore
-        # the original model so subsequent normal chats keep their tier.
-        original_model = getattr(self._provider, "model", None)
-        try:
-            try:
-                self._provider.model = TITLE_MODEL
-            except (AttributeError, TypeError):
-                # Provider doesn't expose a writable .model — use whatever
-                # the caller's default is; cost is still small for one call.
-                pass
-
-            response = await self._provider.chat(
-                messages=[{"role": "user", "content": truncated}],
-                tools=[],
-                system=_TITLE_SYSTEM_PROMPT,
+        client = getattr(self._provider, "client", None)
+        if client is None:
+            logger.warning(
+                "thread_titler: provider has no .client attribute; "
+                "cannot generate title without hitting the full provider "
+                "chain (which strips text blocks under thinking/server-tools)",
             )
-        finally:
-            if original_model is not None:
-                try:
-                    self._provider.model = original_model
-                except (AttributeError, TypeError):
-                    pass
+            return ""
 
-        raw = (response.content or "").strip()
+        # Intentionally do NOT catch here — API exceptions (network blip,
+        # auth failure, model overload) must propagate to ``_title_task``
+        # which logs and skips ``_record``. That way the next user message
+        # in this thread retries. Catching here and returning empty would
+        # mark the thread "titled" and permanently leave it as "New Chat".
+        response = await client.messages.create(
+            model=TITLE_MODEL,
+            max_tokens=64,  # 2-4 words easily fits; cheap + fast
+            system=_TITLE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": truncated}],
+        )
+
+        # Walk content blocks; only "text" blocks contribute to the title.
+        # Some models emit thinking/tool_use blocks even on simple prompts;
+        # those are not user-visible output.
+        text_parts: list[str] = []
+        for block in getattr(response, "content", []) or []:
+            if getattr(block, "type", None) == "text":
+                text_parts.append(getattr(block, "text", "") or "")
+        raw = "".join(text_parts).strip()
+
+        if not raw:
+            stop_reason = getattr(response, "stop_reason", None)
+            block_types = [
+                getattr(b, "type", None)
+                for b in (getattr(response, "content", []) or [])
+            ]
+            logger.info(
+                "thread_titler: empty model output stop_reason=%s blocks=%r",
+                stop_reason, block_types,
+            )
         return _normalise_title(raw)
 
     async def _apply_title(

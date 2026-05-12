@@ -71,23 +71,64 @@ def test_normalise_empty_input():
 # ────────── Titler fixtures ──────────
 
 
+class _FakeAnthropicClient:
+    """Tiny stand-in for ``anthropic.AsyncAnthropic``.
+
+    Exposes ``.messages.create`` returning an object whose ``.content``
+    is a list of text blocks shaped like the real SDK. Tests pass the
+    desired reply text and we wrap it in a single text block.
+    """
+
+    def __init__(self, *, reply: str = "Tanishuv"):
+        self._reply = reply
+        self.raise_on_create: Exception | None = None
+        self.calls: list[dict] = []
+        self.observed_models: list[str] = []
+        self.messages = self  # mirror anthropic.AsyncAnthropic().messages
+
+    async def create(self, *, model, max_tokens, system, messages):
+        self.observed_models.append(model)
+        self.calls.append({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+        })
+        if self.raise_on_create is not None:
+            raise self.raise_on_create
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=self._reply)],
+            stop_reason="end_turn",
+        )
+
+
 class _FakeProvider:
-    """Stand-in for an LLM provider with a writable .model attribute."""
+    """Stand-in for an LLM provider exposing the underlying client.
+
+    The titler now bypasses ``provider.chat`` and hits ``provider.client``
+    directly to avoid extended-thinking and server-tool injection.
+    """
 
     def __init__(self, *, reply: str = "Tanishuv"):
         self.model = "claude-sonnet-4-6"
-        self._reply = reply
-        self.calls: list[dict] = []
-        self.raise_on_chat: Exception | None = None
-        self.observed_models: list[str] = []
+        self.client = _FakeAnthropicClient(reply=reply)
 
-    async def chat(self, *, messages, tools, system):
-        # Record the model AT CALL TIME — confirms the titler swapped it.
-        self.observed_models.append(self.model)
-        self.calls.append({"messages": messages, "system": system})
-        if self.raise_on_chat is not None:
-            raise self.raise_on_chat
-        return SimpleNamespace(content=self._reply, stop_reason="end_turn")
+    # Convenience proxies so test assertions stay terse.
+    @property
+    def calls(self):
+        return self.client.calls
+
+    @property
+    def observed_models(self):
+        return self.client.observed_models
+
+    @property
+    def raise_on_chat(self):
+        return self.client.raise_on_create
+
+    @raise_on_chat.setter
+    def raise_on_chat(self, exc):
+        self.client.raise_on_create = exc
 
 
 class _FakeBot:
@@ -269,6 +310,8 @@ def test_legacy_list_state_format_supported(workspace):
 
 
 def test_uses_haiku_model_for_title_generation(workspace):
+    """The titler must hit the API with the cheap Haiku model regardless
+    of what the rest of the agent is using."""
     t = _make_titler(workspace, reply="Tanishuv")
     t._provider.model = "claude-sonnet-4-6"
 
@@ -278,9 +321,9 @@ def test_uses_haiku_model_for_title_generation(workspace):
 
     asyncio.run(go())
 
-    # The model at the moment chat() ran must be the Haiku title model.
     assert t._provider.observed_models == ["claude-haiku-4-5-20251001"]
-    # And the original model is restored afterwards.
+    # Provider's surrounding .model is unaffected — we bypass provider.chat
+    # and don't mutate the shared instance.
     assert t._provider.model == "claude-sonnet-4-6"
 
 
