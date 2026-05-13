@@ -62,6 +62,12 @@ from .runtime import (
     MemoValidatorRuntime,
     build_runtime,
 )
+from .multimodal import (
+    IMAGE_DIR_NAME,
+    VOICE_DIR_NAME,
+    save_image_memo,
+    save_voice_memo,
+)
 
 __all__ = [
     # Spec
@@ -102,4 +108,9 @@ __all__ = [
     # Runtime (registry glue)
     "MemoValidatorRuntime",
     "build_runtime",
+    # Multimodal
+    "save_voice_memo",
+    "save_image_memo",
+    "VOICE_DIR_NAME",
+    "IMAGE_DIR_NAME",
 ]

@@ -114,6 +114,17 @@ class MemoSpec:
     user_scope: str = ""
     thread_scope: str = ""
 
+    # Multimodal fields. Populated when the memo was derived from a
+    # non-text source (voice note, image, video). Empty strings = pure
+    # text memo. The original media file lives at
+    # ``<workspace>/<media_path>``; the body holds the transcript or
+    # description that the router actually embeds. Both are kept so
+    # the agent can replay the original via tg_send_voice/photo when
+    # the user asks "play it back". ``duration_sec`` is 0 for images.
+    media_type: str = ""        # voice | image | video | "" (text)
+    media_path: str = ""        # workspace-relative path
+    duration_sec: int = 0       # 0 for images, runtime for audio/video
+
     # Optional structured fields parsed out of the body — populated by
     # ``parse_memo_file`` for ``feedback``/``project`` types so the router
     # can surface "Why" / "How to apply" without re-parsing the markdown.
@@ -285,6 +296,19 @@ def _build_spec(fm: dict, body: str, path: Path) -> MemoSpec:
     user_scope = _validate_scope(metadata.get("user"), "user")
     thread_scope = _validate_scope(metadata.get("thread"), "thread")
 
+    # Multimodal fields — same shape as scope fields (string with "" default).
+    # Validate but don't enforce values here; the multimodal module checks
+    # media_type against a known set when CREATING memos.
+    media_type = _validate_scope(metadata.get("media_type"), "media_type")
+    media_path = _validate_scope(metadata.get("media_path"), "media_path")
+    raw_duration = metadata.get("duration_sec") or 0
+    try:
+        duration_sec = int(raw_duration)
+    except (TypeError, ValueError):
+        raise MemoSpecError(
+            f"metadata.duration_sec must be an integer, got {raw_duration!r}"
+        )
+
     body = (body or "").strip()
     if len(body) > MAX_BODY_CHARS:
         raise MemoSpecError(
@@ -304,6 +328,9 @@ def _build_spec(fm: dict, body: str, path: Path) -> MemoSpec:
         path=path,
         user_scope=user_scope,
         thread_scope=thread_scope,
+        media_type=media_type,
+        media_path=media_path,
+        duration_sec=duration_sec,
         why=why,
         how_to_apply=how_to_apply,
         extra=extra,
@@ -423,6 +450,9 @@ def render_memo(
     *,
     user_scope: str = "",
     thread_scope: str = "",
+    media_type: str = "",
+    media_path: str = "",
+    duration_sec: int = 0,
     why: str = "",
     how_to_apply: str = "",
 ) -> str:
@@ -470,6 +500,12 @@ def render_memo(
         lines.append(f'  user: "{user_scope}"')
     if thread_scope:
         lines.append(f'  thread: "{thread_scope}"')
+    if media_type:
+        lines.append(f'  media_type: "{media_type}"')
+    if media_path:
+        lines.append(f'  media_path: "{media_path}"')
+    if duration_sec:
+        lines.append(f"  duration_sec: {int(duration_sec)}")
     lines.extend(["---", "", body])
     if why or how_to_apply:
         lines.append("")

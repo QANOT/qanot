@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+
+def _b64_to_bytes(value) -> bytes:
+    """Decode a base64 string to raw bytes; return ``b""`` on any failure.
+
+    The image-download helper sometimes returns bytes directly, sometimes
+    a base64 string (depending on caller). The multimodal memo writer
+    needs raw bytes either way, so we coerce here.
+    """
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        try:
+            return base64.b64decode(value, validate=False)
+        except (ValueError, TypeError):
+            return b""
+    return b""
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -592,6 +612,120 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             return None
         return user_id, self._conv_key(message)
 
+    # ── Multimodal memo helpers ─────────────────────────────────
+    #
+    # These run as background tasks fired from ``_handle_message`` so the
+    # user's reply isn't delayed by the disk/embedding work. Either method
+    # is a strict no-op when the agent has no memo router attached.
+
+    async def _save_voice_memo_from_message(
+        self, message: Message, transcript: str,
+    ) -> None:
+        """Download the voice payload again and hand it to save_voice_memo.
+
+        We deliberately re-download rather than threading the file path
+        through ``transcribe_voice`` — keeps the two responsibilities
+        decoupled and the second fetch is small (~50KB typical voice
+        notes; Telegram CDN is fast). Failure here is fatal-silent: the
+        user's reply already shipped, we don't want a memo write
+        retry storm.
+        """
+        agent = getattr(self, "agent", None)
+        if agent is None or getattr(agent, "_memo_router", None) is None:
+            return
+        if not transcript or not transcript.strip():
+            return
+
+        voice = message.voice or message.video_note
+        if voice is None:
+            return
+        duration_sec = int(getattr(voice, "duration", 0) or 0)
+
+        import tempfile
+        from qanot.memos import save_voice_memo
+
+        suffix = ".ogg" if message.voice else ".mp4"
+        tmp = tempfile.mktemp(suffix=suffix)
+        try:
+            await self.bot.download(voice, destination=tmp)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("voice memo: download failed: %s", exc)
+            return
+
+        thread_id = (
+            str(message.message_thread_id) if message.message_thread_id else ""
+        )
+        user_id = str(message.from_user.id) if message.from_user else ""
+        try:
+            await save_voice_memo(
+                audio_src_path=tmp,
+                transcript=transcript,
+                duration_sec=duration_sec,
+                workspace_dir=self.config.workspace_dir,
+                user_id=user_id,
+                thread_id=thread_id,
+                audio_suffix=suffix,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("voice memo: save failed: %s", exc)
+        finally:
+            try:
+                Path(tmp).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def _save_image_memo_from_message(
+        self, message: Message, image_data: dict, caption_or_text: str,
+    ) -> None:
+        """Persist a photo + caption-derived description as a memo.
+
+        We don't run Haiku extraction here — that's the agent loop's
+        pre-turn responsibility (``qanot/extraction.py``). For the memo
+        we use the user's caption (when present) as the description,
+        falling back to a generic one. The richer post-extraction
+        description can be promoted onto the memo by a follow-up task
+        later; for now this gives us "the image exists, here's what the
+        user said about it" which is enough for semantic recall.
+        """
+        agent = getattr(self, "agent", None)
+        if agent is None or getattr(agent, "_memo_router", None) is None:
+            return
+
+        # download_photo returns {"type": "image", "source": {...}, "data": bytes}
+        # OR {"type": "image", "media_type": "image/jpeg", "data": b64} — we
+        # accept the raw-bytes form. Image_data may also carry a "bytes" key
+        # depending on caller; be tolerant.
+        raw = (
+            image_data.get("raw_bytes")
+            or image_data.get("bytes")
+            or _b64_to_bytes(image_data.get("data"))
+        )
+        if not raw:
+            logger.debug("image memo: no raw bytes available, skipping")
+            return
+
+        description = (caption_or_text or "User-supplied image.").strip()
+        if not description:
+            description = "User-supplied image."
+
+        thread_id = (
+            str(message.message_thread_id) if message.message_thread_id else ""
+        )
+        user_id = str(message.from_user.id) if message.from_user else ""
+
+        from qanot.memos import save_image_memo
+
+        try:
+            await save_image_memo(
+                image_bytes=raw,
+                description_text=description,
+                workspace_dir=self.config.workspace_dir,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image memo: save failed: %s", exc)
+
     async def _handle_message(self, message: Message, *, is_voice: bool = False) -> None:
         if not message.from_user:
             return
@@ -670,6 +804,14 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             if transcript:
                 text = f"{transcript} {text}".strip()
                 voice_request = True
+                # Fire-and-forget: persist the audio + transcript as a
+                # retrievable memo. Costs one extra HTTP round trip to
+                # Telegram CDN and an embedding pass — both cheap. Failure
+                # is logged but never blocks the user's reply.
+                asyncio.create_task(
+                    self._save_voice_memo_from_message(message, transcript),
+                    name=f"voice-memo-{message.chat.id}",
+                )
             else:
                 await self._send_final(
                     message.chat.id,
@@ -684,6 +826,18 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 images.append(image_data)
                 if not text:
                     text = "Bu rasmni tahlil qiling."
+                # Background: persist the image as a retrievable memo.
+                # Skipped silently when the agent has no memo router
+                # attached (RAG/FastEmbed disabled). The actual image
+                # description is filled in later — see _save_image_memo
+                # — because the pre-turn extractor runs inside the agent
+                # loop, not here.
+                asyncio.create_task(
+                    self._save_image_memo_from_message(
+                        message, image_data, text,
+                    ),
+                    name=f"image-memo-{message.chat.id}",
+                )
 
         if message.sticker:
             sticker_data = await download_sticker(self.bot, message)

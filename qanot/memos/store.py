@@ -173,6 +173,9 @@ class MemoStore:
         *,
         user_scope: str = "",
         thread_scope: str = "",
+        media_type: str = "",
+        media_path: str = "",
+        duration_sec: int = 0,
         why: str = "",
         how_to_apply: str = "",
     ) -> WriteResult:
@@ -184,11 +187,17 @@ class MemoStore:
         router will keep using the latest description for relevance
         scoring; old versions are not retained — the file's git history
         (or, in workspace terms, the periodic backup) is the audit log.
+
+        ``media_*`` kwargs let the multimodal writer attach voice/image
+        references; ``""`` defaults give plain-text memos the same shape
+        as before.
         """
         # Render via the spec module so validation lives in one place.
         content = render_memo(
             name=name, description=description, memo_type=memo_type, body=body,
             user_scope=user_scope, thread_scope=thread_scope,
+            media_type=media_type, media_path=media_path,
+            duration_sec=duration_sec,
             why=why, how_to_apply=how_to_apply,
         )
         path = self.root / f"{name}.md"
