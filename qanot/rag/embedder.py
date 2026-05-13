@@ -94,15 +94,21 @@ class FastEmbedEmbedder(Embedder):
     # (~1-2% on MTEB). Override per-bot via ``config.rag_embedder_model``.
     DEFAULT_MODEL = "nomic-ai/nomic-embed-text-v1.5-Q"
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, cache_dir: str | None = None):
         from fastembed import TextEmbedding
+        import os
 
         model_name = model or self.DEFAULT_MODEL
-        self._model = TextEmbedding(model_name)
+        # Persist the ONNX weights on the mounted /data volume so container
+        # restarts don't re-download (HF download mid-startup is what caused
+        # the 2026-05-13 restart loop — the model never finished downloading
+        # before the next restart fired).
+        cache = cache_dir or os.environ.get("FASTEMBED_CACHE_DIR") or None
+        self._model = TextEmbedding(model_name, cache_dir=cache)
         self.dimensions = 768
         logger.info(
-            "FastEmbed initialized: %s (CPU, %d dims)",
-            model_name, self.dimensions,
+            "FastEmbed initialized: %s (CPU, %d dims, cache=%s)",
+            model_name, self.dimensions, cache or "<default>",
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
