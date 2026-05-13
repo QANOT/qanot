@@ -543,6 +543,7 @@ class TgChannelPlugin(Plugin):
                 "buttons": {"type": "array"},
             },
         },
+        validate_fields={"text": "Telegram channel edited post"},
     )
     async def channel_edit(self, params: dict) -> str:
         if self._client is None:
@@ -819,6 +820,7 @@ class TgChannelPlugin(Plugin):
                 "buttons": {"type": "array"},
             },
         },
+        validate_fields={"caption": "Telegram channel photo caption"},
     )
     async def channel_post_photo(self, params: dict) -> str:
         return await self._post_single_media(params, method="photo", required_param="photo")

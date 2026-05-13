@@ -102,7 +102,7 @@ def build_system_prompt(
     user_id: str = "",
     skill_index: str = "",
     active_skills_content: str = "",
-    inject_legacy_memory: bool = True,
+    inject_legacy_memory: bool | str = True,
 ) -> str:
     """Build the full system prompt from workspace files.
 
@@ -291,7 +291,15 @@ def build_system_prompt(
         # When disabled (the production setting once the memory tool is
         # adopted), the agent must `memory view /memories/` or `rag_search`
         # to retrieve facts. Saves ~1400 tokens/turn.
-        if inject_legacy_memory:
+        #
+        # The "auto" mode (default in 2026-05-14+) inspects the memos/
+        # directory and turns legacy injection OFF once enough feedback-
+        # typed memos exist. This makes the cutover free of explicit
+        # config changes — adoption is observable from the filesystem.
+        legacy_inject = _resolve_legacy_injection(
+            inject_legacy_memory, workspace_dir,
+        )
+        if legacy_inject:
             # SESSION-STATE.md — changes on every WAL write (DYNAMIC)
             if state := _read_file(ws / "SESSION-STATE.md"):
                 _add_dynamic(f"# Current Session State\n\n{state}", "SESSION-STATE")
@@ -366,6 +374,38 @@ def build_system_prompt(
         full = full.replace(key, value)
 
     return full
+
+
+def _resolve_legacy_injection(setting: bool | str, workspace_dir: str) -> bool:
+    """Resolve the ``inject_legacy_memory`` config to a concrete boolean.
+
+    Modes:
+      - True   → always inject
+      - False  → never inject
+      - "auto" → inject only when the memos/ directory has fewer than
+        the configured threshold of feedback-typed memos. The threshold
+        is treated as 3 here; the canonical knob lives in Config but
+        we don't import Config to avoid a circular dep — the value is
+        small and stable enough to inline.
+    """
+    if isinstance(setting, bool):
+        return setting
+    if not isinstance(setting, str):
+        return True  # safety: unknown type → keep legacy behavior
+    if setting.lower() != "auto":
+        return True
+    # Auto: count feedback memos. We do this lazily and cheaply — a
+    # directory glob, no parsing.
+    try:
+        from qanot.memos import MemoStore, MemoType
+        store = MemoStore(workspace_dir)
+        feedback = sum(
+            1 for m in store.list_all() if m.type == MemoType.FEEDBACK
+        )
+    except Exception as exc:  # noqa: BLE001 — never let auto-check break prompt
+        logger.warning("legacy injection auto check failed: %s", exc)
+        return True
+    return feedback < 3
 
 
 def _read_file(path: Path) -> str:

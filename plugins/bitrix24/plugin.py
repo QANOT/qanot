@@ -375,13 +375,20 @@ class QanotPlugin(Plugin):
                 return self._ok(await c.call("tasks.task.add", {"fields": fields}))
             except Exception as e:
                 return self._err(str(e))
-        tools.append(ToolDef("bitrix24_create_task", "Yangi vazifa yaratish.", {
-            "type": "object", "required": ["TITLE"], "properties": {
-                "TITLE": {"type": "string", "description": "Vazifa nomi"},
-                "DESCRIPTION": {"type": "string", "description": "Vazifa tavsifi"},
-                "DEADLINE": {"type": "string", "description": "Muddat (YYYY-MM-DD HH:MM:SS)"},
-                "RESPONSIBLE_ID": {"type": "number", "description": "Mas'ul shaxs ID"},
-            }}, create_task))
+        tools.append(ToolDef(
+            "bitrix24_create_task", "Yangi vazifa yaratish.", {
+                "type": "object", "required": ["TITLE"], "properties": {
+                    "TITLE": {"type": "string", "description": "Vazifa nomi"},
+                    "DESCRIPTION": {"type": "string", "description": "Vazifa tavsifi"},
+                    "DEADLINE": {"type": "string", "description": "Muddat (YYYY-MM-DD HH:MM:SS)"},
+                    "RESPONSIBLE_ID": {"type": "number", "description": "Mas'ul shaxs ID"},
+                }},
+            create_task,
+            validate_fields={
+                "TITLE": "Bitrix24 task title",
+                "DESCRIPTION": "Bitrix24 task description",
+            },
+        ))
 
         # ── ACTIVITIES (Deyatelnosti / Dela) ──
         async def get_activities(p: dict) -> str:

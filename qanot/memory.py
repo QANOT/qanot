@@ -184,12 +184,34 @@ def wal_write(
 
     logger.debug("WAL wrote %d entries to SESSION-STATE.md", len(entries))
 
-    # Save durable facts to MEMORY.md (names, preferences, explicit "remember" requests)
-    if durable := [e for e in entries if e.category in DURABLE_CATEGORIES]:
+    # Save durable facts to MEMORY.md.
+    #
+    # Categories that the structured-memo extractor handles (remember /
+    # preference / correction — see _MEMO_TRIGGER_CATEGORIES in the
+    # agent preprocessor) are intentionally EXCLUDED here: they already
+    # land as files under memories/ via the Haiku-backed extractor, and
+    # double-writing as a MEMORY.md bullet creates a stale duplicate that
+    # the router can't see and the curator can't archive.
+    #
+    # The remaining durable categories (proper_noun, specific_value) keep
+    # the bullet path for now — those are short factual snippets the
+    # extractor isn't tuned for.
+    durable = [
+        e for e in entries
+        if e.category in DURABLE_CATEGORIES
+        and e.category not in _STRUCTURED_MEMO_CATEGORIES
+    ]
+    if durable:
         _append_to_memory(durable, workspace_dir, user_id)
 
     # Notify hooks with combined content
     _notify_hooks("".join(lines), "SESSION-STATE.md")
+
+
+# Categories whose persistence path is the structured memo writer
+# (qanot/memos/extractor.py via the agent preprocessor). Excluded from
+# MEMORY.md bullet writes to prevent double-storage.
+_STRUCTURED_MEMO_CATEGORIES: set[str] = {"remember", "preference", "correction"}
 
 
 def _append_to_memory(

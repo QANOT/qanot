@@ -238,7 +238,21 @@ class Config:
     # injection becomes redundant and wastes ~1400 tokens/turn. Flip to False
     # once /memories/ has adequate content; the files stay on disk and remain
     # retrievable via rag_search + the memory tool.
-    inject_legacy_memory: bool = True
+    #
+    # Three modes:
+    #   True   — always inject MEMORY.md + SESSION-STATE.md (legacy default)
+    #   False  — never inject; rely on memo router + memory tool
+    #   "auto" — inject only when memories/ is empty or has fewer feedback
+    #            memos than ``inject_legacy_memory_auto_threshold``. Lets us
+    #            ship the cutover without an explicit config update — when
+    #            the migration is complete and curator-managed memos exist,
+    #            the legacy block silently turns off.
+    inject_legacy_memory: bool | str = "auto"
+    # Auto mode threshold: legacy injection turns OFF once at least this
+    # many feedback-typed memos exist for the current workspace. 3 is
+    # conservative — at that point the user has a non-trivial rule
+    # surface and the router can replace the buried-bullet path.
+    inject_legacy_memory_auto_threshold: int = 3
     # Anthropic context editing (context-management-2025-06-27 beta).
     # Pairs with the memory tool: auto-clears older tool_result blocks from
     # the request so `memory view` results don't accumulate across turns.

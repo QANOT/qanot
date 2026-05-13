@@ -397,12 +397,16 @@ class QanotPlugin(Plugin):
                 return self._ok(await c.post(f"/{entity_type}/{entity_id}/notes", body))
             except Exception as e:
                 return self._err(str(e))
-        tools.append(ToolDef("amocrm_add_note", "Lid yoki kontaktga izoh qo'shish.", {
-            "type": "object", "required": ["entity_id", "text"], "properties": {
-                "entity_id": {"type": "number", "description": "Lid yoki kontakt ID"},
-                "entity_type": {"type": "string", "description": "leads yoki contacts (default: leads)"},
-                "text": {"type": "string", "description": "Izoh matni"},
-            }}, add_note))
+        tools.append(ToolDef(
+            "amocrm_add_note", "Lid yoki kontaktga izoh qo'shish.", {
+                "type": "object", "required": ["entity_id", "text"], "properties": {
+                    "entity_id": {"type": "number", "description": "Lid yoki kontakt ID"},
+                    "entity_type": {"type": "string", "description": "leads yoki contacts (default: leads)"},
+                    "text": {"type": "string", "description": "Izoh matni"},
+                }},
+            add_note,
+            validate_fields={"text": "amoCRM note text"},
+        ))
 
         # ── USERS (Foydalanuvchilar) ──
         _simple("amocrm_get_users", "CRM foydalanuvchilari (menejerlar) ro'yxati.", "/users", {

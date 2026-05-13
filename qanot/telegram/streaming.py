@@ -175,6 +175,14 @@ class StreamingMixin:
         """Send the final formatted message, splitting if needed."""
         if not text:
             return
+        # Run the reply text through the memo validator BEFORE HTML formatting
+        # so a feedback-typed memo can rewrite the response before the user
+        # sees it. This is the final-reply layer of the buried-bullet bug
+        # fix — the registry validator catches tool-call text, this catches
+        # the assistant's narrative reply. No-op when no rules in scope.
+        text = await self._maybe_validate_reply(
+            text, thread_id=thread_id,
+        )
         text = _sanitize_response(text)
         html = _md_to_html(text)
         chunks = _split_text(html)
@@ -223,6 +231,56 @@ class StreamingMixin:
             except Exception as e:
                 logger.error("Failed to send message: %s", e)
                 return 0
+
+    async def _maybe_validate_reply(
+        self, text: str, *, thread_id: int | None = None,
+    ) -> str:
+        """Run the assistant's reply through the memo validator.
+
+        Used by ``_send_final`` to catch rule violations the registry
+        couldn't (e.g. the LLM put a banned phrase in the narrative
+        reply rather than in a tool input). Falls back to the original
+        text on any failure — we never block a response on validator
+        issues. Returns the verified (possibly rewritten) text.
+        """
+        if not text or not text.strip():
+            return text
+        agent = getattr(self, "agent", None)
+        if agent is None:
+            return text
+        provider = getattr(agent, "provider", None)
+        client = getattr(provider, "client", None) if provider else None
+        if client is None or not hasattr(client, "messages"):
+            return text
+        user_id = (
+            str(agent.current_user_id) if getattr(agent, "current_user_id", None) else None
+        )
+        thread_str = str(thread_id) if thread_id else None
+        try:
+            from qanot.memos import build_runtime
+            runtime = build_runtime(
+                client=client,
+                workspace_dir=self.config.workspace_dir,
+                user_id=user_id,
+                thread_id=thread_str,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memo reply validator build failed: %s", exc)
+            return text
+        if runtime is None:
+            return text
+        try:
+            result = await runtime(text, field_context="Telegram reply text")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memo reply validator call failed: %s", exc)
+            return text
+        if result is None or not getattr(result, "was_changed", False):
+            return text
+        logger.info(
+            "memo reply validator rewrote response: %d violation(s)",
+            len(getattr(result, "violations", []) or []),
+        )
+        return result.verified
 
     async def send_message(self, chat_id: int, text: str) -> None:
         """Public method to send a message to a chat (used by sub-agents)."""

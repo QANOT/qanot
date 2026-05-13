@@ -187,14 +187,18 @@ class QanotPlugin(Plugin):
                 return self._ok(await c.post("message/sms/send", form=form))
             except Exception as e:
                 return self._err(str(e))
-        tools.append(ToolDef("eskiz_send_sms",
-                             "SMS xabar yuborish. Telefon raqam va matn kiritiladi.",
-                             {"type": "object", "required": ["phone", "message"], "properties": {
-                                 "phone": {"type": "string", "description": "Telefon raqam (998901234567 formatda)"},
-                                 "message": {"type": "string", "description": "Xabar matni"},
-                                 "from": {"type": "string", "description": "Yuboruvchi nomi (alpha-name). Default: 4546"},
-                                 "callback_url": {"type": "string", "description": "Yetkazish holatini yuborish URL (webhook)"},
-                             }}, send_sms))
+        tools.append(ToolDef(
+            "eskiz_send_sms",
+            "SMS xabar yuborish. Telefon raqam va matn kiritiladi.",
+            {"type": "object", "required": ["phone", "message"], "properties": {
+                "phone": {"type": "string", "description": "Telefon raqam (998901234567 formatda)"},
+                "message": {"type": "string", "description": "Xabar matni"},
+                "from": {"type": "string", "description": "Yuboruvchi nomi (alpha-name). Default: 4546"},
+                "callback_url": {"type": "string", "description": "Yetkazish holatini yuborish URL (webhook)"},
+            }},
+            send_sms,
+            validate_fields={"message": "Eskiz SMS body"},
+        ))
 
         async def send_batch(p: dict) -> str:
             try:
