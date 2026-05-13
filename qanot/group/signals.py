@@ -91,8 +91,11 @@ def collect_signals(
             score.add(1, "username-substring")
 
     # Signal 2: direct address words at start/end of message.
+    # Strong signal — the vocative "qanot, …" or "…, qanot" is the
+    # text-only equivalent of @-mention. Production-tuned: +1 was too
+    # quiet ("salom qanot" stayed unanswered in real chats).
     if _matches_direct_address(text):
-        score.add(1, "direct-address")
+        score.add(3, "direct-address")
 
     # Signal 3: bot was active in this chat very recently.
     # Strong signal that a back-and-forth is in progress.

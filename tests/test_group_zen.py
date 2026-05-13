@@ -148,13 +148,13 @@ def test_reply_to_recent_bot_strong_signal():
 def test_signals_compose_additively():
     """Multiple signals should stack into a high score."""
     s = collect_signals(
-        text="qanot, rahmat!",       # direct-address +1
+        text="qanot, rahmat!",       # direct-address +3
         bot_username="qanotbot",
         seconds_since_bot_reply=5.0,  # recent +2
         last_bot_reply_text="Yaxshi!",  # not a question
         is_reply_to_recent_bot=True,    # reply-thread +2
     )
-    assert s.total == 1 + 2 + 2  # direct + recent + reply
+    assert s.total == 3 + 2 + 2  # direct + recent + reply
     assert len(s.reasons) == 3
 
 
@@ -325,10 +325,14 @@ def test_unmute_request_while_muted_responds():
 
 
 def test_below_threshold_stays_quiet():
+    """A weak signal (username substring only, no direct address) must
+    stay below the default threshold of 3."""
     state = GroupChatState()
     c = GroupZenClassifier(config=_Cfg(zen_signal_threshold=3), state=state)
     d = _decide(
-        c, chat_id=-100, text="qanot",  # +1 (direct-address)
+        c, chat_id=-100,
+        # Username substring (+1) only — no vocative pattern matches.
+        text="o'rtoqlar qanotbot haqida eshitganmisizlar?",
         bot_username="qanotbot",
         is_command=False, is_at_mention=False,
         is_reply_to_bot_last=False, is_reply_to_recent_bot=False,
@@ -336,6 +340,23 @@ def test_below_threshold_stays_quiet():
     assert d.respond is False
     assert "below-threshold" in d.reason
     assert d.score == 1
+
+
+def test_direct_address_alone_now_responds():
+    """Regression: production-tuned — vocative 'salom qanot' was
+    previously +1 (under threshold) and went unanswered. Now +3 =
+    threshold, so plain direct address responds even without recency
+    or reply-to-bot signals."""
+    state = GroupChatState()
+    c = GroupZenClassifier(config=_Cfg(zen_signal_threshold=3), state=state)
+    d = _decide(
+        c, chat_id=-100, text="salom qanot",
+        bot_username="topkeydevbot",
+        is_command=False, is_at_mention=False,
+        is_reply_to_bot_last=False, is_reply_to_recent_bot=False,
+    )
+    assert d.respond is True
+    assert d.score >= 3
 
 
 def test_score_above_threshold_responds():
