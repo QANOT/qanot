@@ -97,30 +97,31 @@ def collect_signals(
     if _matches_direct_address(text):
         score.add(3, "direct-address")
 
-    # Signal 3: bot was active in this chat very recently.
-    # Strong signal that a back-and-forth is in progress.
+    # Signal 3: bot was active in this chat very recently. WEAK signal
+    # by design — recency alone must NOT trigger a response. Otherwise
+    # any message in a group becomes a reply candidate just because the
+    # bot spoke 30 seconds ago (false positive observed in production:
+    # "salom hammaga" got answered because bot had just replied with "?").
     if (
         seconds_since_bot_reply is not None
         and seconds_since_bot_reply <= RECENT_REPLY_SECONDS
     ):
-        score.add(2, "recent-bot-activity")
+        score.add(1, "recent-bot-activity")
 
-    # Signal 4: bot's previous reply ended with a question mark AND
-    # user is replying soon (in same recency window). Strong follow-up.
-    if (
-        last_bot_reply_text
-        and seconds_since_bot_reply is not None
-        and seconds_since_bot_reply <= RECENT_REPLY_SECONDS
-        and last_bot_reply_text.rstrip().endswith(("?", "؟"))
-    ):
-        score.add(2, "answering-bot-question")
-
-    # Signal 5: user replied (Telegram-level) to a bot message that's
-    # outside Layer 1's reach (e.g. older than the immediate prior turn,
-    # or a different bot message in the chat). Telegram replies are an
-    # explicit conversational signal — weight strong.
+    # Signal 4: user replied (Telegram-level) to a bot message. Explicit
+    # addressee signal — high weight. Layer 1 catches the immediate
+    # prior-turn reply; this picks up replies to older bot messages.
     if is_reply_to_recent_bot:
-        score.add(2, "reply-to-bot-thread")
+        score.add(3, "reply-to-bot-thread")
+
+    # NOTE: an earlier prototype scored "bot's last reply ended with ?
+    # AND user spoke within the recency window" as +2 ("answering-bot-
+    # question"). Removed because it fires regardless of WHAT the user
+    # said — a bot that asked "how can I help?" then saw "salom hammaga"
+    # (a greeting to everyone in the group, not the bot) would respond.
+    # The signal lacked addressee evidence. The user can still trigger
+    # a reply by using Telegram's reply gesture (caught by Layer 1 /
+    # reply-to-bot-thread above) or by addressing the bot vocatively.
 
     return score
 

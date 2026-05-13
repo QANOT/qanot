@@ -174,21 +174,22 @@ class GroupZenClassifier:
         # ── Layer 4: anti-spam ────────────────────────────────────
         # Per-chat cooldown — if the bot replied very recently we hold
         # off to avoid a back-to-back firehose. Score-passing messages
-        # that fall inside the cooldown are dropped, not deferred —
-        # there's no message queue in zen mode.
+        # that fall inside the cooldown are dropped, not deferred.
         #
-        # Exception: if the user is directly answering a question the
-        # bot asked, bypass the cooldown. Otherwise question/answer
-        # pairs (which all happen within 30s by definition) would get
-        # eaten by the rate limiter.
+        # Exception: explicit-address signals (direct-address vocative,
+        # reply-to-bot-thread) bypass the cooldown. Q&A pairs and
+        # follow-ups need to flow naturally; the user explicitly chose
+        # to address the bot, so we shouldn't punish them for the bot's
+        # own recent activity.
         if (
             seconds_since is not None
             and seconds_since < self._config.zen_response_cooldown_seconds
         ):
-            answering_question = any(
-                "answering-bot-question" in r for r in score.reasons
+            explicit_address = any(
+                ("direct-address" in r) or ("reply-to-bot-thread" in r)
+                for r in score.reasons
             )
-            if not answering_question:
+            if not explicit_address:
                 return ZenDecision(
                     respond=False,
                     reason=f"cooldown ({seconds_since:.1f}s<{self._config.zen_response_cooldown_seconds}s)",

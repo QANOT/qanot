@@ -85,7 +85,10 @@ def test_direct_address_at_end_of_message():
     assert any("direct-address" in r for r in s.reasons)
 
 
-def test_recent_bot_activity_strong_signal():
+def test_recent_bot_activity_weak_signal():
+    """Recency alone is a WEAK signal — production found +2 made the
+    bot reply to random messages just because it spoke recently. Now
+    +1, never enough on its own to cross the default threshold of 3."""
     s = collect_signals(
         text="rahmat",
         bot_username="qanotbot",
@@ -94,8 +97,8 @@ def test_recent_bot_activity_strong_signal():
         is_reply_to_recent_bot=False,
     )
     assert any("recent-bot-activity" in r for r in s.reasons)
-    # +2 weight
-    assert s.total >= 2
+    # Weak weight — recency alone never enough.
+    assert s.total == 1
 
 
 def test_stale_bot_reply_does_not_fire_recency():
@@ -109,8 +112,12 @@ def test_stale_bot_reply_does_not_fire_recency():
     assert not any("recent-bot-activity" in r for r in s.reasons)
 
 
-def test_answering_bot_question_strong_signal():
-    """Bot asked '...?' just now, user replies — strong follow-up."""
+def test_answering_bot_question_signal_removed():
+    """Regression doc: the 'answering-bot-question' signal was removed
+    after production found it firing on unrelated greetings like
+    'salom hammaga' whenever the bot's prior turn happened to end with
+    '?'. Users now need an explicit address (direct-address or Telegram
+    reply) — '?' alone is no longer enough."""
     s = collect_signals(
         text="ha, asosan oltin",
         bot_username="qanotbot",
@@ -118,20 +125,10 @@ def test_answering_bot_question_strong_signal():
         last_bot_reply_text="Qaysi mavzu sizni qiziqtiradi?",
         is_reply_to_recent_bot=False,
     )
-    assert any("answering-bot-question" in r for r in s.reasons)
-
-
-def test_question_signal_requires_recency():
-    """Stale question doesn't count — user might be discussing
-    something else now."""
-    s = collect_signals(
-        text="ha",
-        bot_username="qanotbot",
-        seconds_since_bot_reply=300.0,  # 5 min — outside window
-        last_bot_reply_text="Qaysi mavzu?",
-        is_reply_to_recent_bot=False,
-    )
-    assert not any("answering-bot-question" in r for r in s.reasons)
+    # No question-answering signal anywhere in the reasons.
+    assert not any("answering" in r for r in s.reasons)
+    # Recency still gives +1; nothing else.
+    assert s.total == 1
 
 
 def test_reply_to_recent_bot_strong_signal():
@@ -150,11 +147,11 @@ def test_signals_compose_additively():
     s = collect_signals(
         text="qanot, rahmat!",       # direct-address +3
         bot_username="qanotbot",
-        seconds_since_bot_reply=5.0,  # recent +2
+        seconds_since_bot_reply=5.0,  # recent +1
         last_bot_reply_text="Yaxshi!",  # not a question
-        is_reply_to_recent_bot=True,    # reply-thread +2
+        is_reply_to_recent_bot=True,    # reply-thread +3
     )
-    assert s.total == 3 + 2 + 2  # direct + recent + reply
+    assert s.total == 3 + 1 + 3  # direct + recent + reply
     assert len(s.reasons) == 3
 
 
@@ -395,28 +392,51 @@ def test_random_chatter_ignored():
 # ────────── Classifier: Layer 4 anti-spam ──────────
 
 
-def test_cooldown_blocks_rapid_followup():
+def test_cooldown_blocks_rapid_followup_without_explicit_address():
+    """A score-passing message without an explicit address signal
+    (no direct-address, no Telegram reply) inside the cooldown window
+    is blocked. Tests the basic anti-spam guard."""
     state = GroupChatState()
     state.record_bot_reply(-100, text="OK", message_id=1, now=1000.0)
     c = GroupZenClassifier(
         config=_Cfg(zen_signal_threshold=2, zen_response_cooldown_seconds=30),
         state=state,
     )
-    # 5s after bot reply: still in cooldown. User typing a generic
-    # follow-up that DOESN'T look like answering a question.
+    # username +1, recent +1 = 2 (passes threshold)
+    # but no direct-address and no reply → cooldown applies
     d = _decide(
-        c, chat_id=-100, text="qanotbot",  # username +1
+        c, chat_id=-100, text="qanotbot haqida nima fikrdasiz?",
         bot_username="qanotbot",
         is_command=False, is_at_mention=False,
-        is_reply_to_bot_last=False, is_reply_to_recent_bot=True,  # +2
+        is_reply_to_bot_last=False, is_reply_to_recent_bot=False,
         now=1005.0,
     )
     assert d.respond is False
     assert "cooldown" in d.reason
 
 
-def test_cooldown_bypassed_when_answering_question():
-    """User answering bot's question shouldn't be eaten by cooldown."""
+def test_cooldown_bypassed_by_direct_address():
+    """A vocative 'qanot, …' inside the cooldown window MUST bypass
+    the rate limiter — explicit address means the user wants to talk."""
+    state = GroupChatState()
+    state.record_bot_reply(-100, text="OK", message_id=1, now=1000.0)
+    c = GroupZenClassifier(
+        config=_Cfg(zen_signal_threshold=2, zen_response_cooldown_seconds=30),
+        state=state,
+    )
+    d = _decide(
+        c, chat_id=-100, text="qanot, rahmat",  # direct +3
+        bot_username="qanotbot",
+        is_command=False, is_at_mention=False,
+        is_reply_to_bot_last=False, is_reply_to_recent_bot=False,
+        now=1005.0,
+    )
+    assert d.respond is True
+
+
+def test_cooldown_bypassed_by_telegram_reply():
+    """Replying to the bot's message via Telegram's reply gesture also
+    bypasses the cooldown — explicit conversational signal."""
     state = GroupChatState()
     state.record_bot_reply(
         -100, text="Qaysi mavzu?", message_id=1, now=1000.0,
@@ -429,12 +449,33 @@ def test_cooldown_bypassed_when_answering_question():
         c, chat_id=-100, text="oltin haqida",
         bot_username="qanotbot",
         is_command=False, is_at_mention=False,
+        is_reply_to_bot_last=False, is_reply_to_recent_bot=True,  # +3
+        now=1005.0,
+    )
+    assert d.respond is True
+
+
+def test_random_greeting_after_bot_question_stays_quiet():
+    """The actual production bug — 'salom hammaga' after the bot asked
+    a question used to fire because answering-bot-question(+2) +
+    recent(+2) = 4 crossed threshold. Now: recent(+1) alone is
+    insufficient, and there's no answering-bot-question signal at all.
+    Bot must stay quiet."""
+    state = GroupChatState()
+    state.record_bot_reply(
+        -100, text="Nima qilsak bo'ladi bugun?", message_id=1, now=1000.0,
+    )
+    c = GroupZenClassifier(config=_Cfg(zen_signal_threshold=3), state=state)
+    d = _decide(
+        c, chat_id=-100, text="salom hammaga",
+        bot_username="qanotbot",
+        is_command=False, is_at_mention=False,
         is_reply_to_bot_last=False, is_reply_to_recent_bot=False,
         now=1005.0,
     )
-    # answering-bot-question +2 + recent-bot-activity +2 = 4 → above
-    # threshold AND should bypass cooldown
-    assert d.respond is True
+    assert d.respond is False, (
+        f"bot should not engage with 'salom hammaga' — got {d.reason}"
+    )
 
 
 def test_rate_cap_per_minute_blocks_burst():
