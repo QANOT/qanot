@@ -178,25 +178,51 @@ class StreamingMixin:
         text = _sanitize_response(text)
         html = _md_to_html(text)
         chunks = _split_text(html)
+        last_message_id = 0
         for i, chunk in enumerate(chunks):
-            await self._send_final_chunk(chat_id, chunk, reply_to=reply_to if i == 0 else None, thread_id=thread_id)
+            sent_id = await self._send_final_chunk(
+                chat_id, chunk,
+                reply_to=reply_to if i == 0 else None,
+                thread_id=thread_id,
+            )
+            if sent_id:
+                last_message_id = sent_id
             await asyncio.sleep(0.1)
 
-    async def _send_final_chunk(self, chat_id: int, html_chunk: str, *, reply_to: int | None = None, thread_id: int | None = None) -> None:
-        """Send a single chunk with HTML fallback to plain text."""
+        # Track bot replies in group chats for zen-mode signal scoring.
+        # No-op when the adapter doesn't have group state wired (e.g.
+        # in older callers, tests, or sub-agent bots).
+        state = getattr(self, "_group_state", None)
+        if state is not None and chat_id < 0 and last_message_id:
+            # chat_id<0 distinguishes Telegram groups/supergroups from
+            # private chats without an extra API call. Bots always have
+            # positive ids; users always positive; groups always negative.
+            state.record_bot_reply(
+                chat_id, text=text, message_id=last_message_id,
+            )
+
+    async def _send_final_chunk(
+        self, chat_id: int, html_chunk: str,
+        *, reply_to: int | None = None, thread_id: int | None = None,
+    ) -> int:
+        """Send a single chunk with HTML fallback to plain text.
+        Returns the sent message_id (0 on failure)."""
         kwargs: dict = {"chat_id": chat_id, "text": html_chunk}
         if reply_to:
             kwargs["reply_to_message_id"] = reply_to
         if thread_id:
             kwargs["message_thread_id"] = thread_id
         try:
-            await self.bot.send_message(**kwargs, parse_mode=ParseMode.HTML)
+            msg = await self.bot.send_message(**kwargs, parse_mode=ParseMode.HTML)
+            return int(getattr(msg, "message_id", 0) or 0)
         except Exception as e:
             logger.debug("HTML parse failed, falling back to plain text: %s", e)
             try:
-                await self.bot.send_message(**kwargs)
+                msg = await self.bot.send_message(**kwargs)
+                return int(getattr(msg, "message_id", 0) or 0)
             except Exception as e:
                 logger.error("Failed to send message: %s", e)
+                return 0
 
     async def send_message(self, chat_id: int, text: str) -> None:
         """Public method to send a message to a chat (used by sub-agents)."""

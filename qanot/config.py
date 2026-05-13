@@ -153,7 +153,26 @@ class Config:
     reactions_enabled: bool = False  # Send emoji reactions (👀, ✅, ❌) on messages
     reply_mode: str = "coalesced"  # "off" | "coalesced" | "always"
     # Group chat
-    group_mode: str = "mention"  # "off" | "mention" | "all"
+    group_mode: str = "mention"  # "off" | "mention" | "all" | "zen"
+    # Zen mode tuning (only consulted when group_mode == "zen"):
+    # — signal_threshold: heuristic score (0-9) above which the bot
+    #   considers replying. Higher = quieter. Default 3 is conservative.
+    # — response_cooldown_seconds: minimum gap between bot replies in
+    #   the same chat (per chat, not per user). Hard rules (@mention,
+    #   reply-to-bot) bypass this.
+    # — max_responses_per_minute: hard ceiling on bot replies per chat
+    #   in any 60-second window. Defends against runaway loops where
+    #   the bot keeps engaging because score keeps hitting threshold.
+    # — history_lookback_turns: how many recent messages the signal
+    #   collector considers when deciding "is bot already in the
+    #   conversation?".
+    # — mute_minutes: duration of the silent state when a user types
+    #   "qanot mute" / "qanot jim tur".
+    zen_signal_threshold: int = 3
+    zen_response_cooldown_seconds: int = 30
+    zen_max_responses_per_minute: int = 4
+    zen_history_lookback_turns: int = 5
+    zen_mute_minutes: int = 10
     # Topic-agent bindings: "chat_id:topic_id" → agent_id
     # Allows binding specific agents to specific forum topics in groups
     topic_bindings: dict[str, str] = field(default_factory=dict)

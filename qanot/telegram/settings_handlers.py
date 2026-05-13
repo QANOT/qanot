@@ -289,6 +289,7 @@ class SettingsHandlersMixin:
         modes = [
             ("off", "Off", "Guruhda javob bermaydi"),
             ("mention", "Mention", "Faqat @bot va reply"),
+            ("zen", "Zen", "Aqlli — kontekstga qarab"),
             ("all", "All", "Barcha xabarlarga javob"),
         ]
 
@@ -821,7 +822,7 @@ class SettingsHandlersMixin:
     async def _cb_group(self, callback: "CallbackQuery", mode: str) -> None:
         self.config.group_mode = mode
         self._save_config_field("group_mode", mode)
-        labels = {"off": "Off", "mention": "Mention", "all": "All"}
+        labels = {"off": "Off", "mention": "Mention", "zen": "Zen", "all": "All"}
         name = labels.get(mode, mode)
         await callback.answer(f"\u2705 Group: {name}")
         try:

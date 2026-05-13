@@ -91,6 +91,15 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self.voicecall_manager = None  # Set by main.py if voicecall_enabled
         # Admin notification throttle: key -> last-sent monotonic time.
         self._admin_notify_last: dict[str, float] = {}
+        # Group zen-mode state + classifier. The classifier is consulted
+        # only when config.group_mode == "zen"; the state is harmless to
+        # keep around either way (it's just an empty in-memory dict).
+        from qanot.group.state import GroupChatState
+        from qanot.group.zen_classifier import GroupZenClassifier
+        self._group_state = GroupChatState()
+        self._zen_classifier = GroupZenClassifier(
+            config=config, state=self._group_state,
+        )
 
     async def notify_admins(self, text: str, throttle_key: str | None = None,
                             throttle_seconds: float = 3600.0) -> None:
@@ -311,7 +320,82 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 if message.reply_to_message.from_user.username == bot_username:
                     return True
             return False
+        if mode == "zen":
+            return await self._zen_should_respond(message)
         return False
+
+    async def _zen_should_respond(self, message: Message) -> bool:
+        """Phase A heuristic-only zen classifier. See qanot/group/zen_classifier."""
+        classifier = getattr(self, "_zen_classifier", None)
+        if classifier is None:
+            # Misconfiguration safety net — fall back to mention semantics
+            # rather than going silent on every message.
+            logger.warning(
+                "group_mode=zen but no classifier wired; falling back to mention",
+            )
+            self.config.group_mode = "mention"
+            return await self._should_respond_in_group(message)
+
+        bot_username = await self._get_bot_username()
+        text = message.text or message.caption or ""
+
+        # Compute Layer 1 inputs in adapter terms (telegram-aware).
+        is_command = bool(text.startswith("/"))
+        is_at_mention = bool(bot_username) and f"@{bot_username}" in text
+
+        # "Reply to bot's last message" is the existing mention-mode
+        # signal. We keep its precise semantics so existing chats don't
+        # regress when switching to zen.
+        is_reply_to_bot_last = False
+        is_reply_to_recent_bot = False
+        if message.reply_to_message and message.reply_to_message.from_user:
+            if message.reply_to_message.from_user.username == bot_username:
+                is_reply_to_bot_last = True
+                # If we've tracked any recent bot reply in this chat,
+                # this also counts as a "thread continuation" signal.
+                state = getattr(self, "_group_state", None)
+                if state is not None and state.last_reply(message.chat.id):
+                    is_reply_to_recent_bot = True
+
+        decision = await classifier.decide(
+            chat_id=message.chat.id,
+            text=text,
+            bot_username=bot_username,
+            is_command=is_command,
+            is_at_mention=is_at_mention,
+            is_reply_to_bot_last=is_reply_to_bot_last,
+            is_reply_to_recent_bot=is_reply_to_recent_bot,
+        )
+
+        # Apply mute/unmute side-effect from the classifier so future
+        # messages see the updated state. Confirmation reply is the
+        # bot's own response if respond=True; otherwise we send a
+        # quiet acknowledgement so the user knows it took effect.
+        state = getattr(self, "_group_state", None)
+        if state is not None and decision.mute_action == "mute":
+            state.mute(message.chat.id, minutes=self.config.zen_mute_minutes)
+            try:
+                await self.bot.send_message(
+                    chat_id=message.chat.id,
+                    text=f"🤫 {self.config.zen_mute_minutes} daqiqa jim turaman.",
+                    message_thread_id=getattr(message, "message_thread_id", None),
+                )
+            except Exception:
+                pass
+        elif state is not None and decision.mute_action == "unmute":
+            state.unmute(message.chat.id)
+
+        logger.info(
+            "zen chat=%s score=%d respond=%s reason=%s",
+            message.chat.id, decision.score, decision.respond, decision.reason,
+        )
+
+        # A "mute" action is its own conversation event — we already
+        # sent the confirmation above, so suppress the agent loop.
+        if decision.mute_action == "mute":
+            return False
+
+        return decision.respond
 
     def _strip_bot_mention(self, text: str, bot_username: str) -> str:
         if not bot_username:
