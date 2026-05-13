@@ -119,6 +119,14 @@ class FastEmbedEmbedder(Embedder):
             model_name, self.dimensions, cache or "<default>", threads,
         )
 
+    # Hard cap on the FastEmbed internal batch. The quantized model deadlocks
+    # when fastembed's default 256-batch tries to process >=11 chunks of
+    # realistic prose in a single ONNX session call (verified 2026-05-13:
+    # chunks[:10] finish in 12s, chunks[:11] hangs forever). Capping at 8
+    # forces fastembed to loop, sidestepping the deadlock with negligible
+    # perf cost (linear ~1.1s/chunk regardless of batch when threads=1).
+    _BATCH_SIZE = 8
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts on CPU via ONNX runtime."""
         import asyncio
@@ -127,7 +135,10 @@ class FastEmbedEmbedder(Embedder):
             return []
 
         def _sync_embed():
-            return [emb.tolist() for emb in self._model.embed(texts)]
+            return [
+                emb.tolist()
+                for emb in self._model.embed(texts, batch_size=self._BATCH_SIZE)
+            ]
 
         return await asyncio.to_thread(_sync_embed)
 
