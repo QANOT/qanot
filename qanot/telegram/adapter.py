@@ -530,6 +530,34 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                         reply_to=(record.message_id or None),
                         thread_id=thread_id,
                     )
+
+                    # Inject the Q&A pair into the agent's conversation
+                    # history so future turns ("natijalar qanday?", "menga
+                    # xulosa ber") can see the answers. Without this the
+                    # evaluator's reply only lives in Telegram — the
+                    # agent's conv_manager doesn't know any polls were
+                    # answered, so it says "Hali javoblar kelmagan" the
+                    # next time the user asks. Bug captured in production
+                    # 12:48 when the user finished Section 3 and the bot
+                    # claimed no answers had arrived.
+                    try:
+                        synthetic = self._poll_registry.build_answer_message(
+                            record, option_ids,
+                        )
+                        messages = self.agent._conv_manager.ensure_messages(
+                            conv_key,
+                        )
+                        messages.append({
+                            "role": "user", "content": synthetic,
+                        })
+                        messages.append({
+                            "role": "assistant", "content": reply,
+                        })
+                    except Exception:
+                        logger.exception(
+                            "could not inject poll Q&A into conv history "
+                            "for conv_key=%s", conv_key,
+                        )
                 except Exception:
                     logger.exception(
                         "_send_final failed for poll reply chat=%s", chat_id,
