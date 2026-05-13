@@ -618,6 +618,63 @@ async def transcribe(
     return await muxlisa_transcribe(audio_path, api_key)
 
 
+_OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
+# OpenAI TTS voices — multi-lingual, native English quality. The model
+# auto-detects the input language; we don't pass a language code.
+_OPENAI_TTS_VOICES = {
+    "alloy", "echo", "fable", "onyx", "nova", "shimmer",
+}
+_OPENAI_TTS_DEFAULT_VOICE = "alloy"
+# tts-1 is the lower-latency / cheaper tier ($15/M chars). tts-1-hd is
+# 2x quality, 2x cost ($30/M chars). For IELTS practice tts-1 suffices.
+_OPENAI_TTS_MODEL = "tts-1"
+
+
+async def openai_tts(
+    text: str,
+    api_key: str,
+    voice: str | None = None,
+) -> TTSResult:
+    """Convert text to speech using OpenAI's tts-1 model.
+
+    Six native voices (alloy/echo/fable/onyx/nova/shimmer). Multi-lingual
+    out of the box — no language code needed; the model picks up the
+    language from the text. Best-in-class English quality for IELTS-
+    style listening practice.
+
+    Pricing (May 2026): tts-1 at $15/M chars (~$0.015 per 1000 chars).
+    """
+    selected_voice = (voice or "").lower()
+    if selected_voice not in _OPENAI_TTS_VOICES:
+        selected_voice = _OPENAI_TTS_DEFAULT_VOICE
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": _OPENAI_TTS_MODEL,
+        "input": text[:4096],  # OpenAI's hard limit
+        "voice": selected_voice,
+        "response_format": "mp3",
+    }
+    session = await _get_session()
+    async with session.post(
+        _OPENAI_TTS_URL, headers=headers, json=payload,
+    ) as resp:
+        if resp.status == 401:
+            raise RuntimeError("OpenAI TTS: unauthorized (401) — bad api_key")
+        if resp.status == 429:
+            raise RuntimeError("OpenAI TTS: rate limit / quota exceeded (429)")
+        if resp.status != 200:
+            body = await resp.text()
+            raise RuntimeError(
+                f"OpenAI TTS error: HTTP {resp.status} — {body[:200]}",
+            )
+        raw = await resp.read()
+        return TTSResult(audio_data=raw, character_count=len(text))
+
+
 async def text_to_speech(
     text: str,
     api_key: str,
@@ -632,7 +689,11 @@ async def text_to_speech(
         muxlisa: Uzbek native (maftuna/asomiddin voices)
         kotib:   6 voices, multi-language (aziza/sherzod/rachel/arnold)
         aisha:   Uzbek native with mood control (gulnoza/jaxongir)
+        openai:  tts-1, six native voices, best-in-class English
+                 (alloy/echo/fable/onyx/nova/shimmer). Multi-lingual.
     """
+    if provider == "openai":
+        return await openai_tts(text, api_key, voice)
     if provider == "kotib":
         return await kotib_tts(text, api_key, language, voice)
     if provider == "aisha":

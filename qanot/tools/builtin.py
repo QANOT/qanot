@@ -866,14 +866,17 @@ def register_builtin_tools(
             return json.dumps({"error": f"config load failed: {e}"})
 
         provider = provider or cfg.voice_provider or "muxlisa"
-        # Aisha is the only multi-lingual provider — auto-select when
-        # the caller asks for non-Uzbek output and didn't specify a
-        # provider. Saves the agent from having to know our provider
-        # lineup.
+        # Auto-pick the best provider for the requested language unless
+        # the caller pinned one. Order: OpenAI (best multi-lingual) →
+        # Aisha (good uz/en/ru) → fall through to the config default.
         if language and language != "uz" and not params.get("provider"):
-            api_key_aisha = cfg.get_voice_api_key("aisha")
-            if api_key_aisha:
-                provider = "aisha"
+            api_key_openai = cfg.get_voice_api_key("openai")
+            if api_key_openai:
+                provider = "openai"
+            else:
+                api_key_aisha = cfg.get_voice_api_key("aisha")
+                if api_key_aisha:
+                    provider = "aisha"
 
         api_key = cfg.get_voice_api_key(provider)
         if not api_key:
@@ -961,12 +964,13 @@ def register_builtin_tools(
             "Generate audio from text via TTS and send as a Telegram "
             "voice message into the current chat. Lands in the open "
             "thread when one is active. "
-            "Languages: 'uz' (Muxlisa/KotibAI/Aisha), 'en' (Aisha — "
-            "best quality), 'ru' (Aisha). For English IELTS practice "
-            "or non-Uzbek content, pass language='en' — we auto-pick "
-            "Aisha which has native English voices. Use this when the "
-            "user wants to LISTEN (language learning, accessibility, "
-            "hands-free reply) rather than read text."
+            "Providers: 'openai' (best English / IELTS quality, six "
+            "native voices), 'aisha' (uz/en/ru with mood), 'muxlisa' "
+            "and 'kotib' (Uzbek-native). For English content (IELTS "
+            "Listening, language learning) pass language='en' — we "
+            "auto-pick OpenAI when its key is configured, else Aisha. "
+            "Use this when the user wants to LISTEN (language learning, "
+            "accessibility, hands-free reply) rather than read text."
         ),
         parameters={
             "type": "object",
@@ -980,26 +984,27 @@ def register_builtin_tools(
                     "type": "string",
                     "description": (
                         "ISO language code: 'uz', 'en', or 'ru'. "
-                        "Defaults to 'uz'. Non-Uzbek auto-selects Aisha."
+                        "Defaults to 'uz'. Non-Uzbek auto-promotes the "
+                        "provider to OpenAI (or Aisha if no OpenAI key)."
                     ),
                 },
                 "voice": {
                     "type": "string",
                     "description": (
-                        "Optional voice override. Aisha: 'gulnoza' "
-                        "(female) | 'jaxongir' (male). Muxlisa: "
-                        "'maftuna' | 'asomiddin'. KotibAI: 'aziza' | "
-                        "'sherzod' | 'rachel' | 'arnold'. Defaults to "
-                        "the provider's primary voice."
+                        "Optional voice override. OpenAI: 'alloy' | "
+                        "'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer'. "
+                        "Aisha: 'gulnoza' (female) | 'jaxongir' (male). "
+                        "Muxlisa: 'maftuna' | 'asomiddin'. KotibAI: "
+                        "'aziza' | 'sherzod' | 'rachel' | 'arnold'."
                     ),
                 },
                 "provider": {
                     "type": "string",
                     "description": (
-                        "Optional provider override: 'muxlisa', 'kotib', "
-                        "or 'aisha'. Defaults to config.voice_provider, "
-                        "or auto-promotes to 'aisha' for non-Uzbek "
-                        "language."
+                        "Optional provider override: 'openai', "
+                        "'muxlisa', 'kotib', or 'aisha'. Defaults to "
+                        "config.voice_provider, or auto-promotes to "
+                        "'openai'/'aisha' for non-Uzbek language."
                     ),
                 },
             },
