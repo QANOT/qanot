@@ -960,6 +960,10 @@ def register_builtin_tools(
                     pass
 
     registry.register(
+        timeout=120.0,  # OpenAI TTS for long passages can take 30-60s;
+                        # download + Telegram upload adds another 10-20s.
+                        # 120s gives comfortable margin without leaving
+                        # a truly stuck call hanging the agent loop.
         name="tg_send_voice",
         description=(
             "Generate audio from text via TTS and send as a Telegram "

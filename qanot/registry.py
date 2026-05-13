@@ -33,6 +33,7 @@ class ToolRegistry:
         self._tools: dict[str, dict] = {}
         self._handlers: dict[str, Callable[[dict], Awaitable[str]]] = {}
         self._categories: dict[str, str] = {}  # tool_name -> category
+        self._timeouts: dict[str, float] = {}  # tool_name -> seconds
         self._cached_definitions: list[dict] | None = None
         self._cached_core: list[dict] | None = None
 
@@ -43,6 +44,7 @@ class ToolRegistry:
         parameters: dict,
         handler: Callable[[dict], Awaitable[str]],
         category: str = "core",
+        timeout: float | None = None,
     ) -> None:
         """Register a tool with its handler.
 
@@ -50,6 +52,11 @@ class ToolRegistry:
             category: Tool category for lazy loading.
                 "core" = always loaded (read_file, write_file, etc.)
                 "rag", "image", "web", "cron", "agent", "plugin" = loaded on demand.
+            timeout: Per-tool execution timeout in seconds. ``None`` uses
+                the global ``TOOL_TIMEOUT`` (30s). Slow tools (TTS,
+                video generation, large web fetches) should override —
+                we don't want a longer global default because it makes
+                buggy tools hang the agent loop.
         """
         if name in self._tools:
             logger.warning("Tool '%s' already registered — overriding", name)
@@ -60,6 +67,10 @@ class ToolRegistry:
         }
         self._handlers[name] = handler
         self._categories[name] = category
+        if timeout is not None:
+            self._timeouts[name] = float(timeout)
+        else:
+            self._timeouts.pop(name, None)
         self._cached_definitions = None
         self._cached_core = None
 
@@ -122,15 +133,25 @@ class ToolRegistry:
                 logger.warning("Tool %s param validation: %s", name, errors)
                 return json.dumps({"error": f"Invalid parameters: {'; '.join(errors)}"})
 
+        # Per-tool override beats the default if the tool registered one
+        # (e.g. tg_send_voice needs ~60-90s for long-text OpenAI TTS).
+        effective_timeout = self._timeouts.get(name, timeout)
+
         try:
-            result = await asyncio.wait_for(handler(input_data), timeout=timeout)
+            result = await asyncio.wait_for(
+                handler(input_data), timeout=effective_timeout,
+            )
             # Truncate oversized results (persist to disk when workspace available)
             return truncate_tool_result(
                 result, tool_name=name, workspace_dir=workspace_dir,
             )
         except asyncio.TimeoutError:
-            logger.error("Tool %s timed out after %ds", name, timeout)
-            return json.dumps({"error": f"Tool timed out after {timeout}s"})
+            logger.error(
+                "Tool %s timed out after %.1fs", name, effective_timeout,
+            )
+            return json.dumps({
+                "error": f"Tool timed out after {effective_timeout:.0f}s",
+            })
         except Exception as e:
             logger.error("Tool %s failed: %s", name, e, exc_info=True)
             # Sanitize error message to prevent leaking sensitive internals
