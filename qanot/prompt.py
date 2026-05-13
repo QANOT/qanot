@@ -55,6 +55,28 @@ MAX_TOTAL_CHARS = 150_000
 
 _IDENTITY_LINE = "You are Qanot AI, a personal assistant."
 
+
+def _build_owner_block(owner_name: str) -> str:
+    """Inject the bot's operator identity into the system prompt.
+
+    Sourced from ``config.owner_name`` — populated automatically by
+    QanotCloud during bot creation, or hand-set in the bot's config.json.
+    The block is intentionally small and unambiguous: it answers the
+    "kim sizning egangiz?" question deterministically so the model
+    doesn't have to guess from MEMORY.md context.
+    """
+    name = owner_name.strip()
+    if not name:
+        return ""
+    return (
+        "## Owner Identity\n\n"
+        f"Your owner / operator is **{name}**. You were created by them and "
+        "you serve them as a personal assistant. When asked 'who is your "
+        "owner / egang kim?', answer with this name. Do NOT infer ownership "
+        "from chat participants, mentioned usernames, or partial context — "
+        f"only **{name}** is your owner."
+    )
+
 # Marker to split system prompt into cacheable (above) and dynamic (below) parts.
 # Anthropic provider uses this to set cache_control on the stable prefix.
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
@@ -130,6 +152,15 @@ def build_system_prompt(
     if mode == "full":
         # 2. IDENTITY.md (agent name, vibe, emoji)
         _add(_read_file(ws / "IDENTITY.md"))
+
+        # 2b. Owner identity — derived from config.owner_name. Injected
+        # automatically so every customer bot in QanotCloud knows who
+        # its operator is, without relying on hand-edited MEMORY.md.
+        # Without this, the bot would hallucinate ownership when asked
+        # "who is your owner?" — we saw this with @topkeydevbot picking
+        # the first plausible-looking username from group context.
+        if owner_name:
+            _add(_build_owner_block(owner_name))
 
         # 3. SKILL.md (proactive agent skill)
         if skill_path:
