@@ -119,6 +119,12 @@ class Config:
     # RAG
     rag_enabled: bool = True
     rag_mode: str = "auto"  # "auto" | "agentic" | "always"
+    # FastEmbed model name. Empty = class default (quantized nomic).
+    # Pin a different model when running on tight-memory hosts or when
+    # multilingual quality matters more (intfloat/multilingual-e5-small).
+    # Must produce 768-dim vectors to stay compatible with chunks
+    # already indexed; switching dim sizes requires re-backfill.
+    rag_embedder_model: str = ""
     # Pre-turn image extraction. When True, every incoming Telegram photo
     # is run through a Haiku call before the main agent turn. Output is
     # persisted to workspace/memory/extractions/ (durable across compaction

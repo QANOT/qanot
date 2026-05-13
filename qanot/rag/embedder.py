@@ -74,18 +74,36 @@ class Embedder(ABC):
 class FastEmbedEmbedder(Embedder):
     """CPU-based embedding via FastEmbed (ONNX runtime, no GPU needed).
 
-    Uses nomic-embed-text-v1.5 (137MB, 768 dims).
-    Production-ready: runs on CPU, no VRAM conflict with chat model.
+    Default: ``nomic-ai/nomic-embed-text-v1.5-Q`` — the int8-quantized
+    variant of nomic-embed-text-v1.5. Same 768 dimensions, same model
+    architecture; ~4x lower RAM than the full-precision version
+    (~150MB runtime vs ~600MB-1GB), with <2% MTEB drop. Existing
+    chunks indexed with the full-precision model remain compatible
+    because dimensions match.
+
+    Production rationale: a 7.6GB host with ~10 containers can't afford
+    a 1GB embedder RAM spike during startup. The quantized model keeps
+    RAG fully local + free without the OOM-kill risk we hit on
+    2026-05-13 12:21.
     """
 
     provider_name = "fastembed"
 
-    def __init__(self, model: str = "nomic-ai/nomic-embed-text-v1.5"):
+    # Picked because: dim-compatible with already-indexed chunks (768),
+    # 4x RAM saving vs the non-quantized version, marginal quality loss
+    # (~1-2% on MTEB). Override per-bot via ``config.rag_embedder_model``.
+    DEFAULT_MODEL = "nomic-ai/nomic-embed-text-v1.5-Q"
+
+    def __init__(self, model: str | None = None):
         from fastembed import TextEmbedding
 
-        self._model = TextEmbedding(model)
+        model_name = model or self.DEFAULT_MODEL
+        self._model = TextEmbedding(model_name)
         self.dimensions = 768
-        logger.info("FastEmbed initialized: %s (CPU, %d dims)", model, self.dimensions)
+        logger.info(
+            "FastEmbed initialized: %s (CPU, %d dims)",
+            model_name, self.dimensions,
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts on CPU via ONNX runtime."""
@@ -217,7 +235,12 @@ def create_embedder(config) -> Embedder | None:
     # If a user has Gemini/OpenAI configured they'll still fall through to
     # those paths only if FastEmbed isn't installed or fails to init.
     try:
-        embedder = FastEmbedEmbedder()
+        # Per-bot model override: ``config.rag_embedder_model`` (when
+        # set) lets a deployment pin a specific FastEmbed model.
+        # Empty/missing falls back to the class default (quantized
+        # nomic-embed-text-v1.5-Q).
+        model_override = getattr(config, "rag_embedder_model", "") or None
+        embedder = FastEmbedEmbedder(model=model_override)
         is_ollama = any(
             "ollama" in info.get("api_key", "").lower() or "11434" in info.get("base_url", "")
             for info in providers.values()
