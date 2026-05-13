@@ -55,6 +55,13 @@ from .store import (
     StoreError,
     WriteResult,
 )
+from .gate import (
+    DEFAULT_MIN_TRAJECTORY_TOKENS,
+    DEFAULT_SEMANTIC_REJECT_SCORE,
+    DEFAULT_SEMANTIC_WARN_SCORE,
+    GateResult,
+    pre_create_check,
+)
 from .index import (
     MAX_ACTIVE_SKILLS,
     MAX_INDEX_ENTRIES,
@@ -107,6 +114,10 @@ __all__ = [
     # Store
     "SkillStore", "StoreError", "WriteResult",
     "ALLOWED_SUBDIRS", "HISTORY_DIR_NAME", "ARCHIVE_DIR_NAME",
+    # Gate (AAMC cost-gated improvement loop)
+    "GateResult", "pre_create_check",
+    "DEFAULT_MIN_TRAJECTORY_TOKENS", "DEFAULT_SEMANTIC_REJECT_SCORE",
+    "DEFAULT_SEMANTIC_WARN_SCORE",
     # Index
     "build_skill_index", "match_skills", "format_active_skills",
     "MAX_ACTIVE_SKILLS", "MAX_INDEX_ENTRIES",

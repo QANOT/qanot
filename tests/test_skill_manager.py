@@ -297,3 +297,111 @@ class TestReloadCallback:
         out = _call(reg, "skill_create", name="ok", description="d", body="b")
         # Tool succeeds even though reload raised — we log and continue.
         assert out["success"] is True
+
+
+# ─── AAMC cost gate integration ──────────────────────────────────
+
+
+class TestGateIntegration:
+    """Verify the gate is actually wired into skill_create via the tool."""
+
+    def test_cost_gate_blocks_cheap_trajectory(self, workspace):
+        reg = ToolRegistry()
+        register_skill_manager_tools(
+            reg, str(workspace),
+            trajectory_tokens_callback=lambda: 100,  # cheap
+        )
+        out = _call(
+            reg, "skill_create",
+            name="cheap", description="cheap workflow", body="step 1",
+        )
+        assert "error" in out
+        assert "trajectory cost too low" in out["error"]
+        assert out["suggestion"]["action"] == "respond_directly"
+
+    def test_cost_gate_allows_expensive_trajectory(self, workspace):
+        reg = ToolRegistry()
+        register_skill_manager_tools(
+            reg, str(workspace),
+            trajectory_tokens_callback=lambda: 100_000,
+        )
+        out = _call(
+            reg, "skill_create",
+            name="costly", description="expensive workflow", body="step 1",
+        )
+        assert out["success"] is True
+        assert out["gate"]["reason"].startswith("passed")
+
+    def test_bypass_skips_cost_gate(self, workspace):
+        reg = ToolRegistry()
+        register_skill_manager_tools(
+            reg, str(workspace),
+            trajectory_tokens_callback=lambda: 100,  # cheap
+        )
+        out = _call(
+            reg, "skill_create",
+            name="forced", description="forced create", body="step 1",
+            bypass_gate=True,
+        )
+        assert out["success"] is True
+        assert out["gate"]["reason"] in {"bypassed", "user-authored"}
+
+    def test_user_authored_skips_gate(self, workspace):
+        reg = ToolRegistry()
+        register_skill_manager_tools(
+            reg, str(workspace),
+            trajectory_tokens_callback=lambda: 100,  # cheap
+        )
+        out = _call(
+            reg, "skill_create",
+            name="usermade", description="user supplied", body="step 1",
+            agent_created=False,
+        )
+        assert out["success"] is True
+
+    def test_semantic_collision_blocked(self, workspace):
+        reg = ToolRegistry()
+        register_skill_manager_tools(reg, str(workspace))
+        # Seed an existing skill the gate will compare against. The
+        # description is deliberately phrased so a near-duplicate triggers
+        # the reject threshold.
+        _call(
+            reg, "skill_create",
+            name="translator",
+            description=(
+                "Translate text between languages quickly and accurately "
+                "using the LLM provider"
+            ),
+            body="step 1: detect source; step 2: produce target text",
+            bypass_gate=True,
+        )
+        # Now try to create a clear duplicate.
+        out = _call(
+            reg, "skill_create",
+            name="translator-v2",
+            description=(
+                "Translate text between languages quickly and accurately "
+                "using the provider"
+            ),
+            body="step 1: detect source; step 2: produce target text",
+        )
+        assert "error" in out
+        assert out["matched_skill"] == "translator"
+        assert out["suggestion"]["action"] == "patch_existing"
+
+    def test_trajectory_callback_failure_disables_gate(self, workspace):
+        """A misbehaving callback must not silently break skill creation."""
+        reg = ToolRegistry()
+
+        def boom():
+            raise RuntimeError("bad cost")
+
+        register_skill_manager_tools(
+            reg, str(workspace), trajectory_tokens_callback=boom,
+        )
+        # The callback fails → treated as 0 → cost gate disabled.
+        out = _call(
+            reg, "skill_create",
+            name="ok", description="d", body="b",
+        )
+        assert out["success"] is True

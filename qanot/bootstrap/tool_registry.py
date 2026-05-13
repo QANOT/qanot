@@ -190,10 +190,24 @@ async def register_pre_agent_tools(
         # skill_patch / skill_archive / skill_unarchive / skill_view /
         # skill_list / skill_pin / skill_unpin. The curator's review
         # prompt depends on skill_archive + skill_patch being present.
+        #
+        # The AAMC cost gate at skill_create reads the current trajectory
+        # token count via agent.context.total_tokens so cheap workflows
+        # don't get persisted as skills.
         from qanot.tools.skill_manager import register_skill_manager_tools
+
+        def _trajectory_tokens() -> int:
+            if not agent_ref or not agent_ref[0]:
+                return 0
+            ctx = getattr(agent_ref[0], "context", None)
+            if ctx is None:
+                return 0
+            return getattr(ctx, "total_tokens", 0) or 0
+
         register_skill_manager_tools(
             tool_registry, config.workspace_dir,
             reload_callback=lambda: agent_ref[0].load_skills(config.workspace_dir) if agent_ref else None,
+            trajectory_tokens_callback=_trajectory_tokens,
         )
     else:
         logger.info("Skill tools disabled via skill_tools_enabled=false")

@@ -30,11 +30,13 @@ from typing import Any
 
 from qanot.skills import (
     ARCHIVE_DIR_NAME,
+    SkillLoader,
     SkillStore,
     StoreError,
     UsageStore,
     parse_skill_file,
 )
+from qanot.skills.gate import GateResult, pre_create_check
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,11 @@ def _err(message: str, **extra: Any) -> str:
 
 
 def register_skill_manager_tools(
-    registry, workspace_dir: str, reload_callback=None,
+    registry,
+    workspace_dir: str,
+    reload_callback=None,
+    *,
+    trajectory_tokens_callback=None,
 ) -> None:
     """Register the skill manager tool surface.
 
@@ -62,6 +68,12 @@ def register_skill_manager_tools(
     the agent's in-memory skill cache (qanot/agent/agent.py:_skills) gets
     invalidated. Pass None to skip hot reload (curator subagent path —
     it runs in a fresh process and re-loads anyway).
+
+    `trajectory_tokens_callback` returns the current trajectory token cost
+    (input + output across the active turn/session). Used by the AAMC cost
+    gate at `skill_create` time — skills produced by trivially cheap
+    trajectories are rejected. If None, the cost gate is effectively
+    disabled (callback returns 0).
     """
     skills_root = Path(workspace_dir) / "skills"
 
@@ -76,6 +88,27 @@ def register_skill_manager_tools(
         except Exception as exc:  # noqa: BLE001 — never let reload failures break the tool
             logger.warning("skill reload callback failed: %s", exc)
 
+    def _trajectory_tokens() -> int:
+        if trajectory_tokens_callback is None:
+            return 0
+        try:
+            return int(trajectory_tokens_callback() or 0)
+        except Exception as exc:  # noqa: BLE001 — callback failures must not break tools
+            logger.warning("trajectory_tokens callback failed: %s", exc)
+            return 0
+
+    def _load_existing_skills() -> list:
+        # Lazy-instantiate a SkillLoader for the gate. We don't keep a
+        # long-lived loader because the cache invalidation contract here
+        # is "every tool call sees fresh disk state" — important for
+        # the curator subagent path which writes via the same tools.
+        try:
+            loaded, _ = SkillLoader(workspace_dir).load()
+        except Exception as exc:  # noqa: BLE001 — gate must not break tools
+            logger.warning("skill loader failed in gate: %s", exc)
+            return []
+        return loaded
+
     # ─── skill_create ────────────────────────────────────────────
 
     async def skill_create(params: dict) -> str:
@@ -83,6 +116,7 @@ def register_skill_manager_tools(
         description = (params.get("description") or "").strip()
         body = (params.get("body") or params.get("instructions") or "").strip()
         agent_created = bool(params.get("agent_created", True))
+        bypass_gate = bool(params.get("bypass_gate", False))
 
         if not name:
             return _err("name is required")
@@ -90,6 +124,35 @@ def register_skill_manager_tools(
             return _err("description is required")
         if not body:
             return _err("body is required")
+
+        # AAMC cost gate — runs only for agent-created skills, since
+        # user-authored skills are presumed deliberate. Bypass via
+        # `bypass_gate=true` for the curator subagent path or when the
+        # user has explicitly asked for a skill to be created.
+        if agent_created and not bypass_gate:
+            gate = pre_create_check(
+                name, description, body,
+                existing_skills=_load_existing_skills(),
+                trajectory_tokens=_trajectory_tokens(),
+            )
+            if not gate.allow:
+                logger.info(
+                    "skill_create blocked by gate: %s (score=%d, matched=%s)",
+                    gate.reason, gate.score, gate.matched_skill,
+                )
+                return _err(
+                    f"gate rejected: {gate.reason}",
+                    name=name,
+                    matched_skill=gate.matched_skill,
+                    suggestion=gate.suggestion,
+                )
+            gate_summary = {
+                "score": gate.score,
+                "matched_skill": gate.matched_skill,
+                "reason": gate.reason,
+            }
+        else:
+            gate_summary = {"reason": "bypassed" if bypass_gate else "user-authored"}
 
         try:
             result = _store().create(
@@ -104,6 +167,7 @@ def register_skill_manager_tools(
             "path": str(result.path),
             "action": result.action,
             "scan_verdict": result.scan_verdict.value,
+            "gate": gate_summary,
         })
 
     registry.register(
@@ -148,6 +212,15 @@ def register_skill_manager_tools(
                         "True (default) marks this as agent-authored — the "
                         "curator may archive it if unused. Set False for "
                         "user-supplied skills the curator must leave alone."
+                    ),
+                },
+                "bypass_gate": {
+                    "type": "boolean",
+                    "description": (
+                        "Skip the AAMC cost / semantic-novelty gate. Use ONLY "
+                        "when the user has explicitly asked you to save this "
+                        "as a skill, or when the curator subagent is restoring "
+                        "a known-good skill. Default false."
                     ),
                 },
             },
