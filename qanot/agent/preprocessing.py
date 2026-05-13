@@ -21,8 +21,97 @@ from qanot.prompt import build_system_prompt
 logger = logging.getLogger(__name__)
 
 
+# WAL categories that signal a rule-worthy message. Hits in these
+# categories fire the structured memo extractor; everything else stays
+# in MEMORY.md as a bullet only. The list is intentionally tight —
+# extractor calls cost ~$0.0002 each, so we only pay when the trigger
+# is genuinely rule-shaped.
+_MEMO_TRIGGER_CATEGORIES = frozenset({
+    "remember",       # "remember this", "eslab qol"
+    "preference",     # "I prefer X"
+    "correction",     # "actually it's Y, not X"
+})
+
+
+def _wal_should_trigger_memo_extraction(entries) -> bool:
+    """Return True iff any WAL entry is in the memo-trigger category set."""
+    return any(e.category in _MEMO_TRIGGER_CATEGORIES for e in entries)
+
+
 class _PreprocessingMixin:
     """Pre-turn preprocessing: prompt build, image extraction, repair, hooks."""
+
+    def _spawn_memo_extraction_task(self, user_message: str) -> None:
+        """Fire the memo extractor in a background asyncio task.
+
+        Runs only when WAL fired a rule-shaped pattern and the provider
+        exposes an Anthropic-compatible client (we need ``messages.create``
+        directly, not the high-level ``provider.chat`` wrapper, because
+        we want a deterministic JSON-output call on a cheaper model).
+
+        The task never blocks the response — failures are swallowed and
+        logged. We use ``asyncio.create_task`` rather than awaiting so a
+        slow extractor call doesn't stretch the user-visible latency.
+        """
+        # Lazy-import to avoid circulars + keep the cost-of-import zero
+        # for sessions that never trigger extraction.
+        from qanot.memos import (
+            MemoStore,
+            ExtractedMemo,
+            extract_memo,
+        )
+
+        provider = getattr(self, "provider", None)
+        client = getattr(provider, "client", None) if provider else None
+        if client is None or not hasattr(client, "messages"):
+            # Non-Anthropic provider or chat-only wrapper — extractor
+            # needs the raw client to talk to Haiku. Skip silently.
+            return
+
+        user_id = str(self._current_user_id) if self._current_user_id else ""
+        thread_id = (
+            str(self._current_thread_id) if self._current_thread_id else ""
+        )
+        workspace_dir = self.config.workspace_dir
+
+        async def _runner():
+            try:
+                extracted: ExtractedMemo | None = await extract_memo(
+                    client, user_message,
+                    user_id=user_id, thread_id=thread_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("memo extractor task failed: %s", exc)
+                return
+            if extracted is None:
+                return
+            try:
+                store = MemoStore(workspace_dir)
+                result = store.upsert(**extracted.to_kwargs())
+                logger.info(
+                    "WAL → memo: %s (%s) — scope=%s",
+                    result.name, result.action,
+                    f"u={extracted.user_scope or '∅'}/"
+                    f"t={extracted.thread_scope or '∅'}",
+                )
+                # Hot-invalidate the memo router so the new memo is
+                # immediately available on the next turn — without this,
+                # the router's cached embeddings index doesn't include
+                # the freshly-written file until its mtime check fires.
+                router = getattr(self, "_memo_router", None)
+                if router is not None:
+                    # Force re-embed of the new memo's description on the
+                    # next route() — drop its cache slot if any.
+                    router._cache.pop(extracted.name, None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "memo store write failed for %s: %s",
+                    extracted.name, exc,
+                )
+
+        asyncio.create_task(
+            _runner(), name=f"memo-extract-{user_id or 'anon'}",
+        )
 
     def _build_system_prompt(self, active_skills_content: str = "", *, turn_prompt_override: str | None = None) -> str:
         """Build the system prompt from workspace files."""
@@ -125,6 +214,13 @@ class _PreprocessingMixin:
             if wal_entries:
                 wal_write(wal_entries, self.config.workspace_dir, user_id=str(self._current_user_id))
                 logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
+                # High-confidence WAL hits also fire the memo extractor: a
+                # Haiku call that decides whether the message contains a
+                # persistent rule worth a structured memo file (not just a
+                # MEMORY.md bullet). Runs as a background task so the
+                # response isn't blocked by the LLM extraction call.
+                if _wal_should_trigger_memo_extraction(wal_entries):
+                    self._spawn_memo_extraction_task(user_message)
 
         # Memo router: select relevant memos (Global / User / Thread scope)
         # and prepend them as a <system-reminder> block. This is the
