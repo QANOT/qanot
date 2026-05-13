@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 
 from qanot.config import Config
 from qanot.context import ContextTracker, CostTracker
@@ -26,6 +27,30 @@ from .loop import CONVERSATION_TTL, MAX_ITERATIONS, _LoopMixin
 from .preprocessing import _PreprocessingMixin
 
 logger = logging.getLogger(__name__)
+
+
+# Per-task (asyncio-task-local) context for the current Telegram turn.
+# Tools read these via ``Agent.current_*`` properties — they MUST be
+# asyncio-task-scoped, not instance-scoped, because the agent can have
+# multiple ``run_turn`` calls in flight concurrently when a user has
+# more than one thread open (different conv_keys → different locks →
+# tasks interleave). An instance attribute would race: turn A starts,
+# sets thread_id=A, awaits a long tool; turn B starts, sets thread_id=B;
+# turn A's NEXT tool call now reads B's thread_id and ships the result
+# into the wrong thread. Production bug captured 12:53 — IELTS
+# Section 4 polls landed in "Nemis tili imtiyozlari" thread.
+_chat_id_var: ContextVar[int | None] = ContextVar(
+    "qanot_current_chat_id", default=None,
+)
+_thread_id_var: ContextVar[int | None] = ContextVar(
+    "qanot_current_thread_id", default=None,
+)
+_message_id_var: ContextVar[int | None] = ContextVar(
+    "qanot_current_message_id", default=None,
+)
+_user_id_var: ContextVar[str] = ContextVar(
+    "qanot_current_user_id", default="",
+)
 
 
 class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
@@ -135,24 +160,41 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
 
     @property
     def current_user_id(self) -> str:
-        """Current user ID being processed (for RAG user-scoped queries)."""
-        return self._current_user_id
+        """Current user/conv_key being processed.
+
+        Reads from a ContextVar so concurrent turns from different
+        threads each see their own value. Falls back to the instance
+        attribute for code paths that read the value outside a
+        ``run_turn`` (cron jobs, ghost polling, etc.) where the
+        ContextVar default of "" applies.
+        """
+        ctx = _user_id_var.get()
+        return ctx or self._current_user_id
 
     @property
     def current_chat_id(self) -> int | None:
         """Current Telegram chat ID being processed (for sub-agent delivery)."""
-        return self._current_chat_id
+        ctx = _chat_id_var.get()
+        return ctx if ctx is not None else self._current_chat_id
 
     @property
     def current_message_id(self) -> int | None:
         """Current Telegram message_id being processed (for message scrubbing tools)."""
-        return self._current_message_id
+        ctx = _message_id_var.get()
+        return ctx if ctx is not None else self._current_message_id
 
     @property
     def current_thread_id(self) -> int | None:
         """Current Telegram message_thread_id being processed (None for
-        base view in private chats / non-forum group messages)."""
-        return self._current_thread_id
+        base view in private chats / non-forum group messages).
+
+        Task-local via ContextVar — concurrent turns from different
+        threads don't clobber each other's value. This is the
+        production fix for the 12:53 race that landed IELTS Section 4
+        polls in the wrong (German) thread.
+        """
+        ctx = _thread_id_var.get()
+        return ctx if ctx is not None else self._current_thread_id
 
     async def run_turn(
         self,
@@ -188,32 +230,53 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                 "Iltimos, 10 soniyadan keyin qayta urinib ko'ring."
             )
 
-        async with self._get_lock(user_id):
-            self._current_chat_id = chat_id
-            self._current_message_id = message_id
-            self._current_thread_id = thread_id
-            # Budget enforcement: reject if daily limit exceeded
-            if user_id and self.config.daily_budget_usd > 0:
-                allowed, spent, budget = self.cost_tracker.check_budget(
-                    str(user_id), self.config.daily_budget_usd,
-                )
-                if not allowed:
-                    return (
-                        f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
-                        f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+        # Bind task-local context BEFORE the lock so all callees inside
+        # the lock (cost tracking, the loop, tool dispatch) see this
+        # turn's chat/thread/message. ContextVar.set() returns a token
+        # we use to reset on exit so subsequent unrelated tasks in the
+        # same asyncio context don't inherit stale values.
+        chat_token = _chat_id_var.set(chat_id)
+        thread_token = _thread_id_var.set(thread_id)
+        msg_token = _message_id_var.set(message_id)
+        user_token = _user_id_var.set(str(user_id) if user_id else "")
+        try:
+            async with self._get_lock(user_id):
+                # Keep the instance attrs in sync for legacy readers
+                # that haven't been migrated to the property/ContextVar
+                # path yet.
+                self._current_chat_id = chat_id
+                self._current_message_id = message_id
+                self._current_thread_id = thread_id
+                # Budget enforcement: reject if daily limit exceeded
+                if user_id and self.config.daily_budget_usd > 0:
+                    allowed, spent, budget = self.cost_tracker.check_budget(
+                        str(user_id), self.config.daily_budget_usd,
                     )
-            # Reset per-turn cost counters BEFORE the turn starts so
-            # cumulative checks during the loop reflect this turn only.
-            if user_id:
+                    if not allowed:
+                        return (
+                            f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
+                            f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+                        )
+                # Reset per-turn cost counters BEFORE the turn starts so
+                # cumulative checks during the loop reflect this turn only.
+                if user_id:
+                    try:
+                        self.cost_tracker.start_turn(str(user_id))
+                    except Exception as e:
+                        logger.warning("cost_tracker.start_turn failed: %s", e)
+                bump_inflight()
                 try:
-                    self.cost_tracker.start_turn(str(user_id))
-                except Exception as e:
-                    logger.warning("cost_tracker.start_turn failed: %s", e)
-            bump_inflight()
-            try:
-                return await self._run_turn_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override)
-            finally:
-                drop_inflight()
+                    return await self._run_turn_impl(
+                        user_message, user_id, images=images,
+                        system_prompt_override=system_prompt_override,
+                    )
+                finally:
+                    drop_inflight()
+        finally:
+            _chat_id_var.reset(chat_token)
+            _thread_id_var.reset(thread_token)
+            _message_id_var.reset(msg_token)
+            _user_id_var.reset(user_token)
 
     async def _run_turn_impl(self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None) -> str:
         """Internal implementation of run_turn (called under lock)."""
@@ -255,34 +318,47 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
             )
             return
 
-        async with self._get_lock(user_id):
-            self._current_chat_id = chat_id
-            self._current_message_id = message_id
-            self._current_thread_id = thread_id
-            # Budget enforcement: reject if daily limit exceeded
-            if user_id and self.config.daily_budget_usd > 0:
-                allowed, spent, budget = self.cost_tracker.check_budget(
-                    str(user_id), self.config.daily_budget_usd,
-                )
-                if not allowed:
-                    msg = (
-                        f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
-                        f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+        # Task-local context binding — see ``run_turn`` for the race
+        # condition this prevents. Critical for streaming turns too,
+        # since a streaming turn can be in flight for many seconds.
+        chat_token = _chat_id_var.set(chat_id)
+        thread_token = _thread_id_var.set(thread_id)
+        msg_token = _message_id_var.set(message_id)
+        user_token = _user_id_var.set(str(user_id) if user_id else "")
+        try:
+            async with self._get_lock(user_id):
+                self._current_chat_id = chat_id
+                self._current_message_id = message_id
+                self._current_thread_id = thread_id
+                # Budget enforcement: reject if daily limit exceeded
+                if user_id and self.config.daily_budget_usd > 0:
+                    allowed, spent, budget = self.cost_tracker.check_budget(
+                        str(user_id), self.config.daily_budget_usd,
                     )
-                    yield StreamEvent(type="done", response=ProviderResponse(content=msg))
-                    return
-            # Reset per-turn cost counters before the streaming turn.
-            if user_id:
+                    if not allowed:
+                        msg = (
+                            f"Kunlik budget tugadi (${spent:.4f} / ${budget:.2f}). "
+                            f"Ertaga qayta urinib ko'ring yoki admin bilan bog'laning."
+                        )
+                        yield StreamEvent(type="done", response=ProviderResponse(content=msg))
+                        return
+                # Reset per-turn cost counters before the streaming turn.
+                if user_id:
+                    try:
+                        self.cost_tracker.start_turn(str(user_id))
+                    except Exception as e:
+                        logger.warning("cost_tracker.start_turn failed: %s", e)
+                bump_inflight()
                 try:
-                    self.cost_tracker.start_turn(str(user_id))
-                except Exception as e:
-                    logger.warning("cost_tracker.start_turn failed: %s", e)
-            bump_inflight()
-            try:
-                async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):
-                    yield event
-            finally:
-                drop_inflight()
+                    async for event in self._run_turn_stream_impl(user_message, user_id, images=images, system_prompt_override=system_prompt_override):
+                        yield event
+                finally:
+                    drop_inflight()
+        finally:
+            _chat_id_var.reset(chat_token)
+            _thread_id_var.reset(thread_token)
+            _message_id_var.reset(msg_token)
+            _user_id_var.reset(user_token)
 
     async def _run_turn_stream_impl(
         self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None
