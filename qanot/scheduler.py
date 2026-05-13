@@ -154,6 +154,21 @@ class CronScheduler:
             })
             changed = True
 
+        if "skill-curator-review" not in existing_names:
+            # Weekly LLM-driven skill review — proposes consolidations,
+            # archives clear duplicates. Gated at dispatch time by
+            # `should_run_review` (idle ≥2h, ≥3 agent-created skills,
+            # last run ≥7d ago) so it won't fire on a quiet workspace.
+            from qanot.curator import CURATOR_REVIEW_PROMPT
+            jobs.append({
+                "name": "skill-curator-review",
+                "schedule": self.config.skill_curator_review_schedule,
+                "mode": "isolated",
+                "prompt": CURATOR_REVIEW_PROMPT,
+                "enabled": self.config.skill_curator_enabled,
+            })
+            changed = True
+
         if changed:
             save_jobs(self._jobs_path, jobs)
         return jobs

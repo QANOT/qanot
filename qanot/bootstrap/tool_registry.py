@@ -185,6 +185,16 @@ async def register_pre_agent_tools(
             tool_registry, config.workspace_dir,
             reload_callback=lambda: agent_ref[0].load_skills(config.workspace_dir) if agent_ref else None,
         )
+        # Strict agentskills.io-compliant tool surface alongside the legacy
+        # tools above. New code should use skill_create / skill_edit /
+        # skill_patch / skill_archive / skill_unarchive / skill_view /
+        # skill_list / skill_pin / skill_unpin. The curator's review
+        # prompt depends on skill_archive + skill_patch being present.
+        from qanot.tools.skill_manager import register_skill_manager_tools
+        register_skill_manager_tools(
+            tool_registry, config.workspace_dir,
+            reload_callback=lambda: agent_ref[0].load_skills(config.workspace_dir) if agent_ref else None,
+        )
     else:
         logger.info("Skill tools disabled via skill_tools_enabled=false")
 
