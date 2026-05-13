@@ -825,6 +825,189 @@ def register_builtin_tools(
     )
 
 
+    # ── tg_send_voice ──
+    async def tg_send_voice(params: dict) -> str:
+        """Generate audio from text and send as a Telegram voice message.
+
+        Uses the configured TTS provider (Muxlisa / KotibAI / Aisha).
+        Aisha supports uz/en/ru — preferred for English content
+        (IELTS practice, language learning). Muxlisa/KotibAI are
+        Uzbek-native.
+        """
+        bot = get_bot() if get_bot else None
+        chat_id = get_chat_id() if get_chat_id else None
+        if bot is None or chat_id is None:
+            return json.dumps({"error": "Telegram bot/chat not available"})
+
+        text = (params.get("text") or "").strip()
+        if not text:
+            return json.dumps({"error": "text is required"})
+        # Telegram caption / TTS provider limits — keep prompts focused.
+        if len(text) > 4000:
+            return json.dumps({
+                "error": f"text too long ({len(text)} chars); split into "
+                         f"chunks of ≤4000 chars",
+            })
+
+        language = (params.get("language") or "").strip().lower() or None
+        voice = (params.get("voice") or "").strip() or None
+        # Optional override; defaults to config.voice_provider.
+        provider = (params.get("provider") or "").strip().lower() or None
+
+        # Pull the config + voice api key. We import lazily so the
+        # tool registry can register without the qanot.config import
+        # cycle blowing up in tests.
+        try:
+            from qanot.config import load_config
+            import os as _os
+            cfg_path = _os.environ.get("QANOT_CONFIG", "/data/config.json")
+            cfg = load_config(cfg_path)
+        except Exception as e:
+            return json.dumps({"error": f"config load failed: {e}"})
+
+        provider = provider or cfg.voice_provider or "muxlisa"
+        # Aisha is the only multi-lingual provider — auto-select when
+        # the caller asks for non-Uzbek output and didn't specify a
+        # provider. Saves the agent from having to know our provider
+        # lineup.
+        if language and language != "uz" and not params.get("provider"):
+            api_key_aisha = cfg.get_voice_api_key("aisha")
+            if api_key_aisha:
+                provider = "aisha"
+
+        api_key = cfg.get_voice_api_key(provider)
+        if not api_key:
+            return json.dumps({
+                "error": (
+                    f"voice provider '{provider}' has no API key configured. "
+                    f"Set voice_api_keys.{provider} in config.json."
+                ),
+            })
+
+        # Default language by provider: Aisha and Kotib accept en/ru;
+        # Muxlisa is uz only — if user asked for English from Muxlisa,
+        # warn but proceed (output will have heavy accent).
+        if not language:
+            language = "uz"
+
+        try:
+            from qanot.voice import text_to_speech, download_audio
+            result = await text_to_speech(
+                text, api_key=api_key, provider=provider,
+                language=language, voice=voice, mood="neutral",
+            )
+        except Exception as e:
+            return json.dumps({"error": f"TTS failed: {e}"})
+
+        # Resolve audio: providers either return raw bytes (audio_data)
+        # or a CDN URL we have to fetch ourselves.
+        audio_path = ""
+        cleanup_path: str | None = None
+        if result.audio_url:
+            try:
+                audio_path = await download_audio(result.audio_url)
+                cleanup_path = audio_path
+            except Exception as e:
+                return json.dumps({
+                    "error": f"audio download failed: {e}",
+                })
+        elif result.audio_data:
+            import tempfile as _tempfile
+            with _tempfile.NamedTemporaryFile(
+                suffix=".mp3", delete=False,
+            ) as tmp:
+                tmp.write(result.audio_data)
+                audio_path = tmp.name
+                cleanup_path = audio_path
+        else:
+            return json.dumps({"error": "TTS returned no audio"})
+
+        # Thread-aware send (Bot API 10.0). The poll/voice/file
+        # delivery code paths all need this to land in the user's open
+        # thread; we get the live thread id via the same callback as
+        # tg_send_poll.
+        thread_id_fn = get_thread_id if get_thread_id else None
+        thread_id = thread_id_fn() if thread_id_fn else None
+
+        try:
+            from aiogram.types import FSInputFile
+            voice_file = FSInputFile(audio_path)
+            send_kwargs: dict = {"chat_id": chat_id, "voice": voice_file}
+            if thread_id:
+                send_kwargs["message_thread_id"] = thread_id
+            sent = await bot.send_voice(**send_kwargs)
+            return json.dumps({
+                "success": True,
+                "message_id": int(getattr(sent, "message_id", 0) or 0),
+                "provider": provider,
+                "language": language,
+                "char_count": result.character_count or len(text),
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": f"Telegram send_voice failed: {e}"})
+        finally:
+            # Best-effort cleanup of the temp file. We don't return it
+            # to the caller so leaving it on disk is just wasted space.
+            if cleanup_path:
+                try:
+                    import os as _os
+                    _os.unlink(cleanup_path)
+                except OSError:
+                    pass
+
+    registry.register(
+        name="tg_send_voice",
+        description=(
+            "Generate audio from text via TTS and send as a Telegram "
+            "voice message into the current chat. Lands in the open "
+            "thread when one is active. "
+            "Languages: 'uz' (Muxlisa/KotibAI/Aisha), 'en' (Aisha — "
+            "best quality), 'ru' (Aisha). For English IELTS practice "
+            "or non-Uzbek content, pass language='en' — we auto-pick "
+            "Aisha which has native English voices. Use this when the "
+            "user wants to LISTEN (language learning, accessibility, "
+            "hands-free reply) rather than read text."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Text to synthesise (1-4000 chars).",
+                },
+                "language": {
+                    "type": "string",
+                    "description": (
+                        "ISO language code: 'uz', 'en', or 'ru'. "
+                        "Defaults to 'uz'. Non-Uzbek auto-selects Aisha."
+                    ),
+                },
+                "voice": {
+                    "type": "string",
+                    "description": (
+                        "Optional voice override. Aisha: 'gulnoza' "
+                        "(female) | 'jaxongir' (male). Muxlisa: "
+                        "'maftuna' | 'asomiddin'. KotibAI: 'aziza' | "
+                        "'sherzod' | 'rachel' | 'arnold'. Defaults to "
+                        "the provider's primary voice."
+                    ),
+                },
+                "provider": {
+                    "type": "string",
+                    "description": (
+                        "Optional provider override: 'muxlisa', 'kotib', "
+                        "or 'aisha'. Defaults to config.voice_provider, "
+                        "or auto-promotes to 'aisha' for non-Uzbek "
+                        "language."
+                    ),
+                },
+            },
+        },
+        handler=tg_send_voice,
+    )
+
+
 def _resolve_path(path: str, workspace_dir: str) -> str:
     """Resolve a path safely within workspace. Blocks escape attempts."""
     from qanot.fs_safe import resolve_workspace_path
