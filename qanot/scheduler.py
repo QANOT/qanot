@@ -170,8 +170,56 @@ class CronScheduler:
     def start(self) -> None:
         """Load jobs and start the scheduler."""
         jobs = self._load_and_add_jobs()
+        self._register_skill_curator_age_pass()
         self.scheduler.start()
         logger.info("Cron scheduler started with %d jobs", len(jobs))
+
+    def _register_skill_curator_age_pass(self) -> None:
+        """Register the cheap pure-Python skill curator age pass.
+
+        This runs directly via APScheduler — no LLM dispatch — and only
+        flips stale/archive statuses. The richer LLM-review pass lives
+        in the cron job list (see `_ensure_builtin_jobs`) when enabled.
+        """
+        if not getattr(self.config, "skill_curator_enabled", True):
+            return
+        try:
+            from qanot.curator.loop import run_age_pass
+        except Exception as exc:  # noqa: BLE001 — import errors must not break startup
+            logger.warning("skill curator unavailable: %s", exc)
+            return
+
+        skills_root = Path(self.config.workspace_dir) / "skills"
+        schedule = getattr(
+            self.config, "skill_curator_age_pass_schedule", "23 * * * *",
+        )
+        try:
+            parts = schedule.split()
+            if len(parts) != 5:
+                raise ValueError(f"invalid cron expression: {schedule!r}")
+            trigger = CronTrigger(
+                minute=parts[0], hour=parts[1], day=parts[2],
+                month=parts[3], day_of_week=parts[4],
+                timezone=self.config.timezone,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skill curator schedule invalid: %s", exc)
+            return
+
+        def _age_pass_tick() -> None:
+            try:
+                report = run_age_pass(skills_root)
+                if any((report.archived, report.marked_stale,
+                        report.unmarked_active)):
+                    logger.info("skill curator: %s", report.summary_line())
+            except Exception as exc:  # noqa: BLE001 — never let curator break the bot
+                logger.warning("skill curator age pass failed: %s", exc)
+
+        self.scheduler.add_job(
+            _age_pass_tick, trigger=trigger, id="skill_curator_age_pass",
+            replace_existing=True, misfire_grace_time=300,
+        )
+        logger.info("skill curator age pass registered: %s", schedule)
 
     def _add_job(self, job: dict) -> None:
         """Add a single job to the scheduler."""

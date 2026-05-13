@@ -191,6 +191,12 @@ class Config:
     # Memory consolidation (Auto Dream-style weekly pass)
     consolidation_enabled: bool = True
     consolidation_schedule: str = "0 4 * * 0"  # Default: Sunday 04:00 local
+    # Skill curator — age-based pass runs hourly (cheap, no LLM); the
+    # LLM review pass runs weekly (Sun 05:00) and is gated by
+    # `should_run_review` (idle ≥2h, ≥3 agent-created skills, last run ≥7d).
+    skill_curator_enabled: bool = True
+    skill_curator_age_pass_schedule: str = "23 * * * *"  # hourly at :23
+    skill_curator_review_schedule: str = "0 5 * * 0"  # Sunday 05:00 local
     # Tool Search Tool (Anthropic Jan 2026 — server-side tool retrieval).
     # When enabled, tools NOT matching any eager_tool_prefixes get
     # defer_loading=True. Anthropic injects them as tool_reference blocks
