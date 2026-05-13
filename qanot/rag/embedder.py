@@ -104,11 +104,19 @@ class FastEmbedEmbedder(Embedder):
         # the 2026-05-13 restart loop — the model never finished downloading
         # before the next restart fired).
         cache = cache_dir or os.environ.get("FASTEMBED_CACHE_DIR") or None
-        self._model = TextEmbedding(model_name, cache_dir=cache)
+        # `threads=1` is intentional, not a perf miss. ONNX Runtime 1.26.0 +
+        # fastembed 0.8.0 + the int8-quantized nomic model deadlock under
+        # intra-op parallelism on multi-CPU containers (verified 2026-05-13:
+        # batches >=15 chunks hang forever; threads=1 finishes in ~1.2s).
+        # Override via FASTEMBED_THREADS env var when running on a model that
+        # tolerates multi-thread (non-quantized variants do).
+        threads_env = os.environ.get("FASTEMBED_THREADS")
+        threads = int(threads_env) if threads_env else 1
+        self._model = TextEmbedding(model_name, cache_dir=cache, threads=threads)
         self.dimensions = 768
         logger.info(
-            "FastEmbed initialized: %s (CPU, %d dims, cache=%s)",
-            model_name, self.dimensions, cache or "<default>",
+            "FastEmbed initialized: %s (CPU, %d dims, cache=%s, threads=%d)",
+            model_name, self.dimensions, cache or "<default>", threads,
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
