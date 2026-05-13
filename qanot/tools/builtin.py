@@ -237,6 +237,7 @@ def register_builtin_tools(
     get_bot: Callable | None = None,
     get_chat_id: Callable[[], int | None] | None = None,
     get_thread_id: Callable[[], int | None] | None = None,
+    get_poll_registry: Callable | None = None,
 ) -> None:
     """Register all built-in tools.
 
@@ -686,7 +687,19 @@ def register_builtin_tools(
 
         # Other optional flags — let the caller turn things on without
         # cluttering the common case.
-        if params.get("is_anonymous") is False:
+        #
+        # Anonymity default: caller can force ``is_anonymous=False`` to
+        # opt-in to per-vote ``poll_answer`` updates. For PRIVATE chats
+        # we flip the default to false automatically — there's only one
+        # voter so "anonymity" is meaningless, and we want the answer
+        # routed back to the agent so the conversational quiz flow
+        # works. In groups we keep Telegram's default (anonymous) unless
+        # the caller explicitly opts out.
+        explicit_anon = params.get("is_anonymous")
+        if explicit_anon is False:
+            send_kwargs["is_anonymous"] = False
+        elif explicit_anon is None and chat_id > 0:
+            # Private chat (positive chat_id in Telegram convention).
             send_kwargs["is_anonymous"] = False
         if params.get("allows_multiple_answers") is True and not is_quiz:
             # multi-answer is regular-poll only
@@ -698,14 +711,44 @@ def register_builtin_tools(
         try:
             msg = await bot(SendPoll(**send_kwargs))
             message_id = int(getattr(msg, "message_id", 0) or 0)
-            return json.dumps({
-                "success": True,
-                "message_id": message_id,
-                "poll_type": "quiz" if is_quiz else "regular",
-                "option_count": len(options),
-            }, ensure_ascii=False)
+            poll = getattr(msg, "poll", None)
+            poll_id = str(getattr(poll, "id", "") or "") if poll else ""
         except Exception as e:
             return json.dumps({"error": f"Telegram sendPoll failed: {e}"})
+
+        # Register the poll so the adapter's poll_answer handler can
+        # route the user's tap back to the agent as a synthetic message.
+        # Failures here are non-fatal — the poll is already in the user's
+        # chat; the worst-case is the answer doesn't flow back through
+        # the conversational loop.
+        if poll_id and get_poll_registry:
+            try:
+                registry = get_poll_registry()
+                if registry is not None:
+                    await registry.register(
+                        poll_id=poll_id,
+                        chat_id=chat_id,
+                        thread_id=thread_id,
+                        question=question,
+                        options=options,
+                        correct_option_ids=correct_ids if is_quiz else [],
+                        explanation=send_kwargs.get("explanation", ""),
+                    )
+            except Exception as e:
+                # Log only — the poll is sent regardless.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "poll registry register failed for poll_id=%s: %s",
+                    poll_id, e,
+                )
+
+        return json.dumps({
+            "success": True,
+            "message_id": message_id,
+            "poll_id": poll_id,
+            "poll_type": "quiz" if is_quiz else "regular",
+            "option_count": len(options),
+        }, ensure_ascii=False)
 
     registry.register(
         name="tg_send_poll",

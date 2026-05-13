@@ -100,6 +100,11 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._zen_classifier = GroupZenClassifier(
             config=config, state=self._group_state,
         )
+        # Conversational poll flow: registry maps poll_id → context
+        # (chat, thread, question, correct answers) so the poll_answer
+        # handler can rebuild a synthetic agent turn when the user taps.
+        from qanot.poll_state import PollRegistry
+        self._poll_registry = PollRegistry(config.workspace_dir)
 
     async def notify_admins(self, text: str, throttle_key: str | None = None,
                             throttle_seconds: float = 3600.0) -> None:
@@ -270,11 +275,20 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_animation(message: Message) -> None:
             await self._handle_message(message)
 
-        from aiogram.types import CallbackQuery
+        from aiogram.types import CallbackQuery, PollAnswer
 
         @self.dp.callback_query()
         async def handle_callback(callback: CallbackQuery) -> None:
             await self._handle_callback_query(callback)
+
+        # Conversational poll flow — when a user taps an option on a
+        # poll the bot sent (non-anonymous, per ``tg_send_poll`` config),
+        # Telegram fires this event. We synthesise an agent turn from
+        # the answer so the bot can react ("✅ to'g'ri!") and continue
+        # the quiz naturally.
+        @self.dp.poll_answer()
+        async def handle_poll_answer(answer: PollAnswer) -> None:
+            await self._handle_poll_answer(answer)
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self.config.allowed_users:
@@ -401,6 +415,123 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         if not bot_username:
             return text
         return text.replace(f"@{bot_username}", "").strip()
+
+    async def _handle_poll_answer(self, answer) -> None:
+        """Route a poll_answer Telegram update into a synthetic agent
+        turn so the conversational quiz flow works end-to-end.
+
+        Steps:
+          1. Look up the poll in PollRegistry (set by tg_send_poll).
+          2. Auth-check the responder against allowed_users.
+          3. Render the answer as a synthetic user message.
+          4. Compute the same conv_key the user's regular messages
+             would route to — keeps per-thread / per-group isolation.
+          5. Fire agent.run_turn(...) and stream the reply back via
+             ``_send_final`` so the bot's reaction lands in the right
+             chat + thread.
+
+        Failures are silent: a missing/expired poll, a non-allowed
+        responder, or a duplicate revote all return without raising.
+        """
+        try:
+            poll_id = str(getattr(answer, "poll_id", "") or "")
+            user = getattr(answer, "user", None)
+            user_id_int = int(getattr(user, "id", 0) or 0) if user else 0
+            option_ids = list(getattr(answer, "option_ids", []) or [])
+
+            if not poll_id or not user_id_int:
+                return
+
+            record = self._poll_registry.get(poll_id)
+            if record is None:
+                # We didn't send this poll, or its TTL passed. Either
+                # way, nothing to do.
+                logger.debug(
+                    "poll_answer for unknown poll_id=%s — ignoring", poll_id,
+                )
+                return
+
+            if not self._is_allowed(user_id_int):
+                logger.info(
+                    "poll_answer from non-allowed user=%s — ignoring",
+                    user_id_int,
+                )
+                return
+
+            # Dedupe revotes — only the FIRST answer (or a true change)
+            # fires an agent turn. Revoting with the same options is a
+            # no-op so the bot doesn't double-respond.
+            is_new = await self._poll_registry.record_answer(
+                poll_id, user_id_int, option_ids,
+            )
+            if not is_new:
+                logger.debug(
+                    "poll_answer is a duplicate for poll_id=%s user=%s",
+                    poll_id, user_id_int,
+                )
+                return
+
+            # Build a conv_key that matches the regular-message routing
+            # so per-thread / per-group conversation isolation is
+            # preserved. PollRegistry stored chat_id + thread_id from
+            # the original sendPoll context.
+            chat_id = record.chat_id
+            thread_id = record.thread_id
+            if chat_id < 0:
+                # Group / supergroup
+                if thread_id:
+                    conv_key = f"group_{chat_id}_topic_{thread_id}"
+                else:
+                    conv_key = f"group_{chat_id}"
+            else:
+                # Private chat
+                if thread_id:
+                    conv_key = f"user_{user_id_int}_thread_{thread_id}"
+                else:
+                    conv_key = str(user_id_int)
+
+            synthetic = self._poll_registry.build_answer_message(
+                record, option_ids,
+            )
+
+            logger.info(
+                "poll_answer routed: poll_id=%s user=%s chat=%s thread=%s "
+                "options=%s conv_key=%s",
+                poll_id, user_id_int, chat_id, thread_id, option_ids,
+                conv_key,
+            )
+
+            # Process through the agent. ``run_turn`` (non-streaming) is
+            # the right choice here — the response is typically short
+            # ("✅ correct! next question…") and we want the next poll
+            # call to fire from inside the same turn rather than
+            # leaving a half-streamed message hanging.
+            try:
+                reply = await self.agent.run_turn(
+                    synthetic,
+                    user_id=conv_key,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                )
+            except Exception:
+                logger.exception(
+                    "agent.run_turn failed for poll_id=%s", poll_id,
+                )
+                return
+
+            if reply:
+                try:
+                    await self._send_final(
+                        chat_id, reply, thread_id=thread_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "_send_final failed for poll reply chat=%s", chat_id,
+                    )
+        except Exception:
+            # Top-level safety net — never let an unexpected exception
+            # crash the dispatcher (would stop all updates).
+            logger.exception("poll_answer handler crashed")
 
     def _conv_key(self, message: Message) -> str:
         thread_id = getattr(message, "message_thread_id", None)

@@ -67,6 +67,10 @@ async def register_pre_agent_tools(
         get_bot=lambda: telegram_ref[0].bot if telegram_ref else None,
         get_chat_id=lambda: agent_ref[0].current_chat_id if agent_ref else None,
         get_thread_id=lambda: agent_ref[0].current_thread_id if agent_ref else None,
+        get_poll_registry=(
+            lambda: getattr(telegram_ref[0], "_poll_registry", None)
+            if telegram_ref else None
+        ),
     )
 
     # Anthropic-compatible memory tool (/memories directory)
