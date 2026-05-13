@@ -732,6 +732,7 @@ def register_builtin_tools(
                         question=question,
                         options=options,
                         correct_option_ids=correct_ids if is_quiz else [],
+                        message_id=message_id,
                         explanation=send_kwargs.get("explanation", ""),
                     )
             except Exception as e:

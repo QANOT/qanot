@@ -42,6 +42,11 @@ class PollRecord:
     options: list[str]
     correct_option_ids: list[int]  # empty list = regular (non-quiz) poll
     sent_at: float  # unix timestamp
+    # Telegram message_id of the poll itself. Used so the evaluator's
+    # reply can anchor visually to the poll via ``reply_to_message_id``
+    # — keeps per-question feedback discoverable in all-at-once mode
+    # where the user might answer polls out of order.
+    message_id: int = 0
     explanation: str = ""
     # Track who's already answered so revotes don't double-fire the
     # agent turn. user_id → list of selected option indices.
@@ -98,6 +103,7 @@ class PollRegistry:
                         int(x) for x in data.get("correct_option_ids", [])
                     ],
                     sent_at=ts,
+                    message_id=int(data.get("message_id", 0) or 0),
                     explanation=str(data.get("explanation", "")),
                     answers={
                         int(uid): [int(x) for x in opts]
@@ -132,6 +138,7 @@ class PollRegistry:
         question: str,
         options: list[str],
         correct_option_ids: list[int],
+        message_id: int = 0,
         explanation: str = "",
     ) -> None:
         """Record a poll the bot just sent so we can route answers later."""
@@ -143,6 +150,7 @@ class PollRegistry:
             options=list(options),
             correct_option_ids=list(correct_option_ids),
             sent_at=time.time(),
+            message_id=int(message_id or 0),
             explanation=explanation,
         )
         async with self._lock:

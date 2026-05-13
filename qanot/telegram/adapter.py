@@ -103,8 +103,12 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         # Conversational poll flow: registry maps poll_id → context
         # (chat, thread, question, correct answers) so the poll_answer
         # handler can rebuild a synthetic agent turn when the user taps.
+        # The evaluator is a lightweight Haiku-only path that bypasses
+        # the full agent loop — see qanot/poll_evaluator.py for why.
+        from qanot.poll_evaluator import PollEvaluator
         from qanot.poll_state import PollRegistry
         self._poll_registry = PollRegistry(config.workspace_dir)
+        self._poll_evaluator = PollEvaluator(agent.provider)
 
     async def notify_admins(self, text: str, throttle_key: str | None = None,
                             throttle_seconds: float = 3600.0) -> None:
@@ -490,39 +494,41 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 else:
                     conv_key = str(user_id_int)
 
-            synthetic = self._poll_registry.build_answer_message(
-                record, option_ids,
-            )
-
             logger.info(
                 "poll_answer routed: poll_id=%s user=%s chat=%s thread=%s "
-                "options=%s conv_key=%s",
+                "options=%s",
                 poll_id, user_id_int, chat_id, thread_id, option_ids,
-                conv_key,
             )
 
-            # Process through the agent. ``run_turn`` (non-streaming) is
-            # the right choice here — the response is typically short
-            # ("✅ correct! next question…") and we want the next poll
-            # call to fire from inside the same turn rather than
-            # leaving a half-streamed message hanging.
+            # Lightweight evaluator (direct Haiku call) instead of
+            # full agent.run_turn — quiz feedback is a self-contained
+            # task that doesn't need workspace context, tools, or the
+            # main provider model. Cuts per-answer cost ~200x and lets
+            # the user burst-answer 10 polls without hitting the OAuth
+            # TPM ceiling on Sonnet. Production trace 07:29:11 captured
+            # the bug: 3rd poll answer in 35s → 429.
             try:
-                reply = await self.agent.run_turn(
-                    synthetic,
-                    user_id=conv_key,
-                    chat_id=chat_id,
-                    thread_id=thread_id,
+                reply = await self._poll_evaluator.evaluate(
+                    record, option_ids,
                 )
             except Exception:
                 logger.exception(
-                    "agent.run_turn failed for poll_id=%s", poll_id,
+                    "poll evaluator failed for poll_id=%s", poll_id,
                 )
                 return
 
             if reply:
                 try:
+                    # ``reply_to`` anchors the feedback to the specific
+                    # poll the user just answered. With all-at-once
+                    # quiz flow (bot sends N polls, user answers in any
+                    # order), this is what visually links each piece of
+                    # feedback to its question — Telegram draws the
+                    # "↳ replying to poll" connector.
                     await self._send_final(
-                        chat_id, reply, thread_id=thread_id,
+                        chat_id, reply,
+                        reply_to=(record.message_id or None),
+                        thread_id=thread_id,
                     )
                 except Exception:
                     logger.exception(
