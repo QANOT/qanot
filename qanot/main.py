@@ -409,9 +409,19 @@ async def main() -> None:
     # Fire startup hooks
     await agent_hooks.fire("on_startup")
 
+    # Periodic conversation snapshot — saves to disk every 5 min so a
+    # crash, OOM, or forced kill doesn't lose more than a tick's worth
+    # of conversation. The graceful-shutdown save below still fires on
+    # normal exits.
+    from qanot.snapshot_loop import periodic_snapshot_loop
+    snapshot_task = asyncio.create_task(
+        periodic_snapshot_loop(agent), name="conv-snapshot",
+    )
+
     try:
         await telegram.start()
     finally:
+        snapshot_task.cancel()
         # Stop voice call manager
         if voicecall_manager:
             try:

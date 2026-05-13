@@ -203,10 +203,12 @@ class ConversationManager:
         if count:
             logger.info("Restored %d conversations from snapshot", count)
 
-        # Delete snapshot after load — it's a one-time restore
-        try:
-            snapshot_path.unlink()
-        except OSError:
-            pass
+        # Keep the snapshot file in place. The periodic snapshot loop
+        # will overwrite it ~5 min from now, but in the meantime if the
+        # bot crashes BEFORE the next periodic write, the existing
+        # snapshot is the best recovery point on next start. The old
+        # behaviour (unlink-after-load) was correct only when shutdown
+        # was the only writer — periodic snapshots make the file the
+        # canonical persistence layer, not a one-shot handoff.
 
         return count

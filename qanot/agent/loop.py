@@ -314,6 +314,42 @@ class _LoopMixin:
             self.config.workspace_dir,
             user_id=str(self._current_user_id),
         )
+
+        # Index this turn into the RAG conversation store so future
+        # turns can semantically retrieve relevant past exchanges —
+        # even across days, restarts, and history_limit truncation.
+        # This is what makes "I asked about Reading last week" findable
+        # without bloating context with full history. Fire-and-forget;
+        # indexing failure must never block the user-visible reply.
+        if self._rag_indexer is not None and self._current_user_id:
+            try:
+                from datetime import datetime, timezone
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+                # The text we embed pairs user + assistant so retrieval
+                # surfaces the full exchange, not half of it.
+                conv_text = (
+                    f"User: {user_message[:600]}\n\n"
+                    f"Agent: {final_text[:1500]}"
+                )
+                # Each turn gets a unique source path so old turns
+                # aren't overwritten when we re-index a similar topic.
+                source = f"conv:{self._current_user_id}:{ts}"
+                import asyncio as _asyncio
+                _asyncio.create_task(
+                    self._rag_indexer.index_text(
+                        conv_text,
+                        source=source,
+                        user_id=str(self._current_user_id),
+                        metadata={
+                            "kind": "conversation",
+                            "conv_key": str(self._current_user_id),
+                            "date": ts,
+                        },
+                    )
+                )
+            except Exception as e:
+                logger.warning("conv RAG index failed: %s", e)
+
         return final_text
 
     async def _run_loop(
