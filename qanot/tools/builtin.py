@@ -236,6 +236,7 @@ def register_builtin_tools(
     approval_callback: Callable | None = None,
     get_bot: Callable | None = None,
     get_chat_id: Callable[[], int | None] | None = None,
+    get_thread_id: Callable[[], int | None] | None = None,
 ) -> None:
     """Register all built-in tools.
 
@@ -585,6 +586,199 @@ def register_builtin_tools(
             },
         },
         handler=send_file,
+    )
+
+
+    # ── tg_send_poll ──
+    async def tg_send_poll(params: dict) -> str:
+        """Send a native Telegram poll into the current chat.
+
+        Wraps Bot API's ``sendPoll`` for both regular and quiz polls.
+        Regular: anonymous yes/no/multi-option vote.
+        Quiz: ``correct_option_id`` triggers Telegram's quiz UX (tick
+        animation, explanation reveal after vote). Bot API 9.6 added
+        ``correct_option_ids`` plural for multi-correct quizzes — we
+        accept either ``correct_option_id`` (single) or
+        ``correct_option_ids`` (list).
+        """
+        bot = get_bot() if get_bot else None
+        chat_id = get_chat_id() if get_chat_id else None
+        if bot is None or chat_id is None:
+            return json.dumps({"error": "Telegram bot/chat not available"})
+
+        question = (params.get("question") or "").strip()
+        options_raw = params.get("options")
+        if not question:
+            return json.dumps({"error": "question is required"})
+        if not isinstance(options_raw, list) or len(options_raw) < 2:
+            return json.dumps({
+                "error": "options must be an array of 2-10 strings",
+            })
+        options = [str(o).strip() for o in options_raw if str(o).strip()]
+        if not (2 <= len(options) <= 10):
+            return json.dumps({
+                "error": f"options must be 2-10 entries (got {len(options)})",
+            })
+        # Telegram caps: 300 chars per question, 100 per option.
+        if len(question) > 300:
+            return json.dumps({"error": "question too long (>300 chars)"})
+        for i, opt in enumerate(options):
+            if len(opt) > 100:
+                return json.dumps({
+                    "error": f"option #{i+1} too long (>100 chars)",
+                })
+
+        # Quiz vs regular. Accept singular or plural for forward-compat
+        # with Bot API 9.6's multi-correct quizzes.
+        correct_ids_raw = params.get("correct_option_ids")
+        if correct_ids_raw is None and "correct_option_id" in params:
+            single = params.get("correct_option_id")
+            if isinstance(single, int) and single >= 0:
+                correct_ids_raw = [single]
+        is_quiz = bool(correct_ids_raw) and len(correct_ids_raw or []) > 0
+        if is_quiz:
+            try:
+                correct_ids = [int(x) for x in correct_ids_raw]
+            except (TypeError, ValueError):
+                return json.dumps({
+                    "error": "correct_option_ids must be integers",
+                })
+            for cid in correct_ids:
+                if not (0 <= cid < len(options)):
+                    return json.dumps({
+                        "error": (
+                            f"correct_option_ids index {cid} out of range "
+                            f"(options has {len(options)} entries)"
+                        ),
+                    })
+
+        # Compose the SendPoll method. We import lazily so the tool
+        # registry can load without aiogram in test contexts.
+        try:
+            from aiogram.methods import SendPoll
+        except ImportError as e:
+            return json.dumps({"error": f"aiogram unavailable: {e}"})
+
+        send_kwargs: dict = {
+            "chat_id": chat_id,
+            "question": question,
+            "options": options,
+        }
+        # Thread targeting — when the user is reading inside a private-
+        # chat thread or forum topic, the poll must land there too.
+        thread_id_fn = get_thread_id if get_thread_id else None
+        thread_id = thread_id_fn() if thread_id_fn else None
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+
+        if is_quiz:
+            send_kwargs["type"] = "quiz"
+            # The Bot API expects ``correct_option_id`` (singular int)
+            # for classic single-correct quizzes; ``correct_option_ids``
+            # for multi-correct (9.6+). aiogram exposes both fields.
+            if len(correct_ids) == 1:
+                send_kwargs["correct_option_id"] = correct_ids[0]
+            else:
+                send_kwargs["correct_option_ids"] = correct_ids
+            explanation = params.get("explanation")
+            if isinstance(explanation, str) and explanation.strip():
+                send_kwargs["explanation"] = explanation.strip()[:200]
+
+        # Other optional flags — let the caller turn things on without
+        # cluttering the common case.
+        if params.get("is_anonymous") is False:
+            send_kwargs["is_anonymous"] = False
+        if params.get("allows_multiple_answers") is True and not is_quiz:
+            # multi-answer is regular-poll only
+            send_kwargs["allows_multiple_answers"] = True
+        open_period = params.get("open_period")
+        if isinstance(open_period, int) and 5 <= open_period <= 600:
+            send_kwargs["open_period"] = open_period
+
+        try:
+            msg = await bot(SendPoll(**send_kwargs))
+            message_id = int(getattr(msg, "message_id", 0) or 0)
+            return json.dumps({
+                "success": True,
+                "message_id": message_id,
+                "poll_type": "quiz" if is_quiz else "regular",
+                "option_count": len(options),
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": f"Telegram sendPoll failed: {e}"})
+
+    registry.register(
+        name="tg_send_poll",
+        description=(
+            "Send a native Telegram poll into the current chat. Works in "
+            "private chats and groups; lands in the user's open thread "
+            "when one is active. Set correct_option_id (or "
+            "correct_option_ids for multi-correct) to make it a quiz with "
+            "Telegram's built-in tick animation. Use this for English "
+            "level tests, surveys, multiple-choice questions, voting — "
+            "the user taps an option instead of typing the answer."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["question", "options"],
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "Poll question (1-300 chars).",
+                },
+                "options": {
+                    "type": "array",
+                    "description": "2-10 answer options, each 1-100 chars.",
+                    "items": {"type": "string"},
+                },
+                "correct_option_id": {
+                    "type": "integer",
+                    "description": (
+                        "Zero-based index of the correct answer. When set, "
+                        "the poll becomes a quiz."
+                    ),
+                },
+                "correct_option_ids": {
+                    "type": "array",
+                    "description": (
+                        "Multi-correct quiz: list of zero-based indices. "
+                        "Bot API 9.6+. Use this OR correct_option_id, not "
+                        "both."
+                    ),
+                    "items": {"type": "integer"},
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": (
+                        "Quiz only. Shown after the user votes. Max 200 "
+                        "chars. Useful for teaching: 'B is correct "
+                        "because…'."
+                    ),
+                },
+                "is_anonymous": {
+                    "type": "boolean",
+                    "description": (
+                        "Default true. Set false to attribute votes to "
+                        "user accounts (group polls)."
+                    ),
+                },
+                "allows_multiple_answers": {
+                    "type": "boolean",
+                    "description": (
+                        "Regular polls only. Lets users pick more than "
+                        "one option. Ignored for quizzes."
+                    ),
+                },
+                "open_period": {
+                    "type": "integer",
+                    "description": (
+                        "Auto-close after N seconds (5-600). Useful for "
+                        "timed quizzes."
+                    ),
+                },
+            },
+        },
+        handler=tg_send_poll,
     )
 
 

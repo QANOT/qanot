@@ -57,6 +57,10 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         self._current_user_id: str = ""
         self._current_chat_id: int | None = None
         self._current_message_id: int | None = None
+        # Telegram message_thread_id of the incoming user message. Lets
+        # tools (e.g. tg_send_poll, send_file) target the correct thread
+        # in private chats with Threaded Mode + forum topics in groups.
+        self._current_thread_id: int | None = None
         self._rag_indexer = None  # Set by main.py when RAG is enabled
         self.cost_tracker = CostTracker(config.workspace_dir)
         self._max_iterations = max_iterations
@@ -144,6 +148,12 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         """Current Telegram message_id being processed (for message scrubbing tools)."""
         return self._current_message_id
 
+    @property
+    def current_thread_id(self) -> int | None:
+        """Current Telegram message_thread_id being processed (None for
+        base view in private chats / non-forum group messages)."""
+        return self._current_thread_id
+
     async def run_turn(
         self,
         user_message: str,
@@ -151,6 +161,7 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         images: list[dict] | None = None,
         chat_id: int | None = None,
         message_id: int | None = None,
+        thread_id: int | None = None,
         system_prompt_override: str | None = None,
     ) -> str:
         """Process a user message through the agent loop.
@@ -160,6 +171,8 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
             user_id: Unique user identifier for conversation isolation.
             images: Optional list of Anthropic-style image blocks.
             chat_id: Telegram chat ID (for sub-agent result delivery).
+            thread_id: Telegram message_thread_id for thread-targeted
+                tool replies (polls, files in threaded chats).
             system_prompt_override: Per-turn system prompt override (thread-safe).
 
         Returns the final text response.
@@ -178,6 +191,7 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
             self._current_message_id = message_id
+            self._current_thread_id = thread_id
             # Budget enforcement: reject if daily limit exceeded
             if user_id and self.config.daily_budget_usd > 0:
                 allowed, spent, budget = self.cost_tracker.check_budget(
@@ -219,6 +233,7 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         images: list[dict] | None = None,
         chat_id: int | None = None,
         message_id: int | None = None,
+        thread_id: int | None = None,
         system_prompt_override: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Process a user message with streaming.
@@ -243,6 +258,7 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         async with self._get_lock(user_id):
             self._current_chat_id = chat_id
             self._current_message_id = message_id
+            self._current_thread_id = thread_id
             # Budget enforcement: reject if daily limit exceeded
             if user_id and self.config.daily_budget_usd > 0:
                 allowed, spent, budget = self.cost_tracker.check_budget(

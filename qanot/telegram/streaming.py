@@ -46,7 +46,7 @@ class StreamingMixin:
 
         done_response = None
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, system_prompt_override=system_prompt_override):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, thread_id=thread_id, system_prompt_override=system_prompt_override):
                 if event.type == "text_delta":
                     accumulated += event.text
                     if drafting_paused:
@@ -88,7 +88,7 @@ class StreamingMixin:
 
         done_response = None
         try:
-            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, system_prompt_override=system_prompt_override):
+            async for event in self.agent.run_turn_stream(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, thread_id=thread_id, system_prompt_override=system_prompt_override):
                 if event.type == "text_delta":
                     accumulated += event.text
                     now = asyncio.get_running_loop().time()
@@ -141,7 +141,7 @@ class StreamingMixin:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
         try:
-            response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, system_prompt_override=system_prompt_override)
+            response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, thread_id=thread_id, system_prompt_override=system_prompt_override)
         finally:
             typing_task.cancel()
         await self._send_final(chat_id, response or "(No response)", reply_to=reply_to, thread_id=thread_id)
