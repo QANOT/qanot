@@ -374,6 +374,11 @@ class TgChannelPlugin(Plugin):
                 },
             },
         },
+        # Channel posts are user-visible to the whole audience — apply
+        # active feedback memos (style, language, format rules) before
+        # the post lands. The text is the only field worth validating;
+        # buttons and parse_mode aren't subject to writing-style rules.
+        validate_fields={"text": "Telegram channel post"},
     )
     async def channel_post(self, params: dict) -> str:
         if self._client is None:

@@ -53,6 +53,15 @@ from .extractor import (
     ExtractedMemo,
     extract_memo,
 )
+from .validator import (
+    VALIDATOR_MODEL,
+    ValidationResult,
+    validate_text_against_memos,
+)
+from .runtime import (
+    MemoValidatorRuntime,
+    build_runtime,
+)
 
 __all__ = [
     # Spec
@@ -86,4 +95,11 @@ __all__ = [
     "extract_memo",
     "ExtractedMemo",
     "EXTRACTOR_MODEL",
+    # Validator
+    "validate_text_against_memos",
+    "ValidationResult",
+    "VALIDATOR_MODEL",
+    # Runtime (registry glue)
+    "MemoValidatorRuntime",
+    "build_runtime",
 ]

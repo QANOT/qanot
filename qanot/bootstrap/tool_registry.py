@@ -212,6 +212,40 @@ async def register_pre_agent_tools(
     else:
         logger.info("Skill tools disabled via skill_tools_enabled=false")
 
+    # Memo validator: runs on tools that declared `validate_fields={…}` at
+    # registration time. Rewrites text fields to comply with active feedback
+    # memos before the tool fires. Cheap no-op when no feedback memo is in
+    # scope; ~$0.0002 Haiku call when there are rules to check.
+    def _validator_factory():
+        agent = agent_ref[0] if agent_ref else None
+        provider = getattr(agent, "provider", None) if agent else None
+        client = getattr(provider, "client", None) if provider else None
+        if client is None:
+            return None
+        from qanot.memos import build_runtime
+        user_id = (
+            str(agent.current_user_id) if agent and agent.current_user_id else None
+        )
+        thread_id = (
+            str(agent.current_thread_id)
+            if agent and agent.current_thread_id else None
+        )
+        return build_runtime(
+            client=client,
+            workspace_dir=config.workspace_dir,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+
+    async def _async_validator_factory():
+        # Registry expects an async callable; we wrap the sync builder
+        # because building is just dict/list work, no I/O. Keeping the
+        # async surface lets a future implementation (e.g. semantic
+        # filtering via the router) drop in without churning the API.
+        return _validator_factory()
+
+    tool_registry.set_memo_validator(_async_validator_factory)
+
     return mcp_manager
 
 

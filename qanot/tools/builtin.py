@@ -316,6 +316,7 @@ def register_builtin_tools(
             },
         },
         handler=write_file,
+        validate_fields={"content": "file content"},
     )
 
     # ── list_files ──

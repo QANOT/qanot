@@ -418,6 +418,7 @@ class NotionPlugin(Plugin):
                 "markdown": {"type": "string", "description": "Markdown content to append"},
             },
         },
+        validate_fields={"markdown": "Notion page append"},
     )
     async def notion_append_to_page(self, params: dict) -> str:
         if not self._client:
@@ -480,6 +481,13 @@ class NotionPlugin(Plugin):
                     ),
                 },
             },
+        },
+        # Title and body are both user-visible Notion artefacts subject to
+        # any active feedback memo (e.g. the 2026-05-13 title-format rule).
+        # The validator rewrites them in place before the API call.
+        validate_fields={
+            "title": "Notion page title",
+            "markdown": "Notion page body",
         },
     )
     async def notion_create_page(self, params: dict) -> str:

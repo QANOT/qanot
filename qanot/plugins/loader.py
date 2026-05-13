@@ -117,6 +117,7 @@ class PluginManager:
                     description=t.description,
                     parameters=t.parameters,
                     handler=t.handler,
+                    validate_fields=t.validate_fields,
                 )
 
             # Merge TOOLS.md and SOUL_APPEND into workspace

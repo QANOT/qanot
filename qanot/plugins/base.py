@@ -19,6 +19,11 @@ class ToolDef:
     description: str
     parameters: dict
     handler: Callable[[dict], Awaitable[str]]
+    # Optional map of input field paths to human-readable labels. Each
+    # value is run through the memo validator before the handler fires
+    # — see qanot/registry.py:register(validate_fields=...). Field paths
+    # may be dotted (``properties.title``). None / empty = no validation.
+    validate_fields: dict | None = None
 
 
 @dataclass
@@ -81,13 +86,23 @@ def tool(
     name: str,
     description: str,
     parameters: dict | None = None,
+    validate_fields: dict | None = None,
 ):
-    """Decorator to mark a method as a tool."""
+    """Decorator to mark a method as a tool.
+
+    `validate_fields` declares which text-bearing input fields should
+    run through the memo validator (P1.R7 evaluator-optimizer) before
+    the handler fires. Format: ``{field_path: human_label}``; nested
+    paths use dots (``"properties.title": "DOCX heading"``). The label
+    is what the validator surfaces to the LLM as the field context.
+    None/empty = no validation, the tool runs as before.
+    """
     def decorator(func: Callable) -> Callable:
         func._tool_def = {  # type: ignore
             "name": name,
             "description": description,
             "parameters": parameters if parameters is not None else {"type": "object", "properties": {}},
+            "validate_fields": validate_fields,
         }
         return func
     return decorator
@@ -128,7 +143,13 @@ class Plugin(ABC):
             except Exception:
                 continue
             if callable(attr) and hasattr(attr, "_tool_def"):
-                tools.append(ToolDef(**attr._tool_def, handler=attr))
+                # `validate_fields` is part of the decorator's _tool_def
+                # since the new signature; older decorated funcs (cached
+                # plugin imports) may not have the key. Default to None
+                # so the ToolDef constructor never KeyErrors.
+                td = dict(attr._tool_def)
+                td.setdefault("validate_fields", None)
+                tools.append(ToolDef(**td, handler=attr))
         return tools
 
     # ── Extensibility hooks (all optional, empty defaults) ──
