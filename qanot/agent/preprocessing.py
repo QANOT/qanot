@@ -126,6 +126,41 @@ class _PreprocessingMixin:
                 wal_write(wal_entries, self.config.workspace_dir, user_id=str(self._current_user_id))
                 logger.debug("WAL: wrote %d entries before responding", len(wal_entries))
 
+        # Memo router: select relevant memos (Global / User / Thread scope)
+        # and prepend them as a <system-reminder> block. This is the
+        # production fix for the buried-bullet bug class — see qanot/memos/.
+        # No-op when router isn't attached (e.g., RAG disabled) or when no
+        # memo crosses the relevance threshold.
+        memo_router = getattr(self, "_memo_router", None)
+        if memo_router is not None and user_message.strip():
+            try:
+                route_result = await memo_router.route(
+                    user_message,
+                    user_id=self._current_user_id or None,
+                    thread_id=(
+                        str(self._current_thread_id)
+                        if self._current_thread_id else None
+                    ),
+                )
+                if route_result.selections:
+                    from qanot.memos import render_system_reminder
+                    reminder = render_system_reminder(route_result)
+                    if reminder:
+                        # Place the reminder at the TOP of user_message —
+                        # closest to the model's response generation tokens,
+                        # which is the recency-bias positioning Claude Code
+                        # uses for the same purpose.
+                        user_message = f"{reminder}\n\n{user_message}"
+                        logger.debug(
+                            "memo router injected %d memos (above_thr=%d, "
+                            "dropped=%d)",
+                            len(route_result.selections),
+                            route_result.above_threshold,
+                            route_result.dropped_for_budget,
+                        )
+            except Exception as exc:  # noqa: BLE001 — router must not break the turn
+                logger.warning("memo router failed: %s", exc)
+
         # RAG context injection: auto-inject relevant memory for dumb models
         # "auto"/"always" = inject, "agentic" = skip (model uses rag_search tool)
         if (

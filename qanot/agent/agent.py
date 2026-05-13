@@ -101,6 +101,11 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         self._last_user_msg_id = ""
         # Loaded skills (populated by load_skills)
         self._skills: list = []
+        # Memo router — wires up when RAG attaches so we can reuse its
+        # embedder. None when RAG is disabled (no embedder available);
+        # in that case <system-reminder> injection is a no-op and the
+        # agent falls back to the unstructured MEMORY.md path.
+        self._memo_router = None
         # Per-user pending images queue (populated by generate_image tool)
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
@@ -150,8 +155,29 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         return self._pending_videos.pop(user_id, [])
 
     def attach_rag(self, rag_indexer) -> None:
-        """Attach RAG indexer for auto-context injection."""
+        """Attach RAG indexer for auto-context injection.
+
+        Also wires up the memo router using the same embedder, since
+        memo selection is a CPU embedding pass identical in shape to
+        RAG retrieval. If the indexer has no embedder (FTS-only mode),
+        the memo router is left as None and ``<system-reminder>``
+        injection becomes a no-op.
+        """
         self._rag_indexer = rag_indexer
+        try:
+            from qanot.memos import MemoRouter, MemoStore
+            engine = getattr(rag_indexer, "engine", None)
+            embedder = getattr(engine, "embedder", None) if engine else None
+            if embedder is None:
+                logger.info("memo router disabled: no embedder available")
+                return
+            self._memo_router = MemoRouter(
+                store=MemoStore(self.config.workspace_dir),
+                embed=embedder.embed,
+            )
+            logger.info("memo router attached")
+        except Exception as exc:  # noqa: BLE001 — never let router init break startup
+            logger.warning("memo router init failed: %s", exc)
 
     def load_skills(self, workspace_dir: str) -> None:
         """Discover and load skills from workspace/skills/ directory."""

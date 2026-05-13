@@ -35,6 +35,19 @@ from .store import (
     StoreError,
     WriteResult,
 )
+from .router import (
+    DEFAULT_BUDGET_CHARS,
+    DEFAULT_THRESHOLD,
+    DEFAULT_TOP_K,
+    EmbedFn,
+    MemoRouter,
+    RouteResult,
+    Selection,
+)
+from .prompt import (
+    estimate_token_cost,
+    render_system_reminder,
+)
 
 __all__ = [
     # Spec
@@ -53,4 +66,15 @@ __all__ = [
     "WriteResult",
     "MEMOS_DIR_NAME",
     "ARCHIVE_DIR_NAME",
+    # Router
+    "MemoRouter",
+    "RouteResult",
+    "Selection",
+    "EmbedFn",
+    "DEFAULT_TOP_K",
+    "DEFAULT_THRESHOLD",
+    "DEFAULT_BUDGET_CHARS",
+    # Prompt
+    "render_system_reminder",
+    "estimate_token_cost",
 ]
