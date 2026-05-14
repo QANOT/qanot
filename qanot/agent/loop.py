@@ -49,7 +49,16 @@ _LONG_RUNNING_TOOLS = frozenset({
     "publish_clip_to_meta",  # Meta Graph container polling can take minutes
 })
 LONG_TOOL_TIMEOUT = 1800  # 30 minutes for heavy tools (transcription of long videos)
-CONVERSATION_TTL = 3600  # seconds before idle conversations are evicted
+# Default TTL before idle conversations are evicted from memory.
+# Raised from 1 hour (3600s) to 7 days (604800s) on 2026-05-14 after a
+# real bug: user idled a Telegram thread 7 hours, returned, and the bot
+# had no recollection of the topic because TTL had evicted the thread.
+# The eviction was producing zero token savings (history_limit caps the
+# per-turn prompt anyway) but breaking thread resumption — the worst
+# trade-off in the codebase. The MAX_CONVERSATIONS=500 LRU cap is the
+# real safety net for runaway memory growth.
+# Override per-deployment via ``config.conversation_ttl_hours``.
+CONVERSATION_TTL = 7 * 24 * 3600  # 7 days in seconds
 MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
 BASE_DELAY = 1.0  # seconds, base for exponential backoff
 MAX_DELAY = 30.0  # seconds, backoff ceiling

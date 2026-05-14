@@ -226,6 +226,13 @@ class Config:
     max_memory_injection_chars: int = 4000  # Max chars for RAG/compaction injection into user message
     # Session history replay
     history_limit: int = 50  # Max user turns to restore from session history on restart
+    # In-memory conversation TTL (seconds). After this many seconds of
+    # silence, the conversation is evicted from `_conversations` and the
+    # user re-resumes from snapshot/RAG on the next message. Default is
+    # 7 days; pre-2026-05-14 default was 1 hour which broke realistic
+    # multi-day thread workflows on Telegram. 0 = never evict by time
+    # (LRU cap on MAX_CONVERSATIONS is the only safety net).
+    conversation_ttl_seconds: int = 7 * 24 * 3600
     # Extended thinking (Claude reasoning mode)
     thinking_level: str = "off"  # "off" | "minimal" | "low" | "medium" | "high" | "extended" | "max"
     thinking_budget: int = 10000  # max thinking tokens (auto-set by level)

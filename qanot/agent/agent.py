@@ -92,9 +92,19 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         self._is_child = _is_child
         # Per-user conversation histories keyed by user_id.
         # None key is used for non-user contexts (cron jobs, etc.)
+        # Conversation TTL: prefer the per-bot config value when set so
+        # operators can tune retention without code changes. Falls back
+        # to the package default (CONVERSATION_TTL = 7 days as of
+        # 2026-05-14). Negative / zero values disable time-based
+        # eviction entirely; the MAX_CONVERSATIONS LRU cap still applies.
+        configured_ttl = getattr(config, "conversation_ttl_seconds", None)
+        if configured_ttl is None or configured_ttl <= 0:
+            effective_ttl = float("inf") if configured_ttl == 0 else CONVERSATION_TTL
+        else:
+            effective_ttl = float(configured_ttl)
         self._conv_manager = ConversationManager(
             history_limit=config.history_limit,
-            ttl=CONVERSATION_TTL,
+            ttl=effective_ttl,
         )
         # Backward compat: expose raw dict for dashboard / tests
         self._conversations = self._conv_manager._conversations
