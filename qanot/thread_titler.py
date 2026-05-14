@@ -156,6 +156,17 @@ class ThreadTitler:
                 "thread_titler: chat=%s thread=%s title=%r",
                 chat_id, thread_id, title,
             )
+            # Persist thread topic as a project memo. This memo carries
+            # thread_scope so the router pulls it back into the prompt
+            # whenever activity resumes in this thread — even if the
+            # 7-day in-memory conversation TTL has long evicted the
+            # history. The memo file lives forever; the titler task is
+            # fire-and-forget per thread, so this write happens exactly
+            # once per (chat, thread) pair.
+            await self._save_thread_context_memo(
+                chat_id=chat_id, thread_id=thread_id,
+                title=title, first_message=user_message,
+            )
         except Exception:
             logger.exception(
                 "thread_titler failed chat=%s thread=%s — retry on next msg",
@@ -163,6 +174,80 @@ class ThreadTitler:
             )
         finally:
             self._in_flight.discard(key)
+
+    async def _save_thread_context_memo(
+        self,
+        *,
+        chat_id: int,
+        thread_id: int,
+        title: str,
+        first_message: str,
+    ) -> None:
+        """Write a ``project-thread-<id>.md`` memo so the topic survives
+        forever — even past the in-memory conversation TTL.
+
+        Failures are swallowed; the titler primary job (Telegram title
+        rename) already succeeded. We never want a memo-write hiccup
+        to look like a titler failure to the operator.
+
+        Scope: ``user_scope = str(chat_id)`` is correct only for private
+        DMs, which is the only case ``maybe_title`` fires today (the
+        adapter gates on ``not _is_group_chat``). Group chats need a
+        per-sender user_id we don't have here; defer until group
+        threading lands.
+        """
+        try:
+            # Local import — workspace_dir is the only filesystem dep
+            # the titler has, and we don't want to pay the memos package
+            # import on every titler instantiation.
+            from qanot.memos import MemoStore, MemoType
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("memos package unavailable to titler: %s", exc)
+            return
+
+        workspace_dir = self._state_path.parent
+        store = MemoStore(workspace_dir)
+
+        excerpt = " ".join((first_message or "").split())[:300]
+        body = (
+            f"Thread mavzusi: {title}\n\n"
+            f"Birinchi xabar: {excerpt}\n\n"
+            f"Bu thread'da har doim shu mavzu kontekstida javob ber. "
+            f"Foydalanuvchi qaytadan yozsa va aniq boshqa mavzuga "
+            f"o'tmasa — generic javob emas, shu thread'ning mavzusiga "
+            f"mos javob qaytar."
+        )
+        description = f"Thread {thread_id} mavzusi — {title}"
+        # Description cap is 200 chars in MemoSpec; trim defensively.
+        if len(description) > 200:
+            description = description[:199] + "…"
+
+        try:
+            store.upsert(
+                name=f"project-thread-{thread_id}",
+                description=description,
+                memo_type=MemoType.PROJECT,
+                body=body,
+                user_scope=str(chat_id),
+                thread_scope=str(thread_id),
+                why=(
+                    f"Auto-captured by thread_titler on first message in "
+                    f"thread {thread_id}."
+                ),
+                how_to_apply=(
+                    "Surface this memo when activity resumes in this "
+                    "thread — pulls the topic back into context even if "
+                    "the in-memory conversation history has expired."
+                ),
+            )
+            logger.info(
+                "thread_titler: project memo saved for thread=%s", thread_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "thread_titler: memo save failed for thread=%s: %s",
+                thread_id, exc,
+            )
 
     async def _generate_title(self, user_message: str) -> str:
         """Single Haiku call. Returns trimmed title or empty string.
