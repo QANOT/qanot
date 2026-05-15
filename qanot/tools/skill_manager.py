@@ -403,6 +403,155 @@ def register_skill_manager_tools(
         timeout=_SKILL_TOOL_TIMEOUT,
     )
 
+    # ─── skill_search (registry — read only) ─────────────────────
+
+    async def skill_search(params: dict) -> str:
+        query = (params.get("query") or "").strip()
+        if not query:
+            return _err("query is required")
+        try:
+            from qanot.skills.registry import search_skill_registry
+            matches = search_skill_registry(query)
+        except Exception as exc:  # noqa: BLE001 — registry fetch must not break the turn
+            return _err(f"registry search failed: {exc}")
+        rows = [
+            {
+                "name": e.name,
+                "description": e.description,
+                "version": e.version,
+                "tier": e.tier,
+                "tags": e.tags,
+            }
+            for e in matches[:10]
+        ]
+        return _ok({"query": query, "count": len(rows), "results": rows})
+
+    registry.register(
+        name="skill_search",
+        description=(
+            "Search the Qanot skill registry (the public marketplace) for "
+            "shareable SKILL.md workflows by keyword. READ-ONLY — this only "
+            "lists what's available; it does NOT install anything. When the "
+            "user needs a capability you don't have a local skill for, "
+            "search here first, then SHOW the user the matches and ASK "
+            "before calling skill_install."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Keyword to match against skill name, description, "
+                        "category, and tags (e.g. 'vat', 'sotuv hisoboti')."
+                    ),
+                },
+            },
+        },
+        handler=skill_search,
+        category="core",
+        timeout=_SKILL_TOOL_TIMEOUT,
+    )
+
+    # ─── skill_install (registry — confirmation-gated) ───────────
+
+    async def skill_install(params: dict) -> str:
+        name = (params.get("name") or "").strip()
+        if not name:
+            return _err("name is required")
+        confirmed = bool(params.get("user_confirmed", False))
+        if not confirmed:
+            return _err(
+                "user_confirmed is required. Installing a skill pulls "
+                "external content into the workspace — you MUST show the "
+                "user the skill name + description + tier and get an "
+                "explicit yes BEFORE calling this with user_confirmed=true.",
+                name=name,
+            )
+        try:
+            from qanot.skills.registry import (
+                install_skill, skill_registry_info,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _err(f"registry unavailable: {exc}")
+
+        # Hard tier gate. The agent may install official/community after
+        # user confirmation; unverified is operator-only via the CLI
+        # (`qanot skill install <name> --allow-unverified`). This mirrors
+        # the boundary every mature framework keeps — Hermes/OpenClaw do
+        # NOT expose hub-install to the model at all; we allow it but
+        # only for reviewed tiers and only with explicit user consent.
+        entry = skill_registry_info(name)
+        if entry is None:
+            return _err(
+                f"'{name}' not found in the registry. Use skill_search "
+                f"first to find the exact name.",
+                name=name,
+            )
+        if entry.tier == "unverified":
+            return _err(
+                f"'{name}' is UNVERIFIED — the agent cannot install "
+                f"unverified skills. Tell the user to run "
+                f"`qanot skill install {name} --allow-unverified` "
+                f"themselves if they trust the author.",
+                name=name, tier=entry.tier,
+            )
+
+        ok, msg = install_skill(
+            name, skills_root,
+            with_scripts=False,        # never pull executables autonomously
+            allow_unverified=False,    # belt-and-suspenders with the gate above
+            force=bool(params.get("force", False)),
+        )
+        if not ok:
+            return _err(f"install failed: {msg}", name=name)
+        _reload()
+        return _ok({
+            "name": name,
+            "tier": entry.tier,
+            "message": msg,
+            "note": "Skill loaded — usable from your next turn.",
+        })
+
+    registry.register(
+        name="skill_install",
+        description=(
+            "Install a skill from the Qanot registry into the workspace. "
+            "GUARDRAILS: (1) you MUST call skill_search first and SHOW the "
+            "user the candidate(s); (2) you MUST get an explicit user "
+            "'yes' and only then call this with user_confirmed=true; "
+            "(3) 'unverified' tier skills are refused — operator-only via "
+            "CLI. The bundle is security-scanned and integrity-checked "
+            "(sha256) before it lands; scripts/ are stripped. Never "
+            "auto-install without the user asking for the capability."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["name", "user_confirmed"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Exact skill name from skill_search results.",
+                },
+                "user_confirmed": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true ONLY after you showed the user the skill "
+                        "details and they explicitly approved the install."
+                    ),
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Overwrite an existing skill of the same name.",
+                },
+            },
+        },
+        handler=skill_install,
+        category="core",
+        timeout=30.0,  # network: git clone + scan
+    )
+
     # ─── skill_view ──────────────────────────────────────────────
 
     async def skill_view(params: dict) -> str:
