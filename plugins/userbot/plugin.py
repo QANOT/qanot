@@ -462,6 +462,127 @@ class UserbotPlugin(Plugin):
         )
 
     @tool(
+        name="tg_find_chat",
+        description=(
+            "Find a group or channel by its DISPLAY NAME (title), even if it "
+            "isn't in the recent chats list and has no @username. Scans the "
+            "account's full dialog list and returns every group/channel whose "
+            "title contains the query (case-insensitive). Use this when "
+            "tg_find_contact fails because the target is a named group like "
+            "'absvision xarajat' — tg_find_contact only resolves usernames / "
+            "phone / numeric ids, not free-form group titles. Each match "
+            "includes a recipient_id token usable with tg_send_message."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Substring of the group/channel title. "
+                        "Case-insensitive. e.g. 'absvision xarajat'."
+                    ),
+                },
+                "max_scan": {
+                    "type": "integer",
+                    "description": (
+                        "How many dialogs to scan, newest-first (default "
+                        "500, max 2000). Raise only if the group is very "
+                        "stale and not found at the default depth."
+                    ),
+                },
+            },
+        },
+    )
+    async def tg_find_chat(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        query = (params.get("query") or "").strip().lower()
+        if not query:
+            return json.dumps(
+                {"status": "error", "error": "query is required"},
+                ensure_ascii=False,
+            )
+        max_scan = max(1, min(2000, int(params.get("max_scan") or 500)))
+
+        matches: list[dict[str, Any]] = []
+        scanned = 0
+        try:
+            async for dialog in client.get_dialogs(limit=max_scan):
+                scanned += 1
+                chat = getattr(dialog, "chat", None)
+                if chat is None:
+                    continue
+                peer_type = self._chat_type(chat)
+                # Only groups / channels — tg_find_contact already covers
+                # private contacts well, and matching person names here
+                # would surface noisy false positives. _chat_type collapses
+                # supergroup → "group", so two values cover all non-DM peers.
+                if peer_type not in ("group", "channel"):
+                    continue
+                username = getattr(chat, "username", None)
+                title = (
+                    getattr(chat, "title", None)
+                    or (f"@{username}" if username else "")
+                    or str(getattr(chat, "id", "?"))
+                )
+                if query not in title.lower():
+                    continue
+                peer_id = int(getattr(chat, "id", 0) or 0)
+                token = await self._mint_token(
+                    peer=peer_id,
+                    username=username,
+                    first_name=title,
+                    peer_id=peer_id,
+                    peer_type=peer_type,
+                )
+                matches.append({
+                    "recipient_id": token,
+                    "title": title,
+                    "username": username,
+                    "id": peer_id,
+                    "type": peer_type,
+                })
+                # Cap result size — if many groups share a common word the
+                # agent should refine, not get a 50-item dump.
+                if len(matches) >= 10:
+                    break
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        if not matches:
+            return json.dumps(
+                {
+                    "status": "not_found",
+                    "scanned": scanned,
+                    "error": (
+                        f"'{params.get('query')}' nomli guruh topilmadi "
+                        f"({scanned} ta dialog skanlandi). Agar guruh juda "
+                        f"eski bo'lsa, max_scan ni oshiring; yoki nomning "
+                        f"aniqroq qismini bering."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "status": "ok",
+                "scanned": scanned,
+                "match_count": len(matches),
+                "matches": matches,
+            },
+            ensure_ascii=False,
+        )
+
+    @tool(
         name="tg_send_message",
         description=(
             "Send a Telegram text message AS the account owner to a recipient "

@@ -37,6 +37,23 @@ The user's own first name can match other contacts. If you call
 3. Operator's actual identity comes from ``Owner Identity`` in this
    system prompt — anyone else with a similar name is NOT the owner.
 
+### Resolving GROUPS by name — use the right tool
+
+``tg_find_contact`` only resolves @usernames, phone numbers, and
+numeric ids. It CANNOT find a group by its display name like
+"absvision xarajat". If the target is a named group/channel:
+
+1. Use ``tg_find_chat`` with the group title as ``query`` — it scans
+   the full dialog list (not just recent 50) and returns matching
+   groups with ready recipient tokens.
+2. If ``tg_find_chat`` returns ``not_found``, raise ``max_scan`` once
+   (e.g. 1500) for very stale groups, OR ask the user for a more
+   exact name fragment.
+3. Do NOT loop: tg_find_contact → tg_list_recent_chats →
+   tg_scan_unread → tg_find_contact again. That burns turns and
+   never resolves a named group. One ``tg_find_chat`` call is the
+   correct path.
+
 ### Default policy
 
 If in doubt, DO NOT use userbot tools. Reply in chat. The cost of NOT
