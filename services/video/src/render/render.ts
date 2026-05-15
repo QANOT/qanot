@@ -25,10 +25,7 @@
  */
 
 import {
-  cpSync,
-  existsSync,
   mkdtempSync,
-  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -38,63 +35,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnWithTimeout } from "./timeout.js";
-
-/**
- * Reels-via-service asset bridge.
- *
- * The reels pipeline (plugins/reels) stages a render's assets into a Docker
- * volume shared with this container, at `<ROOT>/<request_id>/assets`, and
- * references them in the composition by the project-relative path
- * `assets/...`. The render service writes index.html into a random temp
- * projectDir, so HyperFrames' linter would not find those assets. After
- * writing index.html we symlink `projectDir/assets` -> the shared dir for
- * that request_id, so relative refs resolve.
- *
- * This is additive and inert for every other caller (e.g. render_video):
- * no shared dir exists for their request_id, so nothing is linked.
- * request_id is already validated as a strict UUID at the route layer;
- * we re-validate here and confine the resolved path under the root.
- */
-const REEL_SHARED_ASSET_ROOT =
-  process.env["REEL_SHARED_ASSET_ROOT"] ?? "/app/assets/reel-share";
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function linkSharedAssets(
-  projectDir: string,
-  requestId: string | undefined,
-): void {
-  if (!requestId || !UUID_RE.test(requestId)) return;
-  if (!existsSync(REEL_SHARED_ASSET_ROOT)) {
-    console.warn(`[reel-assets] root missing: ${REEL_SHARED_ASSET_ROOT}`);
-    return;
-  }
-  const candidate = join(REEL_SHARED_ASSET_ROOT, requestId, "assets");
-  let real: string;
-  let rootReal: string;
-  try {
-    rootReal = realpathSync(REEL_SHARED_ASSET_ROOT);
-    real = realpathSync(candidate);
-  } catch {
-    // No staged assets for this request_id — not a reels-via-service job.
-    console.warn(`[reel-assets] no staged dir for ${requestId} (${candidate})`);
-    return;
-  }
-  // Defense in depth: the resolved path must stay under the shared root.
-  if (real !== rootReal && !real.startsWith(rootReal + "/")) {
-    console.warn(`[reel-assets] resolved path escapes root: ${real}`);
-    return;
-  }
-  if (!statSync(real).isDirectory()) return;
-  // Copy (not symlink) into the project: HyperFrames' linter treats assets
-  // reachable only via a symlink that points outside projectDir as "not in
-  // the project". A real in-project copy satisfies it unconditionally.
-  // Assets are small (few MB of trimmed clips + voiceover) so the copy is
-  // cheap relative to the render itself.
-  const dest = join(projectDir, "assets");
-  cpSync(real, dest, { recursive: true, dereference: true });
-  console.warn(`[reel-assets] staged ${real} -> ${dest}`);
-}
+import { stageSharedAssets } from "./shared_assets.js";
 import { JobErrorCode, JobStage } from "../types.js";
 import type {
   RenderProgressCallback,
@@ -178,7 +119,7 @@ export async function renderComposition(
   try {
     writeFileSync(join(projectDir, "hyperframes.json"), HYPERFRAMES_JSON);
     writeFileSync(join(projectDir, "index.html"), opts.composition_html);
-    linkSharedAssets(projectDir, opts.request_id);
+    stageSharedAssets(projectDir, opts.request_id);
 
     // Default to the globally-installed `hyperframes` binary (image-baked at
     // pinned version). Skipping npx avoids npm's first-run install warnings

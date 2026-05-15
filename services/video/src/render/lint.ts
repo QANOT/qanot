@@ -25,6 +25,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnWithTimeout } from "./timeout.js";
+import { stageSharedAssets } from "./shared_assets.js";
 import type { LintError, LintResult } from "../types.js";
 
 const DEFAULT_LINT_TIMEOUT_MS = 30_000;
@@ -44,6 +45,13 @@ const HYPERFRAMES_JSON = JSON.stringify({
 export interface LintOptions {
   /** Composition HTML to lint (full document). */
   composition_html: string;
+  /**
+   * Caller request_id (UUID). When a matching shared asset dir exists it is
+   * copied into the lint projectDir so HyperFrames can resolve project-
+   * relative `assets/...` refs. Must match the render pass (same request_id)
+   * so lint and render see identical inputs.
+   */
+  request_id?: string;
   /** Override the spawn timeout. Default 30s. */
   timeout_ms?: number;
   /**
@@ -79,6 +87,7 @@ export async function lintComposition(opts: LintOptions): Promise<LintResult> {
   try {
     writeFileSync(join(projectDir, "hyperframes.json"), HYPERFRAMES_JSON);
     writeFileSync(join(projectDir, "index.html"), opts.composition_html);
+    stageSharedAssets(projectDir, opts.request_id);
 
     // Default to the globally-installed hyperframes binary (pinned at image
     // build time -- see Dockerfile). Falls back to `npx hyperframes` only if

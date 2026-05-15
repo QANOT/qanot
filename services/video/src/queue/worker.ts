@@ -284,6 +284,7 @@ export class Worker {
       try {
         lintResult = await this.lintFn({
           composition_html: job.composition_html,
+          request_id: job.request_id,
         });
       } catch (err) {
         log.error({ err: serializeError(err) }, "lint subprocess threw");
