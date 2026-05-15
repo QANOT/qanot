@@ -75,6 +75,21 @@ RUN useradd --create-home --shell /usr/sbin/nologin --uid 10001 qanot \
     && mkdir -p /data/video /data/video/renders \
     && chown -R qanot:qanot /app /data/video
 
+# HyperFrames requires chrome-headless-shell — its BrowserManager
+# explicitly searches the cache for Browser.CHROMEHEADLESSSHELL. The
+# Debian `chromium` package is full Chrome running in new-headless mode,
+# which does NOT expose the CDP HeadlessExperimental.beginFrame domain;
+# HyperFrames then falls back to slow "screenshot mode" and a real
+# multi-HD-clip reel times out (Runtime.callFunctionOn protocolTimeout
+# -> chrome_crash). Install the dedicated headless-shell into HyperFrames'
+# cache dir (~/.cache/hyperframes/chrome) so findFromCache() picks it up.
+# Version pinned to HyperFrames 0.4.30's CHROME_VERSION constant. The
+# native .so deps are already satisfied by the apt `chromium` install.
+RUN npx --yes @puppeteer/browsers install \
+        chrome-headless-shell@131.0.6778.85 \
+        --path /home/qanot/.cache/hyperframes/chrome \
+    && chown -R qanot:qanot /home/qanot/.cache
+
 # Pre-seed the qanot user's hyperframes config so the very first runtime
 # invocation does NOT print the telemetry notice ("Hyperframes collects
 # anonymous usage data ...") ahead of lint JSON output — which would make
