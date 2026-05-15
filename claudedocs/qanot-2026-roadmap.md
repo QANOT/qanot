@@ -3,6 +3,67 @@
 **Date**: 2026-05-05
 **Source**: Synthesis of (a) deep web survey of agentic systems frontier, (b) qanot's current architecture per CLAUDE.md and recent work.
 
+> **⚠️ This is the original 2026-05-05 analysis. It is preserved unchanged below for context. For current status, read the STATUS UPDATE block immediately following — much of Tier 1/2/3 shipped between 2026-05-05 and 2026-05-16 and was never reflected here.**
+
+---
+
+## STATUS UPDATE — 2026-05-16
+
+Evidence-based reconciliation of roadmap items against the actual codebase (verified by source inspection, not the prose below). The P0/P1/P2 sprint numbering lives only in git commit messages — there is no separate plan doc; this roadmap is the only roadmap, and it had drifted ~2 weeks out of date.
+
+### Tier 1 — Non-negotiable
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 1 | Eval harness + CI gating | ✅ **DONE** | `0d363f6 feat(evals): eval harness with golden cases + LLM-as-judge + CI gating`; `tests/test_evals.py`, `scripts/agent_eval.py`, OAuth-aware judge (`5d7ff57`), eval CI workflow |
+| 2 | MCP client | ✅ **DONE** | `qanot/mcp_client.py`, `qanot/tools/mcp_manage.py` (server wrapper still open) |
+| 3 | Durable execution / checkpointed loops | ❌ **OPEN** | No checkpointer in `qanot/agent/loop.py` or `qanot/session.py`. **This is the single remaining Tier 1 gap — highest-priority foundation.** |
+| 4 | Unified hooks system | ✅ **DONE** | `qanot/hooks.py` — 7 events wired: `on_startup`, `on_pre_turn`, `on_tool_use`, `on_error`, `on_post_turn`, `on_compaction`, `on_shutdown` (`e4532d8`) |
+
+### Tier 2 — Production credibility
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 5 | Multi-level cost guardrails | 🟡 **PARTIAL** | per-turn token + USD caps + per-user daily/hourly (`6b3e579`, `config.py`, `agent/loop.py`). **Missing:** per-conversation, per-tenant-month, per-expensive-tool caps |
+| 6 | HITL interrupt() per-tool | 🟡 **PARTIAL** | Approval flow exists for `mcp_manage` + `config_manage` (`qanot/tools/_approval_base.py`, `approval_callback` in `tool_registry.py`). **Missing:** generic per-tool policy for dangerous userbot tools (`tg_send_*`) |
+| 7 | OTEL-based observability | ❌ **OPEN** | No OpenTelemetry/Langfuse. `dashboard.py` is live-only, no per-turn retrospective traces |
+| 8 | Skills loader (SKILL.md) | ✅ **DONE** | skills P0/P1.1 + registry P2.4 (`7bd66db`, `5a73def`, `03659d8`, `56d0ff4`), curator, agentskills.io-compliant packages |
+
+### Tier 3 — Strategic differentiators
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 9 | Prompt-injection defense | ❌ **OPEN** | Only `fs_safe.py` path validation; no input classifier / behavioral monitor |
+| 10 | Channel-owned multi-tenant auth | ❌ **OPEN** | Still single-tenant `config.json` |
+| 11 | Sandboxed code execution | ❌ **OPEN** | `code_exec` shipped (`8c4d4c1`) but runs in-process — no E2B/Modal isolation |
+| 12 | Core/Recall/Archival memory hierarchy | ✅ **DONE** | memos P1 sprint — file-per-fact + Global/User/Thread scope + WAL→memo writer + evaluator-optimizer + multimodal + conversation RAG (`b9c2017`…`7d830fb`, `c9d0795`) |
+| 13 | Dynamic tool retrieval | ✅ **DONE** | Tool Search Tool + defer_loading (`d5b0ceb`, `2d32d2b`) |
+| 14 | A/B + canary deploy | ❌ **OPEN** | Prompts still ship via git push + redeploy |
+
+### Shipped but not on the original roadmap
+
+- `code_exec` — programmatic tool calling, multi-step orchestration without context bloat (`8c4d4c1`)
+- Bidirectional self-improvement loop — `evolve_soul` + `recall_lessons` + auto-inject, eval-gated (`614c67a`, `d257ff8`)
+- Conversation RAG indexing + periodic snapshot loop (`c9d0795`, `be293fe`)
+- Group-zen "should I respond?" classifier, poll-flow conversational quiz, voice TTS tools, thread-aware isolation (Bot API 10.0)
+- **qanot-video render service** — containerized HyperFrames bridge (`qanot/tools/video.py` `render_video`, remote `feature/video-engine-phase-1..4`)
+
+### Revised sequencing (as of 2026-05-16)
+
+Tier 1 is **3/4 complete**. The dependency chain has largely cleared:
+
+1. **Durable execution / checkpointed loops** — the only remaining Tier 1 foundation. SQLite-backed per-tool-call checkpoint + resume on `agent/loop.py`. ~1 week.
+2. **Finish the partials** — full-scope cost guardrails (per-conversation / per-tenant / per-tool) and generic per-tool HITL policy (now cheap: hooks #4 + approval infra #6 both exist). ~1 week combined.
+3. **OTEL observability** — wire per-turn traces (tool calls, tokens, cache ratio, router decision, cost, latency) to Langfuse via the hooks bus. ~1 week.
+4. Then Tier 3 by QanotCloud commercial priority (multi-tenant auth + injection defense are the SaaS-blocking pair).
+
+### In-flight work secured to branches (not yet on main)
+
+- `feat/reels-scriptwriter` — value-first scriptwriter skill + HyperFrames composer (calls `hyperframes` CLI directly; **must be reconciled with the `qanot/tools/video.py` render-service bridge** before merge)
+- `feat/dreams-verifier` — deterministic memory-tree verifier; standalone, the `SwapEngine` + Phase 1-8 consolidation pipeline it gates does not exist yet
+
+---
+
 ## TL;DR
 
 Qanot already has the *hard parts* most frameworks lack: multi-provider failover, OAuth Claude Code identity, per-user isolation, hybrid RAG, voice, multi-agent orchestrator, scheduler, daemon, dashboard. **What's missing is mostly production-credibility infrastructure** — the things that turn "shipped a lot of features" into "trustworthy enterprise platform."
