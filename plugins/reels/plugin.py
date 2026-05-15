@@ -868,20 +868,36 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             "calm": "grad-calm",
             "neutral": "grad-neutral",
         }.get(mood, "grad-neutral")
-        # Non-overlapping scene timing on a single rounded grid. data-start
-        # and data-duration MUST come from the same rounded boundary array,
-        # otherwise independent round(start)/round(duration) drift by ±0.01
-        # and HyperFrames' linter rejects it ("clip ending at X overlaps
-        # clip starting at X-0.01 ... overlapping clips on the same track").
-        # Scene i spans [b[i], b[i+1]); the last runs to its rounded end.
-        _b = [round(s.start_s, 2) for s in scenes]
-        _last_end = round(scenes[-1].end_s, 2) if scenes else 0.0
+        # Bulletproof non-overlapping scene timing.
+        #
+        # HyperFrames computes a clip's end as `data-start + data-duration`
+        # in JS floating point and rejects ANY same-track overlap — even a
+        # 1e-15 one from float representation (observed:
+        # 11.4 + 0.14 = 11.540000000000001 > next start 11.54). round(.,2)
+        # is not enough because the float math happens AFTER, on the parsed
+        # attribute values.
+        #
+        # Fix: snap every boundary to an integer centisecond grid and make
+        # each non-last clip end ONE centisecond (10 ms) before the next
+        # clip starts. 10 ms is under one 30fps frame (33 ms), so hard cuts
+        # stay visually seamless, while start+duration is provably below the
+        # next start by ~0.01 — far larger than any float error. The GSAP
+        # opacity transitions use the TRUE boundary (vis_end) so there is no
+        # visible gap; only the clip element's lifetime is trimmed.
+        _cs = [round(s.start_s * 100) for s in scenes]
+        _end_cs = round(scenes[-1].end_s * 100) if scenes else 0
+        _MIN_CS = 50  # 0.5s floor
 
         def _span(idx: int) -> tuple[float, float, float]:
-            st = _b[idx]
-            nxt = _b[idx + 1] if idx + 1 < len(scenes) else _last_end
-            du = round(max(0.5, nxt - st), 2)
-            return st, du, round(st + du, 2)
+            """Returns (start_s, duration_s, visual_end_s)."""
+            st_cs = _cs[idx]
+            last = idx + 1 >= len(scenes)
+            nxt_cs = _end_cs if last else _cs[idx + 1]
+            if last:
+                dur_cs = max(_MIN_CS, _end_cs - st_cs)
+            else:
+                dur_cs = max(_MIN_CS, nxt_cs - st_cs - 1)  # -10ms safety gap
+            return st_cs / 100.0, dur_cs / 100.0, nxt_cs / 100.0
 
         scene_html: list[str] = []
         for i, scene in enumerate(scenes):
@@ -901,7 +917,7 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             else:
                 inner = f'<div class="grad-fallback {grad_class}"></div>'
             scene_html.append(
-                f'      <div id="s{i}" class="scene" data-start="{start}" data-duration="{dur}" data-track-index="1">\n'
+                f'      <div id="s{i}" class="scene" data-start="{start:.2f}" data-duration="{dur:.2f}" data-track-index="1">\n'
                 f'        {inner}\n'
                 f'        <div class="vignette"></div>\n'
                 f'      </div>'
@@ -914,24 +930,26 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         tl_lines: list[str] = []
         for i, scene in enumerate(scenes):
             sid = f"#s{i}"
-            start, dur, end = _span(i)
+            start, dur, vis_end = _span(i)
             # Hard cut IN at scene start
             tl_lines.append(
-                f'      main.set("{sid}", {{ opacity: 1, scale: 1.04 }}, {start});'
+                f'      main.set("{sid}", {{ opacity: 1, scale: 1.04 }}, {start:.2f});'
             )
             # Subtle kenburns scale during scene (no fade)
             tl_lines.append(
-                f'      main.to("{sid}", {{ scale: 1.0, duration: {dur}, ease: "power1.out" }}, {start});'
+                f'      main.to("{sid}", {{ scale: 1.0, duration: {dur:.2f}, ease: "power1.out" }}, {start:.2f});'
             )
-            # Hard cut OUT at scene end (last scene fades for outro)
+            # Hard cut OUT at the TRUE boundary (vis_end) so the next scene
+            # appears with no gap, even though the clip element's
+            # data-duration ended 10ms earlier (track-overlap safety).
             if i < len(scenes) - 1:
                 tl_lines.append(
-                    f'      main.set("{sid}", {{ opacity: 0 }}, {end});'
+                    f'      main.set("{sid}", {{ opacity: 0 }}, {vis_end:.2f});'
                 )
             else:
-                fade_at = round(end - 0.3, 2)
+                fade_at = vis_end - 0.3
                 tl_lines.append(
-                    f'      main.to("{sid}", {{ opacity: 0, duration: 0.3, ease: "power2.in" }}, {fade_at});'
+                    f'      main.to("{sid}", {{ opacity: 0, duration: 0.3, ease: "power2.in" }}, {fade_at:.2f});'
                 )
         main_timeline_lines = "\n".join(tl_lines)
 
