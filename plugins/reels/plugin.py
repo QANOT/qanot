@@ -828,13 +828,16 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         brand_out_at = round(max(0.0, total_dur - 0.6), 2)
 
         # Audio blocks
+        # Every timed <audio> needs a unique id — HyperFrames' linter requires
+        # it to discover media elements ("requires id ... this audio will be
+        # SILENT in renders").
         audio_lines: list[str] = []
         audio_lines.append(
-            f'      <audio src="{asset_prefix}/audio/voiceover.mp3" data-start="0" data-volume="1.0" data-track-index="10"></audio>'
+            f'      <audio id="a-vo" src="{asset_prefix}/audio/voiceover.mp3" data-start="0" data-volume="1.0" data-track-index="10"></audio>'
         )
         if has_music:
             audio_lines.append(
-                f'      <audio src="{asset_prefix}/music/bg.mp3" data-start="0" data-duration="{total_dur}" data-volume="0.16" data-track-index="11"></audio>'
+                f'      <audio id="a-music" src="{asset_prefix}/music/bg.mp3" data-start="0" data-duration="{total_dur}" data-volume="0.16" data-track-index="11"></audio>'
             )
         # 2-3 whoosh transitions max (restraint per SKILL) — only if file exists
         whoosh_present = (assets / "sfx" / "whoosh.wav").exists()
@@ -843,18 +846,18 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             whoosh_pts = sorted({round(t, 2) for t in [scenes[1].start_s, scenes[mid].start_s, scenes[-1].start_s] if 0 < t < total_dur})[:3]
             for i, t in enumerate(whoosh_pts):
                 audio_lines.append(
-                    f'      <audio src="{asset_prefix}/sfx/whoosh.wav" data-start="{t}" data-volume="0.4" data-track-index="{20+i}"></audio>'
+                    f'      <audio id="a-whoosh{i}" src="{asset_prefix}/sfx/whoosh.wav" data-start="{t}" data-volume="0.4" data-track-index="{20+i}"></audio>'
                 )
         # Bass hit on hook (only if file exists)
         if (assets / "sfx" / "bass-hit.wav").exists() and total_dur > 1.0:
             audio_lines.append(
-                f'      <audio src="{asset_prefix}/sfx/bass-hit.wav" data-start="0.0" data-volume="0.55" data-track-index="25"></audio>'
+                f'      <audio id="a-bass" src="{asset_prefix}/sfx/bass-hit.wav" data-start="0.0" data-volume="0.55" data-track-index="25"></audio>'
             )
         # Ding at CTA (only if file exists)
         if (assets / "sfx" / "ding.wav").exists() and total_dur > 4.0:
             ding_at = round(total_dur - 2.0, 2)
             audio_lines.append(
-                f'      <audio src="{asset_prefix}/sfx/ding.wav" data-start="{ding_at}" data-volume="0.5" data-track-index="26"></audio>'
+                f'      <audio id="a-ding" src="{asset_prefix}/sfx/ding.wav" data-start="{ding_at}" data-volume="0.5" data-track-index="26"></audio>'
             )
         audio_blocks = "\n".join(audio_lines)
 
