@@ -339,17 +339,37 @@ def _install_from_git(
         if res.returncode != 0:
             return False, f"git clone failed: {res.stderr.strip()[:200]}"
 
-        # Pin to the exact commit when the registry specified one.
+        # Commit pin is BEST-EFFORT, not the integrity gate. A
+        # self-regenerating registry (CI rewrites index.json on every
+        # push) can't pin to a commit that contains its own index —
+        # chicken-and-egg. The real tamper-evidence is the sha256
+        # content hash verified below (npm `integrity` model). So:
+        # try to fetch+checkout the pinned commit for reproducibility;
+        # if the shallow clone doesn't have it, fall back to the cloned
+        # HEAD and let the sha256 check be the hard gate.
         if commit:
             chk = subprocess.run(
                 ["git", "-C", str(clone_dir), "checkout", "--quiet", commit],
                 capture_output=True, text=True, timeout=30,
             )
             if chk.returncode != 0:
-                return False, (
-                    f"commit {commit[:12]} not found in repo "
-                    f"(integrity pin failed)."
+                fetched = subprocess.run(
+                    ["git", "-C", str(clone_dir), "fetch", "--depth=1",
+                     "origin", commit],
+                    capture_output=True, text=True, timeout=30,
                 )
+                if fetched.returncode == 0:
+                    subprocess.run(
+                        ["git", "-C", str(clone_dir), "checkout",
+                         "--quiet", commit],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                else:
+                    logger.info(
+                        "skill install: pinned commit %s unreachable in "
+                        "shallow clone — using HEAD, sha256 is the gate",
+                        commit[:12],
+                    )
 
         bundle_src = clone_dir / subdir if subdir else clone_dir
         if not (bundle_src / "SKILL.md").is_file():
