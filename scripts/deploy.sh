@@ -136,6 +136,15 @@ deploy_video() {
         # image filesystem permissions, so we have to chown on the host —
         # idempotent, cheap.
         chown -R 10001:10001 /data/video
+        # Shared asset volume for the reels-via-service pipeline. The reels
+        # bot stages each render'\''s assets here; qanot-video mounts the same
+        # dir at /app/assets/reel-share and copies them into the lint/render
+        # projectDir (see services/video/src/render/shared_assets.ts).
+        # Owned 1000:1000 (the bot writes as uid 1000); 0755 lets qanot-video
+        # (uid 10001, "other") traverse + read. Idempotent.
+        mkdir -p /data/reel-share
+        chown 1000:1000 /data/reel-share
+        chmod 0755 /data/reel-share
         if [ ! -f /root/.env.qanot-video ]; then
             SECRET=$(openssl rand -hex 32)
             cat > /root/.env.qanot-video <<EOF
@@ -176,6 +185,7 @@ EOF
         --memory-swap 1500m \
         --network qanot-cloud-net \
         -v /data/video:/data/video \
+        -v /data/reel-share:/app/assets/reel-share \
         --env-file /root/.env.qanot-video \
         qanot-video:latest'
     echo "   Done."
