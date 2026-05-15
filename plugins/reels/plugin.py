@@ -104,6 +104,7 @@ class ReelsPlugin(Plugin):
         self.elevenlabs_voice_id = ""
         self.pexels_key = ""
         self.openai_key = ""
+        self._scriptwriter_skill = ""
 
     async def setup(self, config: dict) -> None:
         self.elevenlabs_key = config.get("elevenlabs_key", "")
@@ -130,6 +131,11 @@ class ReelsPlugin(Plugin):
             except Exception:
                 pass
 
+        # Load scriptwriter skill (research-backed framework injected into LLM prompt)
+        skill_path = PLUGIN_DIR / "skills" / "REEL_SCRIPTWRITER.md"
+        if skill_path.exists():
+            self._scriptwriter_skill = skill_path.read_text(encoding="utf-8")
+
         # Generate basic SFX if missing
         self._ensure_sfx()
         self._ensure_music()
@@ -150,7 +156,10 @@ class ReelsPlugin(Plugin):
 
     def _ensure_music(self):
         music_dir = ASSETS_DIR / "music"
-        if not list(music_dir.glob("*.mp3")):
+        music_dir.mkdir(exist_ok=True)
+        for mood in ("urgent", "upbeat", "calm", "neutral"):
+            (music_dir / mood).mkdir(exist_ok=True)
+        if not list(music_dir.rglob("*.mp3")):
             try:
                 raw = music_dir / "raw.mp3"
                 urllib.request.urlretrieve("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", str(raw))
@@ -225,16 +234,49 @@ class ReelsPlugin(Plugin):
             scene.words = [w for w in words if w.start_s >= scene.start_s and w.start_s < scene.end_s]
             scenes.append(scene)
 
+        # Beat-synced scene timing — per-mood BPM, scenes snap to beat grid.
+        # Replaces LLM-supplied timings (which drift from real VO) with rhythmic
+        # cuts that match the music. LLM scene queries are kept; cycled if too few.
+        mood_for_bpm = script.get("mood", "neutral")
+        bpm = {"urgent": 130, "upbeat": 120, "calm": 90, "neutral": 100}.get(mood_for_bpm, 100)
+        beat_dur = 60.0 / bpm
+        total_vo_dur = (words[-1].end_s + 0.3) if words else 30.0
+        beats_per_scene = max(2, round(2.2 / beat_dur))
+        scene_dur = beats_per_scene * beat_dur
+        n_scenes = max(1, int(total_vo_dur / scene_dur))
+
+        src_scenes = list(scenes) or [Scene(
+            name="00_default", text="", start_s=0, end_s=scene_dur,
+            footage_query="business professional", zoom_style="zoom-in",
+        )]
+        scenes = []
+        for i in range(n_scenes):
+            t_start = i * scene_dur
+            t_end = min((i + 1) * scene_dur, total_vo_dur)
+            src = src_scenes[i % len(src_scenes)]
+            new_scene = Scene(
+                name=f"{i:02d}_shot",
+                text=src.text,
+                start_s=t_start, end_s=t_end,
+                footage_query=src.footage_query,
+                zoom_style=src.zoom_style,
+            )
+            new_scene.words = [w for w in words if t_start <= w.start_s < t_end]
+            scenes.append(new_scene)
+
         # 4. Footage
         self._fetch_footage(scenes, script["title"])
 
-        # 5. Captions
-        duration = words[-1].end_s + 0.5
-        caption_dir = work_dir / "_captions"
-        self._render_captions(words, duration, caption_dir)
-
-        # 6. Compose
-        final = self._compose(script["title"], scenes, vo_path, caption_dir, words)
+        # 5. Compose via HyperFrames (replaces ffmpeg + Pillow caption pipeline).
+        # Captions, transitions, audio mix, and final encode all happen in
+        # the HTML composition rendered by `hyperframes render`.
+        final = self._compose_via_hyperframes(
+            title=script["title"],
+            scenes=scenes,
+            vo_path=vo_path,
+            words=words,
+            mood=script.get("mood", "neutral"),
+        )
 
         # Cleanup
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -243,11 +285,66 @@ class ReelsPlugin(Plugin):
 
     def _generate_script(self, topic: str) -> dict:
         """GPT-5.4 ssenariy yozadi."""
-        system = """Sen @tadbirkor.ai Instagram Reel uchun ssenariy yozasan. O'zbek tilida.
-QOIDALAR: 20-30 soniya. Kirill harfda voiceover. 5-7 scene. Qisqa energetik gaplar.
-RAQAMLAR SO'Z BILAN: "2026" → "икки минг йигирма олтинчи". "1%" → "бир фоиз".
-footage_query: FAQAT 2-3 so'z biznes kontekst. Har scene BOSHQA.
-JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..","voiceover_latin":"..","emphasis_words":["JARIMA","XATO"],"scenes":[{"name":"01_hook","text_latin":"..","start_s":0,"end_s":3,"footage_query":"businessman desk","zoom_style":"zoom-in"}]}"""
+        skill_block = self._scriptwriter_skill or ""
+        system = f"""You are a content creator for @tadbirkor.ai — a VALUE-FIRST Uzbek entrepreneur channel.
+
+CRITICAL: This is NOT a Qanot AI ad channel. 80% of content is PURE VALUE (storytelling, lifehack, personal development, education) with NO product mention. Only 10% of reels are direct Qanot product. The audience subscribes because the channel is USEFUL, not because it sells.
+
+Apply the framework below RIGOROUSLY. Default to value-first content. Pick ONE category per script (most likely: storytelling or lifehack, NOT product reel).
+
+═══════════ EMBEDDED SKILL ═══════════
+{skill_block}
+═══════════ END SKILL ═══════════
+
+OUTPUT FORMAT (must match exactly — JSON only):
+{{
+  "title": "Latin Uzbek title, max 8 words",
+  "mood": "urgent|upbeat|calm|neutral",
+  "framework": "PAS|HPSC|BAB|HORMOZI",
+  "voiceover_cyrillic": "STRICT: 50-60 Uzbek words MAX. At 150 wpm this reads as 20-26 seconds. Numbers as words.",
+  "voiceover_latin": "Same content in Latin Uzbek for reference",
+  "emphasis_words": ["UPPERCASE words for TTS volume bump, max 5"],
+  "self_score": {{"hook":2,"specificity":2,"pain":2,"proof":2,"cta":2,"density":2,"caption_quality":2,"audio_plan":2,"length":2,"uzbek_authenticity":2,"total":20}},
+  "scenes": [
+    {{"name":"01_hook","section":"HOOK|PAIN|AGITATE|SOLUTION|PROOF|CTA","text_latin":"phrase chunk","start_s":0,"end_s":2,"footage_query":"2-3 word Pexels query","zoom_style":"zoom-in|zoom-out|pan"}}
+  ]
+}}
+
+🔴 HARD CONSTRAINTS (rejection if violated):
+
+1. **CONTENT CATEGORY**: Pick ONE per script. Distribution target across all reels:
+   - 40% **storytelling** (real biznesmen voqealari — failure→recovery, lessons)
+   - 20% **lifehack** (productivity, kassir nazorat, mijoz xizmat trick)
+   - 15% **shaxsiy_rivojlanish** (mindset, odat, lider sifatlari)
+   - 15% **industry_educational** (soliq yangilik, marketing, sotish psikologiya)
+   - 10% **direct_product** (Qanot AI demo — only when explicit product topic)
+
+   For most user requests, DEFAULT to storytelling or lifehack. Only choose direct_product when user EXPLICITLY asks for "Qanot reklamasi" or product demo.
+
+2. **CTA RULES** (must match category):
+   - storytelling/lifehack/personal_dev → engagement CTA ("Saqla, do'stga yubor", "Komment yoz: sizda ham shumi?")
+   - industry_educational → save/channel CTA ("Saqlang, kerak bo'ladi", "@tadbirkor_ai kanalida har kuni")
+   - direct_product → Qanot CTA ("@qanotai_bot — 7 kun bepul")
+   - **NEVER** put Qanot product CTA on a storytelling/lifehack reel — kills value perception
+
+3. **DURATION**: voiceover_cyrillic MUST be **50-60 Uzbek words MAXIMUM** (20-26 seconds at 150 wpm). >65 words = retention crash, REWRITE shorter.
+
+4. **SCENE COUNT**: 10-13 scenes. Each scene 1.5-2.5s.
+
+5. **SPECIFICITY**: Hook (scene 1) MUST have name+number+timeframe (rule of 3) — even for value content. Generic = scroll.
+
+6. **VERTICAL JARGON**: Default = universal Uzbek SMB voice. Use vertical terms (MChJ, e-Faktura, Soliq.uz, BHM, NDS, 1C) ONLY in industry_educational or direct_product reels when topic requires it. Otherwise: "do'kon", "biznes", "sotuv", "kassir", "mijoz" universal vocabulary.
+
+7. **NO KALKA**: Zero English-Uzbek calque. Banned: "1 tap", "real-time", "boost", "scale", "ROI", "click below", "subscribe now".
+
+8. **SELF-SCORE**: total must be >=15/22. If <15, REWRITE before returning.
+
+9. **WORD COUNT VALIDATION**: Count voiceover_cyrillic words BEFORE returning. If >60, cut content.
+
+10. **CHARACTER DIVERSITY**: NEVER reuse "Komilxon aka" or "Akmal aka" — those are skill examples, NOT defaults. For EACH new script, pick a DIFFERENT name + location + business type from the pool in section 2.5. Random combinations: "Sherzod aka — Andijonda non sotuvchi", "Mohira opa — Yunusobodda kosmetika", "Davron aka — Samarqandda restoran". The skill examples are showing patterns; you must INVENT a new persona per script.
+
+OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "shaxsiy_rivojlanish" | "industry_educational" | "direct_product"
+"""
 
         payload = json.dumps({
             "model": "gpt-5.4",
@@ -268,7 +365,42 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read())
 
-        return json.loads(data["choices"][0]["message"]["content"])
+        script = json.loads(data["choices"][0]["message"]["content"])
+
+        # Hard length validation — IG Reel optimal zone is 20-26s.
+        # If LLM over-produced, retry once with stricter prompt; otherwise truncate.
+        vo = script.get("voiceover_cyrillic", "")
+        word_count = len(vo.split())
+        if word_count > 65:
+            logger.warning("[reels] voiceover too long (%d words, want <=60). Retrying with stricter prompt.", word_count)
+            retry_user = (
+                f"Mavzu: {topic}\n\n"
+                f"⚠️ AVVALGI URINISH XATO: voiceover_cyrillic {word_count} so'z bo'ldi. "
+                f"MAX 60 SO'Z. Qaytadan yoz, qisqaroq, faqat eng kuchli gaplar qoldir."
+            )
+            payload = json.dumps({
+                "model": "gpt-5.4",
+                "temperature": 0.5,
+                "max_completion_tokens": 3000,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": retry_user},
+                ],
+                "response_format": {"type": "json_object"},
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=payload,
+                headers={"Authorization": f"Bearer {self.openai_key}", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read())
+            script = json.loads(data["choices"][0]["message"]["content"])
+            vo = script.get("voiceover_cyrillic", "")
+            word_count = len(vo.split())
+            logger.info("[reels] retry produced %d words", word_count)
+
+        return script
 
     def _generate_voiceover(self, text_cyrillic: str, output_path: Path) -> list[Word]:
         """ElevenLabs voiceover + word timestamps."""
@@ -314,81 +446,143 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
         return words
 
     def _fetch_footage(self, scenes: list[Scene], title: str):
-        """Pexels footage yuklab olish."""
+        """Pexels footage — group scenes by query, distribute different candidates
+        per scene index so repeated queries don't yield identical clips."""
         footage_dir = ASSETS_DIR / "footage" / title
         footage_dir.mkdir(parents=True, exist_ok=True)
 
-        for scene in scenes:
-            dest = footage_dir / f"{scene.name}.mp4"
-            if dest.exists() and dest.stat().st_size > 10000:
-                scene.footage_path = str(dest)
-                continue
+        from collections import defaultdict
+        groups: dict[str, list[Scene]] = defaultdict(list)
+        for s in scenes:
+            groups[s.footage_query].append(s)
 
-            query = "+".join((scene.footage_query + " business professional office").split()[:5])
-            url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&size=medium&per_page=5"
+        for query, group in groups.items():
+            q = "+".join((query + " business professional office").split()[:5])
+            url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=medium&per_page=10"
             req = urllib.request.Request(url, headers={"Authorization": self.pexels_key, "User-Agent": "QanotReels/1.0"})
-
+            candidates: list[str] = []
             try:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read())
                 for video in data.get("videos", []):
                     for f in video["video_files"]:
                         if f.get("height", 0) > f.get("width", 0) and f.get("width", 0) >= 720:
-                            subprocess.run(["curl", "-sL", "-o", str(dest), f["link"]], capture_output=True, timeout=30)
-                            if dest.exists() and dest.stat().st_size > 10000:
-                                scene.footage_path = str(dest)
+                            candidates.append(f["link"])
                             break
-                    if scene.footage_path:
-                        break
             except Exception:
                 pass
 
+            for i, scene in enumerate(group):
+                dest = footage_dir / f"{scene.name}.mp4"
+                if dest.exists() and dest.stat().st_size > 10000:
+                    scene.footage_path = str(dest)
+                    continue
+                if not candidates:
+                    continue
+                link = candidates[i % len(candidates)]
+                tmp = dest.with_suffix(".raw.mp4")
+                # Trim to slightly more than scene duration to keep clip lightweight
+                # (Chromium loads full video into memory; long clips kill RAM).
+                trim_dur = max(2.5, scene.duration_s + 1.0)
+                try:
+                    subprocess.run(["curl", "-sL", "-o", str(tmp), link], capture_output=True, timeout=30)
+                    if not (tmp.exists() and tmp.stat().st_size > 10000):
+                        continue
+                    # Re-encode to Chromium-compatible H.264 + trim to scene length.
+                    # Pexels profiles vary; baseline + yuv420p decodes reliably in <video>.
+                    re_enc = subprocess.run([
+                        "ffmpeg", "-y", "-i", str(tmp),
+                        "-t", str(round(trim_dur, 2)),
+                        "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
+                        "-pix_fmt", "yuv420p", "-r", "30", "-g", "30", "-keyint_min", "30",
+                        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
+                        "-movflags", "+faststart", "-an",
+                        str(dest),
+                    ], capture_output=True, timeout=45)
+                    if re_enc.returncode == 0 and dest.exists() and dest.stat().st_size > 10000:
+                        scene.footage_path = str(dest)
+                    else:
+                        # Fallback: keep raw download if re-encode failed
+                        tmp.replace(dest)
+                        scene.footage_path = str(dest)
+                    if tmp.exists():
+                        try: tmp.unlink()
+                        except Exception: pass
+                except Exception as e:
+                    logger.warning("[reels] footage fetch failed for scene %d: %s", i, e)
+
+
     def _render_captions(self, words: list[Word], duration: float, output_dir: Path):
-        """Optimized caption renderer — cache identical frames, skip empty."""
+        """Phrase-chunk caption renderer — 2-3 words per chunk, no pill,
+        white text + drop shadow + black stroke, auto-shrink on overflow."""
         from PIL import Image, ImageDraw, ImageFont
 
         output_dir.mkdir(parents=True, exist_ok=True)
         font_path = ASSETS_DIR / "fonts" / "Montserrat-ExtraBold.ttf"
-        font = ImageFont.truetype(str(font_path), 64) if font_path.exists() else ImageFont.load_default()
+        BASE_FONT = 76
+        font = ImageFont.truetype(str(font_path), BASE_FONT) if font_path.exists() else ImageFont.load_default()
 
         W, H = 1080, 1920
-        pages = [words[i:i+4] for i in range(0, len(words), 4)]
+        MAX_W = int(W * 0.85)
+        Y_POS = int(H * 0.72)
+        SHADOW_OFFSET = 5
+        STROKE = 3
         total_frames = int(duration * 30)
+        tail_grace = 0.2
 
-        # Pre-render each page state (page_idx, active_word_idx) → img
-        # Instead of rendering 700+ unique frames, we have ~50 unique states
         empty_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         empty_img.save(output_dir / "empty.png")
 
-        state_cache: dict[tuple, str] = {}
-        space = font.getbbox("  ")[2]
+        if not words:
+            for frame_num in range(total_frames):
+                fname = f"caption_{frame_num:05d}.png"
+                if not (output_dir / fname).exists():
+                    (output_dir / fname).symlink_to("empty.png")
+            return
+
+        # Build phrase chunks: 2-3 words, break on punctuation or width
+        space_w = font.getbbox(" ")[2]
+        chunks: list[list[Word]] = []
+        current: list[Word] = []
+        current_w = 0
+        for w in words:
+            ww = font.getbbox(w.text)[2] - font.getbbox(w.text)[0]
+            proj_w = current_w + ww + (space_w if current else 0)
+            ends_phrase = bool(w.text and w.text[-1] in ",.!?")
+            if current and (proj_w > MAX_W or len(current) >= 3):
+                chunks.append(current)
+                current = [w]
+                current_w = ww
+            else:
+                current.append(w)
+                current_w = proj_w
+            if ends_phrase and current:
+                chunks.append(current)
+                current = []
+                current_w = 0
+        if current:
+            chunks.append(current)
+
+        chunk_cache: dict[int, str] = {}
+        last_end = words[-1].end_s
 
         for frame_num in range(total_frames):
             t = frame_num / 30
+            fname = f"caption_{frame_num:05d}.png"
 
-            # Find active page + active word
-            page_idx = -1
-            active_idx = -1
-            for pi, p in enumerate(pages):
-                if t >= p[0].start_s - 0.1 and t < p[-1].end_s + 0.15:
-                    page_idx = pi
-                    for wi, w in enumerate(p):
-                        if t >= w.start_s and t < w.end_s:
-                            active_idx = wi
+            active_chunk = -1
+            for ci, ch in enumerate(chunks):
+                if t >= ch[0].start_s and t < ch[-1].end_s + 0.15:
+                    active_chunk = ci
                     break
 
-            state = (page_idx, active_idx)
-
-            if page_idx == -1:
-                # No caption — symlink to empty
-                fname = f"caption_{frame_num:05d}.png"
-                (output_dir / fname).symlink_to("empty.png") if not (output_dir / fname).exists() else None
+            if active_chunk < 0 or t > last_end + tail_grace:
+                if not (output_dir / fname).exists():
+                    (output_dir / fname).symlink_to("empty.png")
                 continue
 
-            if state in state_cache:
-                # Same state — symlink to cached
-                fname = f"caption_{frame_num:05d}.png"
-                src = state_cache[state]
+            if active_chunk in chunk_cache:
+                src = chunk_cache[active_chunk]
                 if not (output_dir / fname).exists():
                     try:
                         (output_dir / fname).symlink_to(src)
@@ -397,35 +591,32 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
                         shutil.copy2(output_dir / src, output_dir / fname)
                 continue
 
-            # New state — render
-            page = pages[page_idx]
+            text = " ".join(w.text.rstrip(",.!?:;") for w in chunks[active_chunk])
+
+            # Auto-shrink for overflow safety
+            f = font
+            bbox = f.getbbox(text)
+            text_w = bbox[2] - bbox[0]
+            if text_w > MAX_W:
+                scale = MAX_W / text_w
+                new_size = max(48, int(BASE_FONT * scale * 0.95))
+                f = ImageFont.truetype(str(font_path), new_size) if font_path.exists() else ImageFont.load_default()
+                bbox = f.getbbox(text)
+                text_w = bbox[2] - bbox[0]
+
+            x = (W - text_w) // 2 - bbox[0]
+            y = Y_POS
+
             img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
+            draw.text((x + SHADOW_OFFSET, y + SHADOW_OFFSET), text, font=f, fill=(0, 0, 0, 200))
+            draw.text((x, y), text, font=f, fill=(255, 255, 255, 255),
+                      stroke_width=STROKE, stroke_fill=(0, 0, 0, 230))
 
-            infos = []
-            for wi, w in enumerate(page):
-                bbox = font.getbbox(w.text)
-                infos.append({"word": w, "w": bbox[2]-bbox[0], "active": wi == active_idx, "past": t >= w.end_s})
-
-            total_w = sum(i["w"] + space for i in infos) - space
-            x = (W - total_w) // 2
-            y = int(H * 0.65)
-
-            for info in infos:
-                w, is_active, is_past = info["word"], info["active"], info["past"]
-                if is_active:
-                    draw.rounded_rectangle([x-12, y-8, x+info["w"]+12, y+int(64*1.15)+8], radius=10, fill=(255, 215, 0, 240))
-                    draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255))
-                else:
-                    draw.text((x+2, y+3), w.text, font=font, fill=(0, 0, 0, 220))
-                    draw.text((x, y), w.text, font=font, fill=(255, 255, 255, 255) if is_past else (200, 200, 200, 200))
-                x += info["w"] + space
-
-            fname = f"caption_{frame_num:05d}.png"
             img.save(output_dir / fname)
-            state_cache[state] = fname
+            chunk_cache[active_chunk] = fname
 
-    def _compose(self, title: str, scenes: list[Scene], vo_path: Path, caption_dir: Path, words: list[Word]) -> Path:
+    def _compose(self, title: str, scenes: list[Scene], vo_path: Path, caption_dir: Path, words: list[Word], mood: str = "neutral") -> Path:
         """FFmpeg compose — video + captions + audio."""
         work_dir = OUTPUT_DIR / "_work"
 
@@ -470,7 +661,14 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
 
         # Mix audio
         final = OUTPUT_DIR / f"{title}.mp4"
-        music = next(iter((ASSETS_DIR / "music").glob("*.mp3")), None)
+        # Pick music: mood subdir first, then root, random within set
+        import random
+        music_root = ASSETS_DIR / "music"
+        mood_dir = music_root / (mood if mood in {"urgent", "upbeat", "calm", "neutral"} else "neutral")
+        candidates = list(mood_dir.glob("*.mp3")) if mood_dir.exists() else []
+        if not candidates:
+            candidates = list(music_root.glob("*.mp3"))
+        music = random.choice(candidates) if candidates else None
 
         inputs = ["-i", str(captioned), "-i", str(vo_path)]
         filt = f"[1:a]volume=1.0[vo]"
@@ -484,9 +682,10 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
             count = 2
 
         if count > 1:
-            filt += f";{mix}amix=inputs={count}:duration=shortest[aout]"
+            filt += f";{mix}amix=inputs={count}:duration=shortest[mixed]"
         else:
-            filt += ";[vo]acopy[aout]"
+            filt += ";[vo]acopy[mixed]"
+        filt += ";[mixed]loudnorm=I=-14:TP=-1.0:LRA=11[aout]"
 
         subprocess.run([
             "ffmpeg", "-y", *inputs,
@@ -496,4 +695,239 @@ JSON: {"title":"..","mood":"urgent|upbeat|calm|neutral","voiceover_cyrillic":"..
             str(final),
         ], capture_output=True, timeout=120)
 
+        return final
+
+    # ═══════════════════════════════════════════════════════════════
+    # HyperFrames-based composer (replaces ffmpeg+Pillow pipeline above)
+    # ═══════════════════════════════════════════════════════════════
+
+    def _build_caption_chunks_hf(self, words: list[Word]) -> list[dict]:
+        """Group words into 2-3 word phrase chunks with non-overlapping timing.
+        Each chunk ends BEFORE the next one starts so GSAP innerText changes
+        don't conflict with in-flight fade animations."""
+        if not words:
+            return []
+        chunks: list[list[Word]] = []
+        current: list[Word] = []
+        for w in words:
+            current.append(w)
+            ends_phrase = bool(w.text and w.text[-1] in ",.!?")
+            if ends_phrase or len(current) >= 3:
+                chunks.append(current)
+                current = []
+        if current:
+            chunks.append(current)
+
+        result: list[dict] = []
+        for i, ch in enumerate(chunks):
+            start = ch[0].start_s
+            natural_end = ch[-1].end_s + 0.15
+            # Cap end at next chunk's start (minus 50ms gap) to prevent overlap
+            if i + 1 < len(chunks):
+                cap_end = chunks[i + 1][0].start_s - 0.05
+                end = min(natural_end, cap_end)
+            else:
+                end = natural_end
+            # Ensure end > start (defensive)
+            end = max(start + 0.3, end)
+            result.append({
+                "text": " ".join(x.text.rstrip(",.!?:;") for x in ch).upper(),
+                "start": round(start, 2),
+                "end": round(end, 2),
+            })
+        return result
+
+    def _compose_via_hyperframes(
+        self, title: str, scenes: list[Scene], vo_path: Path,
+        words: list[Word], mood: str,
+    ) -> Path:
+        """Build a HyperFrames composition directory and render to MP4."""
+        from string import Template
+
+        safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)[:80]
+        work_dir = OUTPUT_DIR / "_hf"
+        if work_dir.exists():
+            shutil.rmtree(work_dir, ignore_errors=True)
+        work_dir.mkdir(parents=True)
+
+        assets = work_dir / "assets"
+        for sub in ("audio", "sfx", "music", "footage"):
+            (assets / sub).mkdir(parents=True, exist_ok=True)
+
+        # Voiceover
+        shutil.copy(vo_path, assets / "audio" / "voiceover.mp3")
+
+        # Music (mood-based)
+        music_root = ASSETS_DIR / "music"
+        mood_dir = music_root / (mood if mood in {"urgent", "upbeat", "calm", "neutral"} else "neutral")
+        candidates = list(mood_dir.glob("*.mp3")) if mood_dir.exists() else list(music_root.glob("*.mp3"))
+        has_music = False
+        if candidates:
+            import random
+            shutil.copy(random.choice(candidates), assets / "music" / "bg.mp3")
+            has_music = True
+
+        # SFX
+        sfx_root = ASSETS_DIR / "sfx"
+        for sfx in ("whoosh.wav", "bass-hit.wav", "ding.wav"):
+            src = sfx_root / sfx
+            if src.exists():
+                shutil.copy(src, assets / "sfx" / sfx)
+
+        # Footage per scene
+        scene_has_footage: list[bool] = []
+        for i, scene in enumerate(scenes):
+            target = assets / "footage" / f"scene_{i:02d}.mp4"
+            if scene.footage_path and Path(scene.footage_path).exists():
+                shutil.copy(scene.footage_path, target)
+                scene_has_footage.append(True)
+            else:
+                scene_has_footage.append(False)
+
+        # Build caption chunks
+        chunks = self._build_caption_chunks_hf(words)
+        total_dur = round((words[-1].end_s + 0.5), 2) if words else 30.0
+        brand_out_at = round(max(0.0, total_dur - 0.6), 2)
+
+        # Audio blocks
+        audio_lines: list[str] = []
+        audio_lines.append(
+            '      <audio src="assets/audio/voiceover.mp3" data-start="0" data-volume="1.0" data-track-index="10"></audio>'
+        )
+        if has_music:
+            audio_lines.append(
+                f'      <audio src="assets/music/bg.mp3" data-start="0" data-duration="{total_dur}" data-volume="0.16" data-track-index="11"></audio>'
+            )
+        # 2-3 whoosh transitions max (restraint per SKILL) — only if file exists
+        whoosh_present = (assets / "sfx" / "whoosh.wav").exists()
+        if whoosh_present and len(scenes) > 1:
+            mid = max(1, len(scenes) // 2)
+            whoosh_pts = sorted({round(t, 2) for t in [scenes[1].start_s, scenes[mid].start_s, scenes[-1].start_s] if 0 < t < total_dur})[:3]
+            for i, t in enumerate(whoosh_pts):
+                audio_lines.append(
+                    f'      <audio src="assets/sfx/whoosh.wav" data-start="{t}" data-volume="0.4" data-track-index="{20+i}"></audio>'
+                )
+        # Bass hit on hook (only if file exists)
+        if (assets / "sfx" / "bass-hit.wav").exists() and total_dur > 1.0:
+            audio_lines.append(
+                f'      <audio src="assets/sfx/bass-hit.wav" data-start="0.0" data-volume="0.55" data-track-index="25"></audio>'
+            )
+        # Ding at CTA (only if file exists)
+        if (assets / "sfx" / "ding.wav").exists() and total_dur > 4.0:
+            ding_at = round(total_dur - 2.0, 2)
+            audio_lines.append(
+                f'      <audio src="assets/sfx/ding.wav" data-start="{ding_at}" data-volume="0.5" data-track-index="26"></audio>'
+            )
+        audio_blocks = "\n".join(audio_lines)
+
+        # Scene blocks (footage if available, gradient fallback otherwise)
+        grad_class = {
+            "urgent": "grad-urgent",
+            "upbeat": "grad-upbeat",
+            "calm": "grad-calm",
+            "neutral": "grad-neutral",
+        }.get(mood, "grad-neutral")
+        scene_html: list[str] = []
+        for i, scene in enumerate(scenes):
+            dur = round(max(0.5, scene.duration_s), 2)
+            start = round(scene.start_s, 2)
+            if scene_has_footage[i]:
+                # data-start MUST be absolute composition time (matches scene start),
+                # not 0 — otherwise all videos play simultaneously from t=0 and freeze
+                # by the time their scene becomes visible.
+                inner = (
+                    f'<video src="assets/footage/scene_{i:02d}.mp4" '
+                    f'muted playsinline preload="auto" '
+                    f'data-start="{start}" data-duration="{dur}" data-media-start="0"></video>'
+                )
+            else:
+                inner = f'<div class="grad-fallback {grad_class}"></div>'
+            scene_html.append(
+                f'      <div id="s{i}" class="scene" data-start="{start}" data-duration="{dur}" data-track-index="1">\n'
+                f'        {inner}\n'
+                f'        <div class="vignette"></div>\n'
+                f'      </div>'
+            )
+        scene_blocks = "\n".join(scene_html)
+
+        # Main timeline scene transitions: HARD CUTS (no fade through dark bg).
+        # Reference reels use snap cuts on beat — keeps energy high, no black flash.
+        # Subtle scale-in (kenburns) gives life without overlapping fades.
+        tl_lines: list[str] = []
+        for i, scene in enumerate(scenes):
+            sid = f"#s{i}"
+            start = round(scene.start_s, 2)
+            dur = round(max(0.5, scene.duration_s), 2)
+            end = round(start + dur, 2)
+            # Hard cut IN at scene start
+            tl_lines.append(
+                f'      main.set("{sid}", {{ opacity: 1, scale: 1.04 }}, {start});'
+            )
+            # Subtle kenburns scale during scene (no fade)
+            tl_lines.append(
+                f'      main.to("{sid}", {{ scale: 1.0, duration: {dur}, ease: "power1.out" }}, {start});'
+            )
+            # Hard cut OUT at scene end (last scene fades for outro)
+            if i < len(scenes) - 1:
+                tl_lines.append(
+                    f'      main.set("{sid}", {{ opacity: 0 }}, {end});'
+                )
+            else:
+                fade_at = round(end - 0.3, 2)
+                tl_lines.append(
+                    f'      main.to("{sid}", {{ opacity: 0, duration: 0.3, ease: "power2.in" }}, {fade_at});'
+                )
+        main_timeline_lines = "\n".join(tl_lines)
+
+        # Render template
+        tpl_path = PLUGIN_DIR / "composition_template.html"
+        template = Template(tpl_path.read_text(encoding="utf-8"))
+        html = template.substitute(
+            title=safe_title,
+            total_dur=str(total_dur),
+            brand_out_at=str(brand_out_at),
+            audio_blocks=audio_blocks,
+            scene_blocks=scene_blocks,
+            phrases_json=json.dumps(chunks, ensure_ascii=False),
+            main_timeline_lines=main_timeline_lines,
+        )
+        (work_dir / "index.html").write_text(html, encoding="utf-8")
+
+        # Sidecar config files (matching `hyperframes init` scaffold)
+        (work_dir / "hyperframes.json").write_text(json.dumps({
+            "$schema": "https://hyperframes.heygen.com/schema/hyperframes.json",
+            "registry": "https://raw.githubusercontent.com/heygen-com/hyperframes/main/registry",
+            "paths": {"blocks": "compositions", "components": "compositions/components", "assets": "assets"},
+        }))
+        (work_dir / "package.json").write_text(json.dumps({"name": "qanot-reel"}))
+        (work_dir / "meta.json").write_text(json.dumps({
+            "id": "qanot-reel", "name": "qanot-reel", "createdAt": "2026-05-06T00:00:00Z",
+        }))
+
+        # Run hyperframes render. --no-browser-gpu (no GPU in container),
+        # --workers 2 (cap RAM usage), --quality standard.
+        logger.info("[reels] hyperframes render starting (workdir=%s, scenes=%d, dur=%.1fs)",
+                    work_dir, len(scenes), total_dur)
+        result = subprocess.run(
+            ["hyperframes", "render", "--no-browser-gpu", "--workers", "2", "--quality", "standard"],
+            cwd=str(work_dir),
+            capture_output=True,
+            timeout=900,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or b"").decode(errors="replace")[:800]
+            logger.error("[reels] hyperframes render failed: %s", err)
+            raise RuntimeError(f"hyperframes render failed: {err}")
+
+        # Find the rendered MP4
+        renders_dir = work_dir / "renders"
+        mp4_files = sorted(renders_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not mp4_files:
+            raise RuntimeError("hyperframes produced no MP4")
+
+        final = OUTPUT_DIR / f"{safe_title}.mp4"
+        if final.exists():
+            final.unlink()
+        shutil.move(str(mp4_files[0]), str(final))
+        logger.info("[reels] hyperframes render done → %s", final)
         return final
