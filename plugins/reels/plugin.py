@@ -870,13 +870,16 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             dur = round(max(0.5, scene.duration_s), 2)
             start = round(scene.start_s, 2)
             if scene_has_footage[i]:
-                # data-start MUST be absolute composition time (matches scene start),
-                # not 0 — otherwise all videos play simultaneously from t=0 and freeze
-                # by the time their scene becomes visible.
+                # The <video> must NOT carry its own data-start/data-duration:
+                # it is nested inside the scene <div> which already has them,
+                # and HyperFrames' linter rejects nested timed media ("cannot
+                # manage playback of nested media — video will be FROZEN").
+                # The parent scene container drives when the clip is active;
+                # data-media-start keeps the in-clip offset at 0.
                 inner = (
                     f'<video src="{asset_prefix}/footage/scene_{i:02d}.mp4" '
                     f'muted playsinline preload="auto" '
-                    f'data-start="{start}" data-duration="{dur}" data-media-start="0"></video>'
+                    f'data-media-start="0"></video>'
                 )
             else:
                 inner = f'<div class="grad-fallback {grad_class}"></div>'
