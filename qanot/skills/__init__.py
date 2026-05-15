@@ -62,6 +62,19 @@ from .gate import (
     GateResult,
     pre_create_check,
 )
+from .registry import (
+    DEFAULT_SKILL_REGISTRY_URL,
+    VALID_TIERS,
+    SkillEntry,
+    SkillLockEntry,
+    compute_skill_hash,
+    fetch_skill_registry,
+    install_skill,
+    remove_skill,
+    search_skill_registry,
+    skill_registry_info,
+    verify_skills,
+)
 from .index import (
     MAX_ACTIVE_SKILLS,
     MAX_INDEX_ENTRIES,
@@ -118,6 +131,11 @@ __all__ = [
     "GateResult", "pre_create_check",
     "DEFAULT_MIN_TRAJECTORY_TOKENS", "DEFAULT_SEMANTIC_REJECT_SCORE",
     "DEFAULT_SEMANTIC_WARN_SCORE",
+    # Registry (skill marketplace)
+    "install_skill", "remove_skill", "verify_skills",
+    "fetch_skill_registry", "search_skill_registry", "skill_registry_info",
+    "SkillEntry", "SkillLockEntry", "compute_skill_hash",
+    "DEFAULT_SKILL_REGISTRY_URL", "VALID_TIERS",
     # Index
     "build_skill_index", "match_skills", "format_active_skills",
     "MAX_ACTIVE_SKILLS", "MAX_INDEX_ENTRIES",

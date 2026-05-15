@@ -182,6 +182,10 @@ def cmd_help() -> None:
     print("  plugin info        Show plugin details")
     print("  plugin list        List all plugins (all tiers)")
     print("  plugin new <name>  Scaffold a new plugin")
+    print("  skill install      Install a skill (markdown) from the registry")
+    print("  skill search       Search the skill registry")
+    print("  skill list         List installed skills")
+    print("  skill new <name>   Scaffold a new SKILL.md bundle")
     print("  update             Update to latest version + restart")
     print("  version            Show version")
     print()
@@ -202,6 +206,7 @@ def main() -> None:
     from qanot.cli.doctor_cmd import cmd_doctor
     from qanot.cli.init_cmd import cmd_init
     from qanot.cli.plugin_cmd import cmd_plugin
+    from qanot.cli.skill_cmd import cmd_skill
 
     args = sys.argv[1:]
 
@@ -217,6 +222,7 @@ def main() -> None:
         "doctor": cmd_doctor,
         "backup": cmd_backup,
         "plugin": cmd_plugin,
+        "skill": cmd_skill,
         "config": cmd_config,
         "update": cmd_update,
     }
