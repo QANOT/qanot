@@ -1085,7 +1085,12 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
                             "duration_seconds": duration_seconds,
                             "fps": 30,
                             "quality": "standard",
-                            "deadline_seconds": 180,
+                            # 12-scene reels render ~165s with trivial
+                            # footage on the constrained host (4GB, single
+                            # 1.5GB worker); real Pexels clips decode slower.
+                            # Generous margin so the service doesn't kill a
+                            # legitimately-slow render.
+                            "deadline_seconds": 420,
                         },
                     )
                     job_id = submitted.get("job_id") or ""
