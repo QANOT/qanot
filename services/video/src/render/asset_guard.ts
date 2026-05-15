@@ -205,6 +205,23 @@ async function checkSingleUrl(
   let urlText = cleaned;
   if (urlText.startsWith("//")) urlText = `https:${urlText}`;
 
+  // Project-relative asset path (no scheme, not absolute). HyperFrames
+  // resolves these inside the render projectDir — they never touch the
+  // network, so there is no SSRF surface. The reels pipeline references
+  // its staged assets this way (`assets/...`, symlinked into projectDir).
+  // Reject `..` segments so a composition cannot escape the project.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(urlText) && !urlText.startsWith("/")) {
+    if (urlText.split("/").includes("..")) {
+      return {
+        ok: false,
+        code: "asset_fetch_failed",
+        message: `Path traversal in asset path: ${truncate(cleaned, 120)}`,
+        reason: "invalid_url",
+      };
+    }
+    return { ok: true, urls: [] };
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(urlText);
