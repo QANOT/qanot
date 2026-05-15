@@ -904,12 +904,17 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             "id": "qanot-reel", "name": "qanot-reel", "createdAt": "2026-05-06T00:00:00Z",
         }))
 
-        # Run hyperframes render. --no-browser-gpu (no GPU in container),
-        # --workers 2 (cap RAM usage), --quality standard.
+        # Run hyperframes render. Flags valid for @hyperframes/cli 0.4.30:
+        #   --workers 2     cap parallel Chrome procs (~256 MB each) for RAM
+        #   --quality standard   draft|standard|high
+        #   --quiet         suppress progress spinners in non-TTY container logs
+        # (GPU is already off by default — `gpu` arg defaults to false; there
+        # is no --no-browser-gpu flag in this CLI version. Headless Chrome is
+        # launched with GPU disabled by the engine itself.)
         logger.info("[reels] hyperframes render starting (workdir=%s, scenes=%d, dur=%.1fs)",
                     work_dir, len(scenes), total_dur)
         result = subprocess.run(
-            ["hyperframes", "render", "--no-browser-gpu", "--workers", "2", "--quality", "standard"],
+            ["hyperframes", "render", "--workers", "2", "--quality", "standard", "--quiet"],
             cwd=str(work_dir),
             capture_output=True,
             timeout=900,
