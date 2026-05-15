@@ -868,10 +868,24 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             "calm": "grad-calm",
             "neutral": "grad-neutral",
         }.get(mood, "grad-neutral")
+        # Non-overlapping scene timing on a single rounded grid. data-start
+        # and data-duration MUST come from the same rounded boundary array,
+        # otherwise independent round(start)/round(duration) drift by ±0.01
+        # and HyperFrames' linter rejects it ("clip ending at X overlaps
+        # clip starting at X-0.01 ... overlapping clips on the same track").
+        # Scene i spans [b[i], b[i+1]); the last runs to its rounded end.
+        _b = [round(s.start_s, 2) for s in scenes]
+        _last_end = round(scenes[-1].end_s, 2) if scenes else 0.0
+
+        def _span(idx: int) -> tuple[float, float, float]:
+            st = _b[idx]
+            nxt = _b[idx + 1] if idx + 1 < len(scenes) else _last_end
+            du = round(max(0.5, nxt - st), 2)
+            return st, du, round(st + du, 2)
+
         scene_html: list[str] = []
         for i, scene in enumerate(scenes):
-            dur = round(max(0.5, scene.duration_s), 2)
-            start = round(scene.start_s, 2)
+            start, dur, _ = _span(i)
             if scene_has_footage[i]:
                 # The <video> must NOT carry its own data-start/data-duration:
                 # it is nested inside the scene <div> which already has them,
@@ -900,9 +914,7 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         tl_lines: list[str] = []
         for i, scene in enumerate(scenes):
             sid = f"#s{i}"
-            start = round(scene.start_s, 2)
-            dur = round(max(0.5, scene.duration_s), 2)
-            end = round(start + dur, 2)
+            start, dur, end = _span(i)
             # Hard cut IN at scene start
             tl_lines.append(
                 f'      main.set("{sid}", {{ opacity: 1, scale: 1.04 }}, {start});'
