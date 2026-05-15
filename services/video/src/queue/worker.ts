@@ -338,6 +338,7 @@ export class Worker {
       try {
         renderResult = await this.renderFn({
           job_id: job.id,
+          request_id: job.request_id,
           composition_html: job.composition_html,
           output_dir: this.outputDir,
           fps: job.fps,

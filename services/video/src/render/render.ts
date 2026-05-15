@@ -25,16 +25,62 @@
  */
 
 import {
+  existsSync,
   mkdtempSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnWithTimeout } from "./timeout.js";
+
+/**
+ * Reels-via-service asset bridge.
+ *
+ * The reels pipeline (plugins/reels) stages a render's assets into a Docker
+ * volume shared with this container, at `<ROOT>/<request_id>/assets`, and
+ * references them in the composition by the project-relative path
+ * `assets/...`. The render service writes index.html into a random temp
+ * projectDir, so HyperFrames' linter would not find those assets. After
+ * writing index.html we symlink `projectDir/assets` -> the shared dir for
+ * that request_id, so relative refs resolve.
+ *
+ * This is additive and inert for every other caller (e.g. render_video):
+ * no shared dir exists for their request_id, so nothing is linked.
+ * request_id is already validated as a strict UUID at the route layer;
+ * we re-validate here and confine the resolved path under the root.
+ */
+const REEL_SHARED_ASSET_ROOT =
+  process.env["REEL_SHARED_ASSET_ROOT"] ?? "/app/assets/reel-share";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function linkSharedAssets(
+  projectDir: string,
+  requestId: string | undefined,
+): void {
+  if (!requestId || !UUID_RE.test(requestId)) return;
+  if (!existsSync(REEL_SHARED_ASSET_ROOT)) return;
+  const candidate = join(REEL_SHARED_ASSET_ROOT, requestId, "assets");
+  let real: string;
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(REEL_SHARED_ASSET_ROOT);
+    real = realpathSync(candidate);
+  } catch {
+    // No staged assets for this request_id — not a reels-via-service job.
+    return;
+  }
+  // Defense in depth: the resolved path must stay under the shared root.
+  if (real !== rootReal && !real.startsWith(rootReal + "/")) return;
+  if (!statSync(real).isDirectory()) return;
+  symlinkSync(real, join(projectDir, "assets"));
+}
 import { JobErrorCode, JobStage } from "../types.js";
 import type {
   RenderProgressCallback,
@@ -94,6 +140,13 @@ export interface RenderOptions {
   args_override?: readonly string[];
   /** Override the temp project root (default os.tmpdir()). */
   workdir_root?: string;
+  /**
+   * Caller request_id (UUID). When a matching shared asset dir exists at
+   * `<REEL_SHARED_ASSET_ROOT>/<request_id>/assets`, it is symlinked into
+   * the project so project-relative `assets/...` refs resolve. Inert when
+   * absent (every non-reels caller).
+   */
+  request_id?: string;
 }
 
 export async function renderComposition(
@@ -111,6 +164,7 @@ export async function renderComposition(
   try {
     writeFileSync(join(projectDir, "hyperframes.json"), HYPERFRAMES_JSON);
     writeFileSync(join(projectDir, "index.html"), opts.composition_html);
+    linkSharedAssets(projectDir, opts.request_id);
 
     // Default to the globally-installed `hyperframes` binary (image-baked at
     // pinned version). Skipping npx avoids npm's first-run install warnings

@@ -1029,9 +1029,15 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         share_root.mkdir(parents=True, exist_ok=True)
 
         try:
-            asset_prefix = f"{self._reels_asset_service_base}/{request_id}/assets"
+            # Reference assets project-relative ("assets/..."), exactly like
+            # the local-CLI path. The render service symlinks projectDir/assets
+            # -> <shared>/<request_id>/assets (keyed off this request_id), so
+            # HyperFrames' project-relative linter resolves them. Absolute
+            # file:// is rejected by that linter ("not found in the project")
+            # even though the file physically exists — hence relative + the
+            # service-side symlink bridge.
             html, safe_title, total_dur = self._stage_and_build_html(
-                share_root, asset_prefix, title, scenes, vo_path, words, mood,
+                share_root, "assets", title, scenes, vo_path, words, mood,
             )
 
             # Service hard-caps composition_html at 256 KB. Assets are
