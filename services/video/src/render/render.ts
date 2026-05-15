@@ -25,13 +25,13 @@
  */
 
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
-  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -65,7 +65,10 @@ function linkSharedAssets(
   requestId: string | undefined,
 ): void {
   if (!requestId || !UUID_RE.test(requestId)) return;
-  if (!existsSync(REEL_SHARED_ASSET_ROOT)) return;
+  if (!existsSync(REEL_SHARED_ASSET_ROOT)) {
+    console.warn(`[reel-assets] root missing: ${REEL_SHARED_ASSET_ROOT}`);
+    return;
+  }
   const candidate = join(REEL_SHARED_ASSET_ROOT, requestId, "assets");
   let real: string;
   let rootReal: string;
@@ -74,12 +77,23 @@ function linkSharedAssets(
     real = realpathSync(candidate);
   } catch {
     // No staged assets for this request_id — not a reels-via-service job.
+    console.warn(`[reel-assets] no staged dir for ${requestId} (${candidate})`);
     return;
   }
   // Defense in depth: the resolved path must stay under the shared root.
-  if (real !== rootReal && !real.startsWith(rootReal + "/")) return;
+  if (real !== rootReal && !real.startsWith(rootReal + "/")) {
+    console.warn(`[reel-assets] resolved path escapes root: ${real}`);
+    return;
+  }
   if (!statSync(real).isDirectory()) return;
-  symlinkSync(real, join(projectDir, "assets"));
+  // Copy (not symlink) into the project: HyperFrames' linter treats assets
+  // reachable only via a symlink that points outside projectDir as "not in
+  // the project". A real in-project copy satisfies it unconditionally.
+  // Assets are small (few MB of trimmed clips + voiceover) so the copy is
+  // cheap relative to the render itself.
+  const dest = join(projectDir, "assets");
+  cpSync(real, dest, { recursive: true, dereference: true });
+  console.warn(`[reel-assets] staged ${real} -> ${dest}`);
 }
 import { JobErrorCode, JobStage } from "../types.js";
 import type {
