@@ -62,6 +62,9 @@
   "video_composition_model": "claude-sonnet-4-6",
   "video_default_duration_seconds": 30,
   "video_max_duration_seconds": 60,
+  "reels_render_via_service": false,
+  "reels_share_dir": "/reel-share",
+  "reels_asset_service_base": "file:///app/assets/reel-share",
 
   "heartbeat_enabled": true,
   "heartbeat_interval": "0 */4 * * *",

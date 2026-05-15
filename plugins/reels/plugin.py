@@ -105,12 +105,27 @@ class ReelsPlugin(Plugin):
         self.pexels_key = ""
         self.openai_key = ""
         self._scriptwriter_skill = ""
+        # qanot-video render-service routing (injected by the plugin loader
+        # for the reels plugin only). Empty url/secret → service path off.
+        self._render_via_service = False
+        self._video_render_url = ""
+        self._video_service_secret = ""
+        self._reels_share_dir = "/reel-share"
+        self._reels_asset_service_base = "file:///app/assets/reel-share"
 
     async def setup(self, config: dict) -> None:
         self.elevenlabs_key = config.get("elevenlabs_key", "")
         self.elevenlabs_voice_id = config.get("elevenlabs_voice_id", "")
         self.pexels_key = config.get("pexels_key", "")
         self.openai_key = config.get("openai_key", "")
+
+        self._render_via_service = bool(config.get("reels_render_via_service", False))
+        self._video_render_url = (config.get("video_render_url", "") or "").rstrip("/")
+        self._video_service_secret = config.get("video_service_secret", "") or ""
+        self._reels_share_dir = config.get("reels_share_dir", "") or "/reel-share"
+        self._reels_asset_service_base = (
+            config.get("reels_asset_service_base", "") or "file:///app/assets/reel-share"
+        ).rstrip("/")
 
         # Ensure directories
         ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -267,16 +282,32 @@ class ReelsPlugin(Plugin):
         # 4. Footage
         self._fetch_footage(scenes, script["title"])
 
-        # 5. Compose via HyperFrames (replaces ffmpeg + Pillow caption pipeline).
-        # Captions, transitions, audio mix, and final encode all happen in
-        # the HTML composition rendered by `hyperframes render`.
-        final = self._compose_via_hyperframes(
-            title=script["title"],
-            scenes=scenes,
-            vo_path=vo_path,
-            words=words,
-            mood=script.get("mood", "neutral"),
-        )
+        # 5. Compose. Three render backends, in order of preference:
+        #   a) qanot-video service (HyperFrames quality, no per-bot Chrome)
+        #      — when reels_render_via_service is on and the service is
+        #      configured. Preferred: matches the video-engine architecture.
+        #   b) local hyperframes CLI — when the binary is on PATH.
+        #   c) ffmpeg + Pillow (_render_captions → _compose) — always
+        #      available offline fallback so reels never hard-fails.
+        import shutil as _sh
+        title = script["title"]
+        mood = script.get("mood", "neutral")
+        if self._render_via_service and self._video_render_url and self._video_service_secret:
+            final = self._compose_via_service(
+                title=title, scenes=scenes, vo_path=vo_path, words=words, mood=mood,
+            )
+        elif _sh.which("hyperframes"):
+            final = self._compose_via_hyperframes(
+                title=title, scenes=scenes, vo_path=vo_path, words=words, mood=mood,
+            )
+        else:
+            logger.info("[reels] no service/CLI — using offline ffmpeg fallback")
+            duration = (words[-1].end_s + 0.5) if words else 30.0
+            caption_dir = work_dir / "_captions"
+            self._render_captions(words, duration, caption_dir)
+            final = self._compose(
+                title, scenes, vo_path, caption_dir, words, mood,
+            )
 
         # Cleanup
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -737,19 +768,26 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             })
         return result
 
-    def _compose_via_hyperframes(
-        self, title: str, scenes: list[Scene], vo_path: Path,
+    def _stage_and_build_html(
+        self, work_dir: Path, asset_prefix: str,
+        title: str, scenes: list[Scene], vo_path: Path,
         words: list[Word], mood: str,
-    ) -> Path:
-        """Build a HyperFrames composition directory and render to MP4."""
+    ) -> tuple[str, str, float]:
+        """Stage assets into ``work_dir/assets/...`` and render the
+        composition HTML, referencing assets via ``asset_prefix``.
+
+        ``asset_prefix`` is the URL path the *renderer* uses to reach the
+        files — ``"assets"`` (relative, for the local hyperframes CLI run
+        with cwd=work_dir) or an absolute ``file:///app/assets/.../assets``
+        (for the qanot-video service over a shared volume). The on-disk
+        layout is identical in both cases; only the HTML src= prefix
+        differs, so the CLI path is byte-for-byte unchanged.
+
+        Returns ``(html, safe_title, total_dur)``.
+        """
         from string import Template
 
         safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)[:80]
-        work_dir = OUTPUT_DIR / "_hf"
-        if work_dir.exists():
-            shutil.rmtree(work_dir, ignore_errors=True)
-        work_dir.mkdir(parents=True)
-
         assets = work_dir / "assets"
         for sub in ("audio", "sfx", "music", "footage"):
             (assets / sub).mkdir(parents=True, exist_ok=True)
@@ -792,11 +830,11 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         # Audio blocks
         audio_lines: list[str] = []
         audio_lines.append(
-            '      <audio src="assets/audio/voiceover.mp3" data-start="0" data-volume="1.0" data-track-index="10"></audio>'
+            f'      <audio src="{asset_prefix}/audio/voiceover.mp3" data-start="0" data-volume="1.0" data-track-index="10"></audio>'
         )
         if has_music:
             audio_lines.append(
-                f'      <audio src="assets/music/bg.mp3" data-start="0" data-duration="{total_dur}" data-volume="0.16" data-track-index="11"></audio>'
+                f'      <audio src="{asset_prefix}/music/bg.mp3" data-start="0" data-duration="{total_dur}" data-volume="0.16" data-track-index="11"></audio>'
             )
         # 2-3 whoosh transitions max (restraint per SKILL) — only if file exists
         whoosh_present = (assets / "sfx" / "whoosh.wav").exists()
@@ -805,18 +843,18 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             whoosh_pts = sorted({round(t, 2) for t in [scenes[1].start_s, scenes[mid].start_s, scenes[-1].start_s] if 0 < t < total_dur})[:3]
             for i, t in enumerate(whoosh_pts):
                 audio_lines.append(
-                    f'      <audio src="assets/sfx/whoosh.wav" data-start="{t}" data-volume="0.4" data-track-index="{20+i}"></audio>'
+                    f'      <audio src="{asset_prefix}/sfx/whoosh.wav" data-start="{t}" data-volume="0.4" data-track-index="{20+i}"></audio>'
                 )
         # Bass hit on hook (only if file exists)
         if (assets / "sfx" / "bass-hit.wav").exists() and total_dur > 1.0:
             audio_lines.append(
-                f'      <audio src="assets/sfx/bass-hit.wav" data-start="0.0" data-volume="0.55" data-track-index="25"></audio>'
+                f'      <audio src="{asset_prefix}/sfx/bass-hit.wav" data-start="0.0" data-volume="0.55" data-track-index="25"></audio>'
             )
         # Ding at CTA (only if file exists)
         if (assets / "sfx" / "ding.wav").exists() and total_dur > 4.0:
             ding_at = round(total_dur - 2.0, 2)
             audio_lines.append(
-                f'      <audio src="assets/sfx/ding.wav" data-start="{ding_at}" data-volume="0.5" data-track-index="26"></audio>'
+                f'      <audio src="{asset_prefix}/sfx/ding.wav" data-start="{ding_at}" data-volume="0.5" data-track-index="26"></audio>'
             )
         audio_blocks = "\n".join(audio_lines)
 
@@ -836,7 +874,7 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
                 # not 0 — otherwise all videos play simultaneously from t=0 and freeze
                 # by the time their scene becomes visible.
                 inner = (
-                    f'<video src="assets/footage/scene_{i:02d}.mp4" '
+                    f'<video src="{asset_prefix}/footage/scene_{i:02d}.mp4" '
                     f'muted playsinline preload="auto" '
                     f'data-start="{start}" data-duration="{dur}" data-media-start="0"></video>'
                 )
@@ -891,6 +929,27 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             phrases_json=json.dumps(chunks, ensure_ascii=False),
             main_timeline_lines=main_timeline_lines,
         )
+        return html, safe_title, total_dur
+
+    def _compose_via_hyperframes(
+        self, title: str, scenes: list[Scene], vo_path: Path,
+        words: list[Word], mood: str,
+    ) -> Path:
+        """Build a HyperFrames project locally and render via the CLI.
+
+        Requires the `hyperframes` CLI (+ Chrome) on PATH. Use the
+        qanot-video service path instead where it is available — see
+        _compose_via_service.
+        """
+        work_dir = OUTPUT_DIR / "_hf"
+        if work_dir.exists():
+            shutil.rmtree(work_dir, ignore_errors=True)
+        work_dir.mkdir(parents=True)
+
+        # Relative "assets" prefix — the CLI runs with cwd=work_dir.
+        html, safe_title, total_dur = self._stage_and_build_html(
+            work_dir, "assets", title, scenes, vo_path, words, mood,
+        )
         (work_dir / "index.html").write_text(html, encoding="utf-8")
 
         # Sidecar config files (matching `hyperframes init` scaffold)
@@ -936,3 +995,110 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
         shutil.move(str(mp4_files[0]), str(final))
         logger.info("[reels] hyperframes render done → %s", final)
         return final
+
+    def _compose_via_service(
+        self, title: str, scenes: list[Scene], vo_path: Path,
+        words: list[Word], mood: str,
+    ) -> Path:
+        """Render via the qanot-video service over a shared asset volume.
+
+        Assets are staged into ``{reels_share_dir}/{request_id}/assets/``
+        (a Docker volume the qanot-video container also mounts, exposed to
+        the renderer at ``{reels_asset_service_base}/{request_id}/assets``).
+        The composition HTML (≤256 KB — assets are referenced by file://,
+        not inlined) is POSTed to the service; we poll then download the
+        MP4. See claudedocs/reels-video-service-integration-plan.md.
+        """
+        import asyncio
+        import uuid
+
+        import httpx
+
+        from qanot import video_client
+
+        request_id = str(uuid.uuid4())
+        share_root = Path(self._reels_share_dir) / request_id
+        if share_root.exists():
+            shutil.rmtree(share_root, ignore_errors=True)
+        share_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            asset_prefix = f"{self._reels_asset_service_base}/{request_id}/assets"
+            html, safe_title, total_dur = self._stage_and_build_html(
+                share_root, asset_prefix, title, scenes, vo_path, words, mood,
+            )
+
+            # Service hard-caps composition_html at 256 KB. Assets are
+            # referenced by file://, never inlined, so this only trips on a
+            # pathological scene/caption count — fail loud rather than let
+            # the service 413.
+            html_bytes = len(html.encode("utf-8"))
+            if html_bytes > 256 * 1024:
+                raise RuntimeError(
+                    f"composition HTML is {html_bytes} bytes (>256KB service cap); "
+                    f"reduce scene/caption count"
+                )
+
+            duration_seconds = max(1, min(60, int(round(total_dur))))
+            final = OUTPUT_DIR / f"{safe_title}.mp4"
+
+            async def _run() -> None:
+                timeout = httpx.Timeout(
+                    video_client.HTTP_REQUEST_TIMEOUT_S,
+                    connect=video_client.HTTP_CONNECT_TIMEOUT_S,
+                )
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    submitted = await video_client.submit_render(
+                        client=client,
+                        base_url=self._video_render_url,
+                        bearer=self._video_service_secret,
+                        payload={
+                            "request_id": request_id,
+                            "bot_id": "reels",
+                            "user_id": "reels",
+                            "composition_html": html,
+                            "format": "9:16",
+                            "duration_seconds": duration_seconds,
+                            "fps": 30,
+                            "quality": "standard",
+                            "deadline_seconds": 180,
+                        },
+                    )
+                    job_id = submitted.get("job_id") or ""
+                    if not job_id:
+                        raise RuntimeError("render service returned no job_id")
+
+                    logger.info(
+                        "[reels] qanot-video job %s submitted (scenes=%d, dur=%ds)",
+                        job_id, len(scenes), duration_seconds,
+                    )
+                    status = await video_client.poll_job(
+                        client=client,
+                        base_url=self._video_render_url,
+                        bearer=self._video_service_secret,
+                        job_id=job_id,
+                    )
+                    if status.get("status") != "succeeded":
+                        err = status.get("error") or {}
+                        code = err.get("code") or status.get("status") or "unknown"
+                        msg = err.get("message") or ""
+                        raise RuntimeError(f"qanot-video render failed: {code} {msg}".strip())
+
+                    if final.exists():
+                        final.unlink()
+                    await video_client.download_output(
+                        client=client,
+                        base_url=self._video_render_url,
+                        bearer=self._video_service_secret,
+                        job_id=job_id,
+                        dest_path=final,
+                    )
+
+            asyncio.run(_run())
+            logger.info("[reels] qanot-video render done → %s", final)
+            return final
+        finally:
+            # Always clear the shared volume entry — the MP4 is downloaded,
+            # the service expires its own copy; leaving assets bloats the
+            # shared volume.
+            shutil.rmtree(share_root, ignore_errors=True)

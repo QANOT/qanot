@@ -96,6 +96,16 @@ class PluginManager:
             plugin_config = dict(plugin_config)
             plugin_config.setdefault("workspace_dir", config.workspace_dir)
 
+            # Reels render-service routing. Scoped to the reels plugin only —
+            # video_service_secret is sensitive and must not leak into every
+            # plugin's config dict (a 3rd-party plugin would otherwise see it).
+            if name == "reels":
+                plugin_config.setdefault("reels_render_via_service", config.reels_render_via_service)
+                plugin_config.setdefault("video_render_url", config.video_render_url)
+                plugin_config.setdefault("video_service_secret", config.video_service_secret)
+                plugin_config.setdefault("reels_share_dir", config.reels_share_dir)
+                plugin_config.setdefault("reels_asset_service_base", config.reels_asset_service_base)
+
             # Load and instantiate
             plugin = await _load_from_path(plugin_dir, plugin_config)
             if plugin is None:

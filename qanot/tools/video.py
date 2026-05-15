@@ -50,17 +50,22 @@ _SONNET_OUTPUT_USD_PER_MTOK = 15.0
 _COMPOSITION_INPUT_TOKEN_BUDGET = 12_000
 _COMPOSITION_OUTPUT_TOKEN_BUDGET = 4_096
 
-# HTTP client behavior. Service typically responds in <50ms; the 30s
-# connect timeout is the kernel-level retry safety net, not a steady-state
-# expectation.
-_HTTP_CONNECT_TIMEOUT_S = 10.0
-_HTTP_REQUEST_TIMEOUT_S = 30.0
-_POLL_INTERVAL_S = 2.0
-_POLL_PROGRESS_EDIT_EVERY_NTH = 3  # edit Telegram message every Nth poll
-
-# Submit retry policy: exponential backoff on network/5xx errors.
-_SUBMIT_RETRIES = 3
-_SUBMIT_BACKOFF_BASE_S = 1.0
+# HTTP client + retry/poll behavior and the service HTTP helpers now live
+# in qanot/video_client.py so the reels pipeline can reuse them. Imported
+# here under the original underscored names so existing call sites and
+# tests are unaffected (zero behaviour change).
+from qanot.video_client import (  # noqa: E402
+    HTTP_CONNECT_TIMEOUT_S as _HTTP_CONNECT_TIMEOUT_S,
+    HTTP_REQUEST_TIMEOUT_S as _HTTP_REQUEST_TIMEOUT_S,
+    POLL_INTERVAL_S as _POLL_INTERVAL_S,
+    POLL_PROGRESS_EDIT_EVERY_NTH as _POLL_PROGRESS_EDIT_EVERY_NTH,
+    SUBMIT_BACKOFF_BASE_S as _SUBMIT_BACKOFF_BASE_S,
+    SUBMIT_RETRIES as _SUBMIT_RETRIES,
+    ServiceUnavailable as _ServiceUnavailable,
+    download_output as _download_output,
+    poll_job as _poll_job,
+    submit_render as _submit_render,
+)
 
 # Composition retry: at most one retry-with-feedback after lint_failed.
 _COMPOSITION_RETRY_BUDGET = 1
@@ -370,102 +375,9 @@ async def _author_composition(
 
 
 # ── Render service HTTP client ──────────────────────────────────────────
-
-
-class _ServiceUnavailable(Exception):
-    """Raised when the render service is unreachable after retries."""
-
-
-async def _submit_render(
-    *,
-    client: httpx.AsyncClient,
-    base_url: str,
-    bearer: str,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """POST /render with exponential-backoff retries. Returns the job dict."""
-    last_exc: Exception | None = None
-    for attempt in range(_SUBMIT_RETRIES + 1):
-        try:
-            resp = await client.post(
-                f"{base_url}/render",
-                headers={"Authorization": f"Bearer {bearer}"},
-                json=payload,
-            )
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
-            last_exc = exc
-        else:
-            # 5xx -> retry; 4xx -> surface as service error (validation, etc.)
-            if 500 <= resp.status_code < 600:
-                last_exc = httpx.HTTPStatusError(
-                    "service 5xx", request=resp.request, response=resp,
-                )
-            else:
-                resp.raise_for_status()
-                return resp.json()
-        if attempt < _SUBMIT_RETRIES:
-            await asyncio.sleep(_SUBMIT_BACKOFF_BASE_S * (2 ** attempt))
-    raise _ServiceUnavailable(f"render service unreachable: {last_exc}")
-
-
-async def _poll_job(
-    *,
-    client: httpx.AsyncClient,
-    base_url: str,
-    bearer: str,
-    job_id: str,
-    on_progress: Callable[[dict[str, Any]], asyncio.Future[None] | None] | None = None,
-    on_progress_async: Callable[[dict[str, Any]], Any] | None = None,
-) -> dict[str, Any]:
-    """Poll GET /jobs/:id until the job hits a terminal state. Returns the
-    final status dict. Calls on_progress every Nth iteration with the latest
-    status, so the caller can update Telegram."""
-    poll_count = 0
-    while True:
-        resp = await client.get(
-            f"{base_url}/jobs/{job_id}",
-            headers={"Authorization": f"Bearer {bearer}"},
-        )
-        resp.raise_for_status()
-        status = resp.json()
-        state = status.get("status")
-        if state in ("succeeded", "failed", "cancelled", "expired"):
-            return status
-        poll_count += 1
-        if on_progress_async and (poll_count % _POLL_PROGRESS_EDIT_EVERY_NTH == 0):
-            try:
-                await on_progress_async(status)
-            except Exception as exc:  # noqa: BLE001 — progress is best-effort
-                logger.debug("progress callback failed: %s", exc)
-        elif on_progress and (poll_count % _POLL_PROGRESS_EDIT_EVERY_NTH == 0):
-            try:
-                result = on_progress(status)
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("progress callback failed: %s", exc)
-        await asyncio.sleep(_POLL_INTERVAL_S)
-
-
-async def _download_output(
-    *,
-    client: httpx.AsyncClient,
-    base_url: str,
-    bearer: str,
-    job_id: str,
-    dest_path: Path,
-) -> None:
-    """Stream MP4 to disk."""
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    async with client.stream(
-        "GET",
-        f"{base_url}/jobs/{job_id}/output",
-        headers={"Authorization": f"Bearer {bearer}"},
-    ) as resp:
-        resp.raise_for_status()
-        with dest_path.open("wb") as fh:
-            async for chunk in resp.aiter_bytes():
-                fh.write(chunk)
+# _ServiceUnavailable / _submit_render / _poll_job / _download_output now
+# live in qanot/video_client.py (imported above under these names). Kept as
+# a single source of truth shared with the reels pipeline.
 
 
 # ── Tool registration ───────────────────────────────────────────────────

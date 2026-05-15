@@ -319,6 +319,20 @@ class Config:
     video_composition_model: str = "claude-sonnet-4-6"
     video_default_duration_seconds: int = 30
     video_max_duration_seconds: int = 60
+    # Reels (legacy plugins/reels) → qanot-video service routing.
+    # When True, ReelsPlugin renders its composition via the qanot-video
+    # render service (reusing video_render_url + video_service_secret)
+    # instead of a local `hyperframes` CLI. Default False keeps the
+    # offline ffmpeg/CLI path so nothing breaks where the service is absent.
+    reels_render_via_service: bool = False
+    # Bot-side path of a Docker volume SHARED with the qanot-video
+    # container. Reels writes per-render assets to {reels_share_dir}/{id}/.
+    reels_share_dir: str = "/reel-share"
+    # The SAME volume as the render service sees it. Must resolve under the
+    # service's whitelisted file:// roots (default /app/assets) so mount it
+    # at /app/assets/reel-share in the qanot-video container. Composition
+    # HTML references assets as {reels_asset_service_base}/{id}/<name>.
+    reels_asset_service_base: str = "file:///app/assets/reel-share"
     # Multi-agent definitions
     agents: list[AgentDefinition] = field(default_factory=list)
     # Agent monitoring — mirror agent conversations to this Telegram group
@@ -512,6 +526,7 @@ def load_config(path: str | None = None) -> Config:
         'cron_dir', 'plugins_dir',
         'voicecall_api_hash', 'voicecall_session',
         'video_service_secret', 'video_render_url',
+        'reels_share_dir', 'reels_asset_service_base',
     }
     for key, value in simple.items():
         if isinstance(value, str) and key in _SENSITIVE_FIELDS:
