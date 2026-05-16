@@ -984,29 +984,37 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             "id": "qanot-reel", "name": "qanot-reel", "createdAt": "2026-05-06T00:00:00Z",
         }))
 
-        # Run hyperframes render. Flags valid for @hyperframes/cli 0.4.30:
-        #   --workers 2     cap parallel Chrome procs (~256 MB each) for RAM
-        #   --quality standard   draft|standard|high
-        #   --quiet         suppress progress spinners in non-TTY container logs
-        # (GPU is already off by default — `gpu` arg defaults to false; there
-        # is no --no-browser-gpu flag in this CLI version. Headless Chrome is
-        # launched with GPU disabled by the engine itself.)
-        logger.info("[reels] hyperframes render starting (workdir=%s, scenes=%d, dur=%.1fs)",
+        # Render via hyperframes --docker. This is mandatory, not optional:
+        # local (no-docker) rendering uses system Chromium + SwiftShader
+        # software GL and CRASHES ("Target closed") on a multi-HD-<video>
+        # reel. --docker runs an isolated chrome-headless-shell + BeginFrame
+        # container — the documented path for video-heavy / agent renders.
+        # Requires the `hyperframes-renderer:<cli-version>` image to exist
+        # (pre-built once; hyperframes skips its own build if cached). The
+        # explicit project dir + --output mirror the verified manual run.
+        out_path = work_dir / f"{safe_title}.mp4"
+        logger.info("[reels] hyperframes --docker render (workdir=%s, scenes=%d, dur=%.1fs)",
                     work_dir, len(scenes), total_dur)
         result = subprocess.run(
-            ["hyperframes", "render", "--workers", "2", "--quality", "standard", "--quiet"],
-            cwd=str(work_dir),
+            ["hyperframes", "render", str(work_dir), "--docker",
+             "--output", str(out_path), "--quality", "standard"],
             capture_output=True,
             timeout=900,
         )
-        if result.returncode != 0:
-            err = (result.stderr or b"").decode(errors="replace")[:800]
-            logger.error("[reels] hyperframes render failed: %s", err)
-            raise RuntimeError(f"hyperframes render failed: {err}")
+        if result.returncode != 0 or not out_path.exists():
+            err = (result.stderr or b"").decode(errors="replace")[-800:]
+            out = (result.stdout or b"").decode(errors="replace")[-400:]
+            logger.error("[reels] hyperframes --docker render failed rc=%s: %s | %s",
+                         result.returncode, err, out)
+            raise RuntimeError(f"hyperframes --docker render failed: {err}")
 
-        # Find the rendered MP4
-        renders_dir = work_dir / "renders"
-        mp4_files = sorted(renders_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        # Explicit --output path is authoritative; keep the glob as a
+        # fallback for older layouts.
+        if out_path.exists():
+            mp4_files = [out_path]
+        else:
+            renders_dir = work_dir / "renders"
+            mp4_files = sorted(renders_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not mp4_files:
             raise RuntimeError("hyperframes produced no MP4")
 
