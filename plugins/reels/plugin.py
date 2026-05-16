@@ -868,89 +868,74 @@ OUTPUT: Add `"content_category"` field to JSON: "storytelling" | "lifehack" | "s
             "calm": "grad-calm",
             "neutral": "grad-neutral",
         }.get(mood, "grad-neutral")
-        # Bulletproof non-overlapping scene timing.
+        # Canonical HyperFrames clip model (per reference/html-schema.mdx):
         #
-        # HyperFrames computes a clip's end as `data-start + data-duration`
-        # in JS floating point and rejects ANY same-track overlap — even a
-        # 1e-15 one from float representation (observed:
-        # 11.4 + 0.14 = 11.540000000000001 > next start 11.54). round(.,2)
-        # is not enough because the float math happens AFTER, on the parsed
-        # attribute values.
+        #  * A <video> IS the timed track element — framework-managed, so it
+        #    must NOT carry class="clip" (the framework owns video
+        #    show/hide/playback directly). It carries id + data-start +
+        #    data-duration + data-track-index + data-media-start.
+        #  * Sequential clips on one track are chained by a SYMBOLIC
+        #    data-start reference to the previous clip's id
+        #    (data-start="v3" => "start exactly when v3 ends"). The framework
+        #    computes the non-overlap chain itself — no numeric float math,
+        #    so the old centisecond-grid / overlap problem disappears
+        #    entirely. Clips on the same track cannot overlap; id-refs make
+        #    them perfectly contiguous.
+        #  * Ken Burns: wrap the video in a NON-timed <div> (no data-*) and
+        #    animate the WRAPPER with GSAP — never scale the <video> itself
+        #    (that makes Chrome stop rendering video frames; see
+        #    guides/common-mistakes "Animating video element dimensions").
+        #  * The gradient fallback IS a visible timed element, so it gets
+        #    class="clip" (framework manages its visibility lifecycle).
         #
-        # Fix: snap every boundary to an integer centisecond grid and make
-        # each non-last clip end ONE centisecond (10 ms) before the next
-        # clip starts. 10 ms is under one 30fps frame (33 ms), so hard cuts
-        # stay visually seamless, while start+duration is provably below the
-        # next start by ~0.01 — far larger than any float error. The GSAP
-        # opacity transitions use the TRUE boundary (vis_end) so there is no
-        # visible gap; only the clip element's lifetime is trimmed.
-        _cs = [round(s.start_s * 100) for s in scenes]
-        _end_cs = round(scenes[-1].end_s * 100) if scenes else 0
-        _MIN_CS = 50  # 0.5s floor
-
-        def _span(idx: int) -> tuple[float, float, float]:
-            """Returns (start_s, duration_s, visual_end_s)."""
-            st_cs = _cs[idx]
-            last = idx + 1 >= len(scenes)
-            nxt_cs = _end_cs if last else _cs[idx + 1]
-            if last:
-                dur_cs = max(_MIN_CS, _end_cs - st_cs)
-            else:
-                dur_cs = max(_MIN_CS, nxt_cs - st_cs - 1)  # -10ms safety gap
-            return st_cs / 100.0, dur_cs / 100.0, nxt_cs / 100.0
-
+        # The previous build wrapped videos in class="scene" divs with their
+        # own data-start: not class="clip", so the runtime never hid inactive
+        # scenes → all 12-14 HD videos decoded at once → Chromium hung →
+        # Runtime.callFunctionOn timeout on every host. This is the real fix.
         scene_html: list[str] = []
+        cum_starts: list[float] = []
+        cum = 0.0
         for i, scene in enumerate(scenes):
-            start, dur, _ = _span(i)
+            dur = round(max(0.5, scene.duration_s), 2)
+            cum_starts.append(round(cum, 2))
+            cum += dur
+            ds = "0" if i == 0 else f"v{i-1}"  # symbolic chain → no overlap
             if scene_has_footage[i]:
-                # The <video> must NOT carry its own data-start/data-duration:
-                # it is nested inside the scene <div> which already has them,
-                # and HyperFrames' linter rejects nested timed media ("cannot
-                # manage playback of nested media — video will be FROZEN").
-                # The parent scene container drives when the clip is active;
-                # data-media-start keeps the in-clip offset at 0.
-                inner = (
-                    f'<video src="{asset_prefix}/footage/scene_{i:02d}.mp4" '
-                    f'muted playsinline preload="auto" '
-                    f'data-media-start="0"></video>'
+                scene_html.append(
+                    f'      <div id="kb{i}" class="kbwrap">\n'
+                    f'        <video id="v{i}" data-start="{ds}" data-duration="{dur:.2f}" '
+                    f'data-track-index="1" data-media-start="0" '
+                    f'src="{asset_prefix}/footage/scene_{i:02d}.mp4" '
+                    f'muted playsinline preload="metadata"></video>\n'
+                    f'      </div>'
                 )
             else:
-                inner = f'<div class="grad-fallback {grad_class}"></div>'
-            scene_html.append(
-                f'      <div id="s{i}" class="scene" data-start="{start:.2f}" data-duration="{dur:.2f}" data-track-index="1">\n'
-                f'        {inner}\n'
-                f'        <div class="vignette"></div>\n'
-                f'      </div>'
-            )
+                scene_html.append(
+                    f'      <div id="v{i}" class="clip gbg {grad_class}" '
+                    f'data-start="{ds}" data-duration="{dur:.2f}" data-track-index="1"></div>'
+                )
         scene_blocks = "\n".join(scene_html)
 
-        # Main timeline scene transitions: HARD CUTS (no fade through dark bg).
-        # Reference reels use snap cuts on beat — keeps energy high, no black flash.
-        # Subtle scale-in (kenburns) gives life without overlapping fades.
+        # GSAP only does the VISUAL Ken Burns on the (non-timed) wrappers.
+        # Clip visibility is framework-managed via the data-start chain — no
+        # manual opacity. Timeline extended to the full audio length so the
+        # composition duration == voiceover length (composition duration is
+        # the GSAP timeline duration; see guides/common-mistakes).
         tl_lines: list[str] = []
         for i, scene in enumerate(scenes):
-            sid = f"#s{i}"
-            start, dur, vis_end = _span(i)
-            # Hard cut IN at scene start
+            if not scene_has_footage[i]:
+                continue  # gradient div: framework-managed, nothing to scale
+            t = cum_starts[i]
+            dur = round(max(0.5, scene.duration_s), 2)
             tl_lines.append(
-                f'      main.set("{sid}", {{ opacity: 1, scale: 1.04 }}, {start:.2f});'
+                f'      main.set("#kb{i}", {{ scale: 1.04 }}, {t:.2f});'
             )
-            # Subtle kenburns scale during scene (no fade)
             tl_lines.append(
-                f'      main.to("{sid}", {{ scale: 1.0, duration: {dur:.2f}, ease: "power1.out" }}, {start:.2f});'
+                f'      main.to("#kb{i}", {{ scale: 1.0, duration: {dur:.2f}, ease: "power1.out" }}, {t:.2f});'
             )
-            # Hard cut OUT at the TRUE boundary (vis_end) so the next scene
-            # appears with no gap, even though the clip element's
-            # data-duration ended 10ms earlier (track-overlap safety).
-            if i < len(scenes) - 1:
-                tl_lines.append(
-                    f'      main.set("{sid}", {{ opacity: 0 }}, {vis_end:.2f});'
-                )
-            else:
-                fade_at = vis_end - 0.3
-                tl_lines.append(
-                    f'      main.to("{sid}", {{ opacity: 0, duration: 0.3, ease: "power2.in" }}, {fade_at:.2f});'
-                )
+        # Zero-duration tween that pins the timeline (and thus the
+        # composition) to the full voiceover length.
+        tl_lines.append(f'      main.set({{}}, {{}}, {total_dur});')
         main_timeline_lines = "\n".join(tl_lines)
 
         # Render template
