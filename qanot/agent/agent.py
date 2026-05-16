@@ -391,10 +391,26 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
                 finally:
                     drop_inflight()
         finally:
-            _chat_id_var.reset(chat_token)
-            _thread_id_var.reset(thread_token)
-            _message_id_var.reset(msg_token)
-            _user_id_var.reset(user_token)
+            # This is an async generator: its `finally` may run when the
+            # generator is closed/GC'd (GeneratorExit) from a DIFFERENT
+            # context than the one where `.set()` ran above — e.g. the
+            # Telegram adapter cancels the stream, or the gen is collected
+            # later. ContextVar.reset(token) raises ValueError when the
+            # token was created in a different Context. Skipping the reset
+            # is safe here: the context that owned the set() is being torn
+            # down anyway, and every new turn calls `.set()` again, so no
+            # value leaks across turns (per-user turns are also serialized
+            # by self._get_lock). Guard each reset independently.
+            for _var, _tok in (
+                (_chat_id_var, chat_token),
+                (_thread_id_var, thread_token),
+                (_message_id_var, msg_token),
+                (_user_id_var, user_token),
+            ):
+                try:
+                    _var.reset(_tok)
+                except ValueError:
+                    pass
 
     async def _run_turn_stream_impl(
         self, user_message: str, user_id: str | None, *, images: list[dict] | None = None, system_prompt_override: str | None = None
