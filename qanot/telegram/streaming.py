@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Above this, a reply is too long for the Haiku reply-validator to echo
+# back without truncating (its budget is validator.VALIDATOR_MAX_TOKENS).
+# The artifact this layer is meant to catch — a stray Notion-title /
+# filename / daily-note heading in the narrative — is always far shorter
+# than this, so skipping long replies loses no real coverage while
+# removing the truncation→retry-loop failure mode.
+_REPLY_VALIDATE_MAX_CHARS = 1200
+
 
 class StreamingMixin:
     """Mixin providing response strategy methods for TelegramAdapter."""
@@ -244,6 +252,17 @@ class StreamingMixin:
         issues. Returns the verified (possibly rewritten) text.
         """
         if not text or not text.strip():
+            return text
+        # The leak this layer guards against — a write-artifact-format
+        # rule (Notion title, filename, daily-note heading) bleeding into
+        # the narrative reply — is short by construction. A long answer
+        # (a script, a how-to, code) is never that artifact, but it IS
+        # too big for Haiku to round-trip within its output budget: the
+        # echo gets truncated, the user sees a cut-off reply, and the
+        # agent retries into a tool-call loop. Skip the reply validator
+        # above this size; the structured-write registry validator still
+        # guards the actual tool inputs regardless of reply length.
+        if len(text) > _REPLY_VALIDATE_MAX_CHARS:
             return text
         agent = getattr(self, "agent", None)
         if agent is None:

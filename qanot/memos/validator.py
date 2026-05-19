@@ -43,6 +43,18 @@ logger = logging.getLogger(__name__)
 VALIDATOR_MODEL = "claude-haiku-4-5-20251001"
 VALIDATOR_MAX_TOKENS = 800  # rewrite + violations array
 
+# Truncation backup guard. The PRECISE truncation signal is
+# ``stop_reason == "max_tokens"`` (checked first). This ratio is only a
+# fallback for shims/paths where stop_reason isn't exposed. It is gated
+# on input length: a *short* field (a Notion title, a filename) shrinking
+# hard is the validator working as designed — "Daily Entry — …13-may…" →
+# "13-may, 2026" is a legitimate 70% drop. Only on a *long* input is a
+# big shrink implausible for a minimal edit and therefore truncation/
+# paraphrase. Below the floor we trust the rewrite; at/above it we
+# enforce the ratio. Rule-agnostic — holds no matter which memo fired.
+_LOSS_GUARD_MIN_CHARS = 400
+_MIN_VERIFIED_LENGTH_RATIO = 0.85
+
 
 _VALIDATOR_SYSTEM = """You are a strict rule-compliance auditor. You read a DRAFT text that the
 agent is about to write (to Notion, to a file, to a tool API) and check whether
@@ -149,6 +161,17 @@ async def validate_text_against_memos(
         logger.warning("memo validator LLM call failed: %s", exc)
         return ValidationResult(original=text, verified=text)
 
+    # If Haiku ran out of output budget echoing the draft back, anything
+    # it returned is a truncated fragment, not a rewrite. Shipping it would
+    # send the user a cut-off reply (and the agent, seeing its own mangled
+    # output, retries → tool-call loop). Fail safe to the original.
+    if _extract_stop_reason(response) == "max_tokens":
+        logger.warning(
+            "memo validator hit max_tokens (draft too long to round-trip, "
+            "%d chars) — passing original through unchanged", len(text),
+        )
+        return ValidationResult(original=text, verified=text)
+
     raw = _extract_text(response)
     payload = _parse_json(raw)
     if payload is None:
@@ -161,6 +184,22 @@ async def validate_text_against_memos(
     verified = str(payload.get("verified") or "").strip()
     if not verified:
         logger.debug("memo validator: empty verified field; passing through")
+        return ValidationResult(original=text, verified=text)
+
+    # Loss-guard (length-gated backup to the stop_reason check above).
+    # Only on long inputs is a big shrink implausible for a minimal edit;
+    # short fields (titles, filenames) legitimately shrink hard when a
+    # banned prefix is stripped, so they're exempt.
+    if (
+        len(text) >= _LOSS_GUARD_MIN_CHARS
+        and len(verified) < len(text) * _MIN_VERIFIED_LENGTH_RATIO
+    ):
+        logger.warning(
+            "memo validator rewrite was lossy (%d → %d chars, ratio %.2f) "
+            "— discarding, passing original through. violations=%s",
+            len(text), len(verified), len(verified) / max(len(text), 1),
+            (payload.get("violations") or [])[:3],
+        )
         return ValidationResult(original=text, verified=text)
 
     raw_violations = payload.get("violations") or []
@@ -218,6 +257,22 @@ def _extract_text(response: Any) -> str:
         return getattr(first, "text", "") or ""
     except (AttributeError, IndexError, TypeError):
         return ""
+
+
+def _extract_stop_reason(response: Any) -> str | None:
+    """Pull ``stop_reason`` from an anthropic SDK response (dict-tolerant).
+
+    ``"max_tokens"`` means the model was cut off mid-output — for this
+    validator that means a truncated echo of the draft, never a valid
+    rewrite.
+    """
+    try:
+        sr = getattr(response, "stop_reason", None)
+        if sr is None and isinstance(response, dict):
+            sr = response.get("stop_reason")
+        return str(sr) if sr is not None else None
+    except (AttributeError, TypeError):
+        return None
 
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)

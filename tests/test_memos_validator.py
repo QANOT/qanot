@@ -113,6 +113,80 @@ class TestRewrite:
         assert "2 violation" in result.summary_line()
 
 
+class StubMessageWithStop:
+    def __init__(self, text: str, stop_reason: str):
+        self.content = [type("Block", (), {"text": text})()]
+        self.stop_reason = stop_reason
+
+
+class TestTruncationGuards:
+    """Circuit breakers that close the production deadlock where a long
+    reply got truncated by the validator, the user saw a cut-off message,
+    and the agent retried into a tool-call loop. Rule-agnostic — these
+    must hold regardless of which memo fired."""
+
+    def test_max_tokens_stop_reason_passes_original(self):
+        rule = _rule("feedback-x", "x", "ALWAYS x. NEVER y.")
+
+        class _C(StubClient):
+            def __init__(self):
+                super().__init__("")
+                outer = self
+
+                class _M:
+                    async def create(self, **kw):
+                        outer.call_count += 1
+                        # truncated fragment + the budget ran out
+                        return StubMessageWithStop('{"compliant": false', "max_tokens")
+
+                self.messages = _M()
+
+        long_reply = "Footage skript bo'limi. " * 200
+        result = _run(validate_text_against_memos(
+            long_reply, field_context="Telegram reply text",
+            active_memos=[rule], client=_C(),
+        ))
+        assert result.was_changed is False
+        assert result.verified == long_reply  # shipped intact, not mangled
+
+    def test_lossy_rewrite_on_long_input_discarded(self):
+        rule = _rule("feedback-x", "x", "ALWAYS x. NEVER y.")
+        long_reply = "Bu uzun suhbat javobi, skript va ko'rsatmalar bilan. " * 50
+        # Haiku returns a heavily-shortened "rewrite" (paraphrase/truncate)
+        client = StubClient(json.dumps({
+            "compliant": False,
+            "verified": "Qisqa.",
+            "violations": ["feedback-x: something"],
+        }))
+        result = _run(validate_text_against_memos(
+            long_reply, field_context="Telegram reply text",
+            active_memos=[rule], client=client,
+        ))
+        assert result.was_changed is False
+        assert result.verified == long_reply
+
+    def test_short_title_still_shrinks_legitimately(self):
+        """The loss-guard must NOT break the validator's core use case:
+        a short title legitimately collapses when a banned prefix is
+        stripped (43 → 12 chars is correct, not truncation)."""
+        rule = _rule(
+            "feedback-title-format", "Title must be D-month, YYYY",
+            'ALWAYS "13-may, 2026". NEVER "Daily Entry — YYYY-yil".',
+        )
+        client = StubClient(json.dumps({
+            "compliant": False,
+            "verified": "13-may, 2026",
+            "violations": ["feedback-title-format: English prefix"],
+        }))
+        result = _run(validate_text_against_memos(
+            "Daily Entry — 2026-yil, 13-may (Chorshanba)",
+            field_context="Notion title",
+            active_memos=[rule], client=client,
+        ))
+        assert result.was_changed is True
+        assert result.verified == "13-may, 2026"
+
+
 # ─── filtering ──────────────────────────────────────────────────
 
 
