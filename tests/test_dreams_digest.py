@@ -142,6 +142,37 @@ def test_system_reminder_stripped_from_user_turns(tmp_path):
     assert out.count("- [") == 1
 
 
+def test_system_reminder_stripped_from_assistant_echo(tmp_path):
+    """Assistant turns echo prior context with nested <system-reminder>
+    (memory-search results, compaction replays) — must also be stripped."""
+    _write_session(tmp_path, "2026-05-19", [
+        _user("davom et"),
+        _asst(
+            "Avvalgi kontekst: User: <system-reminder>recalled memo "
+            "feedback-title-format</system-reminder> — endi javob: tayyor."
+        ),
+    ])
+    out = build_session_digest(tmp_path, now=NOW)
+    assert "system-reminder" not in out
+    assert "feedback-title-format" not in out
+    assert "endi javob: tayyor" in out
+
+
+def test_per_session_cap_spreads_budget_across_sessions(tmp_path):
+    """A chatty session must not starve the others — breadth matters
+    for cross-session pattern mining."""
+    chatty = [_user(f"turn {i} " + "z " * 80) for i in range(60)]
+    _write_session(tmp_path, "chatty", chatty, age_days=0)
+    _write_session(tmp_path, "older1", [_user("OLDER1 durable fact")], age_days=1)
+    _write_session(tmp_path, "older2", [_user("OLDER2 durable fact")], age_days=2)
+    out = build_session_digest(tmp_path, now=NOW)
+    # all three sessions present despite the chatty one being huge
+    assert out.count("## ") == 3
+    assert "OLDER1 durable fact" in out
+    assert "OLDER2 durable fact" in out
+    assert "session clipped" in out
+
+
 def test_write_session_digest_writes_and_counts(tmp_path):
     sdir = tmp_path / "sessions"
     sdir.mkdir()

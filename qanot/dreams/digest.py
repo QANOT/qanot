@@ -36,6 +36,10 @@ _SYSTEM_REMINDER_RE = re.compile(
 DEFAULT_DAYS = 7
 DEFAULT_MAX_CHARS = 24_000
 PER_MESSAGE_CAP = 600          # chars per single turn before truncation
+# No single chatty session may starve the rest — consolidation mines
+# patterns ACROSS sessions, so the budget must spread. ~6k/session lets
+# at least ~3-4 distinct sessions land within DEFAULT_MAX_CHARS.
+PER_SESSION_CAP = 6_000
 # Cron/heartbeat/briefing runs are the bot talking to itself — noise for
 # consolidation, which is about the *user*. Skip these session files.
 _SKIP_PREFIXES = ("cron-",)
@@ -53,7 +57,7 @@ def _message_text(content: object) -> tuple[str, list[str]]:
     text / tool_use blocks (see ``qanot/session.py``). Tolerate both.
     """
     if isinstance(content, str):
-        return _SYSTEM_REMINDER_RE.sub("", content).strip(), []
+        return _clean(content), []
     if not isinstance(content, list):
         return "", []
     texts: list[str] = []
@@ -70,7 +74,15 @@ def _message_text(content: object) -> tuple[str, list[str]]:
             name = block.get("name") or ""
             if name:
                 tools.append(name)
-    return " ".join(texts).strip(), tools
+    # Strip scaffolding from the joined text too: assistant turns echo
+    # prior context (memory-search results, compaction replays) that
+    # embed nested `<system-reminder>` blocks — same circular-noise
+    # problem as on the user side, just one layer down.
+    return _clean(" ".join(texts)), tools
+
+
+def _clean(text: str) -> str:
+    return _SYSTEM_REMINDER_RE.sub("", text).strip()
 
 
 def _recent_session_files(
@@ -132,6 +144,8 @@ def build_session_digest(
             continue
 
         turns: list[str] = []
+        session_len = 0
+        session_clipped = False
         first_ts = last_ts = ""
         for ln in lines:
             ln = ln.strip()
@@ -157,10 +171,20 @@ def build_session_digest(
             tag = f"{who}({uid})" if (who == "User" and uid) else who
             body = _truncate(text, PER_MESSAGE_CAP) if text else ""
             tool_suffix = f" [tools: {', '.join(tools)}]" if tools else ""
-            turns.append(f"- [{ts}] {tag}: {body}{tool_suffix}".rstrip())
+            line = f"- [{ts}] {tag}: {body}{tool_suffix}".rstrip()
+            # Per-session cap: one chatty day must not starve the budget
+            # for the other sessions — consolidation mines patterns
+            # ACROSS sessions, so breadth beats depth here.
+            if session_len + len(line) + 1 > PER_SESSION_CAP and turns:
+                session_clipped = True
+                break
+            turns.append(line)
+            session_len += len(line) + 1
 
         if not turns:
             continue
+        if session_clipped:
+            turns.append("- _(session clipped — older turns omitted)_")
 
         span = (
             f"{first_ts[:10]}"
