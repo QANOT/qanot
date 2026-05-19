@@ -520,6 +520,20 @@ class _LoopMixin:
                     active_tool_calls, recent_fingerprints, result_history, result_hash,
                 )
                 if break_msg:
+                    # A retry/no-progress loop is an operator incident
+                    # (today's notion empty-page spiral was exactly this).
+                    # Fire on_error so it reaches alerting, same as
+                    # provider failures. Best-effort.
+                    try:
+                        await self.hooks.fire(
+                            "on_error",
+                            error_type="tool_loop",
+                            error=break_msg,
+                            user_id=user_id or "",
+                            recoverable=False,
+                        )
+                    except Exception as hook_e:
+                        logger.warning("on_error(tool_loop) hook fire failed: %s", hook_e)
                     messages.append({"role": "user", "content": tool_results})
                     messages.append({"role": "assistant", "content": break_msg})
                     yield StreamEvent(type="done", response=ProviderResponse(content=break_msg))

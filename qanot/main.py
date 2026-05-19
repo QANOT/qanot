@@ -406,6 +406,33 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Voice call manager failed to start: %s", e)
 
+    # Tier-0 operability: route unrecoverable in-turn incidents to the
+    # operator's Telegram instead of dying silently in the log. Today's
+    # production bugs (Anthropic 500 with no fallback, the notion
+    # retry-loop) only surfaced via manual SSH+grep — this closes that
+    # gap. Recoverable events (context overflow that self-heals) are
+    # skipped to avoid alert fatigue; notify_admins is throttled per
+    # error_type so a flapping provider can't spam the operator.
+    async def _alert_admins_on_error(
+        *, error_type: str = "", error: str = "",
+        user_id: str = "", recoverable: bool = False, **_: object,
+    ) -> None:
+        if recoverable:
+            return
+        snippet = (error or "").strip().replace("\n", " ")[:300]
+        await telegram.notify_admins(
+            f"⚠️ Qanot incident\n"
+            f"type: {error_type or 'unknown'}\n"
+            f"user: {user_id or '—'}\n"
+            f"{snippet}",
+            throttle_key=f"on_error:{error_type or 'unknown'}",
+        )
+
+    agent_hooks.register(
+        "on_error", _alert_admins_on_error,
+        name="admin-alert", priority=10,
+    )
+
     # Fire startup hooks
     await agent_hooks.fire("on_startup")
 
