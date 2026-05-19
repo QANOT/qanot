@@ -31,6 +31,16 @@ from pathlib import Path
 _SYSTEM_REMINDER_RE = re.compile(
     r"<system-reminder>.*?</system-reminder>", re.DOTALL | re.IGNORECASE,
 )
+# The RAG layer appends a recalled-context dump as a trailing suffix:
+#   ... <real text> ... [MEMORY CONTEXT — relevant past information]
+#   - [conv:<id>:<ts>] User: <system-reminder> The following memories ...
+# It runs to the end of the message and embeds unclosed reminder
+# fragments the closed-tag regex above can't catch. Since it is always
+# a trailing injection (real text precedes it), cut from the marker to
+# end-of-text — that removes the whole replay block in one shot.
+_MEMORY_CONTEXT_RE = re.compile(
+    r"\[MEMORY CONTEXT.*", re.DOTALL | re.IGNORECASE,
+)
 
 # Tight defaults — bound the agent's context no matter how big history is.
 DEFAULT_DAYS = 7
@@ -82,7 +92,9 @@ def _message_text(content: object) -> tuple[str, list[str]]:
 
 
 def _clean(text: str) -> str:
-    return _SYSTEM_REMINDER_RE.sub("", text).strip()
+    text = _SYSTEM_REMINDER_RE.sub("", text)
+    text = _MEMORY_CONTEXT_RE.sub("", text)
+    return text.strip()
 
 
 def _recent_session_files(

@@ -158,6 +158,25 @@ def test_system_reminder_stripped_from_assistant_echo(tmp_path):
     assert "endi javob: tayyor" in out
 
 
+def test_memory_context_replay_block_stripped(tmp_path):
+    """RAG appends a trailing [MEMORY CONTEXT ...] dump that embeds
+    unclosed <system-reminder> fragments — cut it from the marker to
+    end-of-text, keeping the real text that precedes it."""
+    _user_text = (
+        "menga 18-may note kerak "
+        "[MEMORY CONTEXT — relevant past information] "
+        "- [conv:user_1545224574_thread_211139:2026-05-15T18:50] User: "
+        "<system-reminder> The following memories were recalled "
+        "feedback-title-format-rules-hard ... (no closing tag here)"
+    )
+    _write_session(tmp_path, "2026-05-19", [_user(_user_text)])
+    out = build_session_digest(tmp_path, now=NOW)
+    assert "menga 18-may note kerak" in out
+    assert "system-reminder" not in out
+    assert "MEMORY CONTEXT" not in out
+    assert "feedback-title-format-rules-hard" not in out
+
+
 def test_per_session_cap_spreads_budget_across_sessions(tmp_path):
     """A chatty session must not starve the others — breadth matters
     for cross-session pattern mining."""
