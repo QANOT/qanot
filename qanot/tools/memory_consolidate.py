@@ -4,14 +4,19 @@ Prevents unbounded growth of daily notes + /memories/ once we stop
 actively condensing into MEMORY.md. Run as an isolated cron agent.
 
 What the agent does (per the prompt below):
-  1. Lists recent daily notes (last 7 days) via `memory` tool.
-  2. Reads them, extracts NEW durable facts (preferences, decisions,
-     identity, recurring workflows).
-  3. For each fact, either updates an existing /memories/topic.md
-     (str_replace) or creates a new topic file.
-  4. Archives daily notes older than 30 days to memory/archive/YYYY-MM.md
-     (one file per month) via run_command.
+  1. Reads the recent session-transcript digest as the PRIMARY signal
+     (raw user phrasing, corrections, recurring asks) — built
+     deterministically by `qanot.dreams.digest` before this job runs.
+  2. Reads recent daily notes as the SECONDARY signal (corroborate).
+  3. Extracts NEW durable facts (preferences, decisions, identity,
+     recurring workflows) and updates/creates /memories/topic.md.
+  4. Archives daily notes older than 30 days to memory/archive/.
   5. Reports a one-line summary per action to proactive-outbox.md.
+
+The transcript digest is the highest-leverage borrow from Anthropic's
+managed Dreams (which mines full session transcripts, not note
+summaries). We keep it self-hosted + deterministic — see
+`qanot/dreams/digest.py`.
 
 Schedule: weekly Sunday 04:00 local (default). Can be changed via
 `cron_update`. Mode: isolated (no user context, no streaming).
@@ -31,12 +36,24 @@ STEPS:
 1. View /memories/ to see the current topic layout:
    Use: memory tool, command=view, path=/memories
 
-2. List daily notes via run_command:
-   Use: run_command, command="ls -1t /data/workspace/memory/*.md | head -8"
-   (last 8 files = roughly the last week plus today)
+2. Read the PRIMARY signal — the recent session transcript digest:
+   Use: read_file, path="/data/workspace/memory/recent-sessions-digest.md"
+   This is a bounded digest of what the user ACTUALLY said and did across
+   the last week of conversations — raw phrasing, corrections ("no, not
+   that", "always do X"), and asks that recur across sessions. It is the
+   richest source of durable facts. If the file does not exist, skip this
+   step (no recent sessions) and rely on daily notes alone.
+   NOTE: this file is regenerated every run — it is NOT a daily note.
+   Do NOT archive, delete, or rewrite it.
 
-3. Read each recent daily note with read_file and look for:
-   - NEW user preferences not yet in /memories/
+3. Read the SECONDARY signal — recent daily notes (corroborate / fill
+   gaps the digest's per-message truncation may have cut):
+   Use: run_command, command="ls -1t /data/workspace/memory/*.md | grep -v recent-sessions-digest | head -8"
+   Read each with read_file.
+
+   Across BOTH sources look for:
+   - NEW user preferences not yet in /memories/ (weight corrections and
+     repeated asks heavily — a thing said twice is a durable fact)
    - NEW decisions worth keeping
    - NEW identity/profile facts
    - Recurring patterns that suggest a habit or workflow

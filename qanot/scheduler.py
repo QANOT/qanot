@@ -341,6 +341,29 @@ class CronScheduler:
                     "older ones can wait for the next heartbeat."
                 )
 
+        # Before consolidation runs, distil the recent raw session
+        # transcripts into a bounded digest the agent reads as its
+        # PRIMARY signal (richer than daily-note summaries — the raw
+        # phrasing, corrections, recurring asks). Deterministic, no LLM.
+        # Best-effort: a failure here must never block consolidation.
+        if job_name == "memory-consolidation":
+            try:
+                from qanot.dreams import write_session_digest
+
+                digest_path = (
+                    Path(self.config.workspace_dir)
+                    / "memory" / "recent-sessions-digest.md"
+                )
+                n = write_session_digest(
+                    self.config.sessions_dir, digest_path,
+                )
+                logger.info(
+                    "consolidation: session digest %s (%d chars)",
+                    "written" if n else "skipped (no recent sessions)", n,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("consolidation: digest pre-pass failed: %s", exc)
+
         logger.info("Running isolated cron job: %s", job_name)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         session_id = f"cron-{job_name}-{ts}"
