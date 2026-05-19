@@ -19,8 +19,18 @@ never blow the isolated agent's context regardless of history size.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# User message content carries injected scaffolding — recalled-memory
+# <system-reminder> blocks, link-preview dumps — that is NOT what the
+# user said. Mining it would make consolidation re-learn its own memos
+# (circular) and pollute durable-fact extraction. Strip it so the
+# digest stays faithful to real user phrasing.
+_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder>.*?</system-reminder>", re.DOTALL | re.IGNORECASE,
+)
 
 # Tight defaults — bound the agent's context no matter how big history is.
 DEFAULT_DAYS = 7
@@ -43,7 +53,7 @@ def _message_text(content: object) -> tuple[str, list[str]]:
     text / tool_use blocks (see ``qanot/session.py``). Tolerate both.
     """
     if isinstance(content, str):
-        return content.strip(), []
+        return _SYSTEM_REMINDER_RE.sub("", content).strip(), []
     if not isinstance(content, list):
         return "", []
     texts: list[str] = []

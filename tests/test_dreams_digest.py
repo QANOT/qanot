@@ -125,6 +125,23 @@ def test_session_with_no_extractable_turns_yields_empty(tmp_path):
     assert build_session_digest(tmp_path, now=NOW) == ""
 
 
+def test_system_reminder_stripped_from_user_turns(tmp_path):
+    reminder = (
+        "<system-reminder>The following memories were recalled... "
+        "feedback-title-format-rules-hard ...</system-reminder>"
+    )
+    _write_session(tmp_path, "2026-05-19", [
+        _user(reminder + " menga hisobot kerak"),
+        _user(reminder),  # nothing but scaffolding → must be dropped entirely
+    ])
+    out = build_session_digest(tmp_path, now=NOW)
+    assert "menga hisobot kerak" in out
+    assert "system-reminder" not in out
+    assert "feedback-title-format-rules-hard" not in out
+    # the reminder-only turn contributes no line
+    assert out.count("- [") == 1
+
+
 def test_write_session_digest_writes_and_counts(tmp_path):
     sdir = tmp_path / "sessions"
     sdir.mkdir()
