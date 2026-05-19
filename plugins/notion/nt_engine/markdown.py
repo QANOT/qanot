@@ -156,6 +156,41 @@ def _mk_block(block_type: str, rich_text: list[dict] | None = None, **extra) -> 
     }
 
 
+_WHOLE_DOC_FENCE_LANGS = {"", "markdown", "md", "plain text"}
+
+
+def _strip_whole_document_fence(md: str) -> str:
+    """Unwrap markdown that an LLM fenced as one big code block.
+
+    A recurring agent failure mode is emitting the *entire* note body
+    wrapped in a single ```` ``` ```` / ```` ```markdown ```` fence. Parsed
+    literally that collapses the whole page into one unreadable code
+    block (2026-05-19 incident). When the first non-blank line opens a
+    fence, the last non-blank line closes it, there is no other fence in
+    between, and the fence language is markdown/empty (NOT a real code
+    language — ```` ```python ```` is an intentional snippet, left alone),
+    the fence is a serialization artifact: return the inner content so
+    it parses as the document it actually is.
+    """
+    stripped = md.strip()
+    if not stripped.startswith("```"):
+        return md
+    lines = stripped.splitlines()
+    if len(lines) < 2:
+        return md
+    open_m = _CODE_FENCE_RE.match(lines[0].rstrip())
+    if not open_m:
+        return md
+    if (open_m.group(1) or "").strip().lower() not in _WHOLE_DOC_FENCE_LANGS:
+        return md  # real code language → genuine code block, keep as-is
+    if not _CODE_FENCE_RE.match(lines[-1].rstrip()):
+        return md  # not closed on the final line → not a whole-doc wrap
+    # No other fence line in the interior, or it's a nested doc, not a wrap.
+    if any(_CODE_FENCE_RE.match(ln.rstrip()) for ln in lines[1:-1]):
+        return md
+    return "\n".join(lines[1:-1])
+
+
 def markdown_to_blocks(md: str) -> list[dict[str, Any]]:
     """Convert a markdown string into a list of Notion block objects.
 
@@ -164,6 +199,8 @@ def markdown_to_blocks(md: str) -> list[dict[str, Any]]:
     """
     if not md:
         return []
+
+    md = _strip_whole_document_fence(md)
 
     blocks: list[dict[str, Any]] = []
     lines = md.splitlines()

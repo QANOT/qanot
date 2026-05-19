@@ -418,7 +418,13 @@ class NotionPlugin(Plugin):
                 "markdown": {"type": "string", "description": "Markdown content to append"},
             },
         },
-        validate_fields={"markdown": "Notion page append"},
+        # NOTE: the body markdown is deliberately NOT validated. The active
+        # feedback memos are title/heading-format rules (e.g. the 2026-05-13
+        # "13-may, 2026" title rule). Run against a multi-paragraph body the
+        # Haiku auditor fabricates spurious "``` must not appear" violations
+        # and rewrites/empties the content — the 2026-05-19 empty-page +
+        # notion_create_page retry-loop incident. Body prose has no
+        # format-memo scope; only structured fields (titles) are validated.
     )
     async def notion_append_to_page(self, params: dict) -> str:
         if not self._client:
@@ -482,12 +488,14 @@ class NotionPlugin(Plugin):
                 },
             },
         },
-        # Title and body are both user-visible Notion artefacts subject to
-        # any active feedback memo (e.g. the 2026-05-13 title-format rule).
-        # The validator rewrites them in place before the API call.
+        # Only the TITLE is validated. The active feedback memos are
+        # title/heading-format rules (the 2026-05-13 "13-may, 2026" rule);
+        # applied to a long markdown body the Haiku auditor fabricates
+        # "``` must not appear" violations and mangles/empties the page
+        # (2026-05-19 empty-page + retry-loop incident). Body prose is out
+        # of scope for these memos, so it is left untouched.
         validate_fields={
             "title": "Notion page title",
-            "markdown": "Notion page body",
         },
     )
     async def notion_create_page(self, params: dict) -> str:

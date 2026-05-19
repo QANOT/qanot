@@ -100,6 +100,40 @@ def test_code_block_alias_js_to_javascript():
     assert blocks[0]["code"]["language"] == "javascript"
 
 
+# ── whole-document fence unwrap (2026-05-19 empty-page incident) ──
+
+def test_whole_doc_bare_fence_is_unwrapped():
+    """An LLM wrapping the entire note in a bare ``` fence must not
+    collapse the page into one code block — it should parse as the doc."""
+    md = "```\n# 19-may, 2026\n\n- Chorvoq sayohati\n- Zo'r dam olish\n```"
+    blocks = markdown_to_blocks(md)
+    types = [b["type"] for b in blocks]
+    assert "code" not in types
+    assert types[0] == "heading_1"
+    assert any(t == "bulleted_list_item" for t in types)
+
+
+def test_whole_doc_markdown_fence_is_unwrapped():
+    md = "```markdown\n## Kun yakuni\n\nMatn shu yerda.\n```"
+    blocks = markdown_to_blocks(md)
+    assert [b["type"] for b in blocks] == ["heading_2", "paragraph"]
+
+
+def test_real_code_fence_is_preserved():
+    """A genuine ```python snippet is NOT a whole-doc artifact — keep it."""
+    blocks = markdown_to_blocks("```python\nprint(1)\n```")
+    assert len(blocks) == 1 and blocks[0]["type"] == "code"
+
+
+def test_fenced_block_among_other_content_is_preserved():
+    """Interior fence (real embedded snippet) must stay a code block."""
+    md = "# Title\n\nIntro\n\n```python\nx = 1\n```\n\nOutro"
+    blocks = markdown_to_blocks(md)
+    types = [b["type"] for b in blocks]
+    assert "code" in types
+    assert types[0] == "heading_1"
+
+
 def test_divider():
     blocks = markdown_to_blocks("---")
     assert blocks[0]["type"] == "divider"
