@@ -1566,6 +1566,162 @@ class UserbotPlugin(Plugin):
         )
 
     @tool(
+        name="tg_search_messages_in_chat",
+        description=(
+            "Search OR date-bounded fetch over a chat/group/channel's message "
+            "history. Use this — not tg_get_chat_history — when the user asks "
+            "about messages from more than a few days ago or matching a keyword "
+            "(e.g. \"fevraldan beri X marta\", \"dasturchilarga buyurtmalar\"). "
+            "`query` runs a server-side substring search (Telegram-side filter). "
+            "`since_date` (ISO, e.g. \"2026-02-01\") bounds the cursor to messages "
+            "AT OR AFTER that date. recipient_id MUST be a token from tg_find_chat "
+            "or tg_list_recent_chats. Non-text messages become \"<media>\"."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id"],
+            "properties": {
+                "recipient_id": {
+                    "type": "string",
+                    "description": "Opaque token from tg_find_chat / tg_list_recent_chats.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Optional text to search for (Telegram server-side filter). "
+                        "Omit to fetch all messages in the date range."
+                    ),
+                },
+                "since_date": {
+                    "type": "string",
+                    "description": (
+                        "Optional ISO date or datetime — only messages at or after "
+                        "this moment are returned. Examples: \"2026-02-01\", "
+                        "\"2026-02-01T00:00:00\". Naive values are treated as UTC."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Hard cap on returned messages (1-2000, default 200). Newest first.",
+                },
+            },
+        },
+    )
+    async def tg_search_messages_in_chat(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        if not recipient_id:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id is required"},
+                ensure_ascii=False,
+            )
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "recipient_id noto'g'ri yoki muddati tugagan. Avval tg_find_chat "
+                        "yoki tg_list_recent_chats chaqiring."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        query = (params.get("query") or "").strip()
+        # Cap of 2000 is a context-safety bound: 2000 short msgs ≈ 600KB JSON.
+        # The iterator stops early once `since_date` is crossed, so for narrow
+        # date windows the actual transfer is usually far smaller.
+        limit = max(1, min(2000, int(params.get("limit") or 200)))
+
+        since_dt: datetime | None = None
+        raw_since = (params.get("since_date") or "").strip()
+        if raw_since:
+            try:
+                since_dt = datetime.fromisoformat(raw_since)
+            except ValueError:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": (
+                            f"since_date {raw_since!r} ISO formatda emas. "
+                            "Misol: \"2026-02-01\" yoki \"2026-02-01T00:00:00\"."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            # Pyrogram message dates are timezone-aware (UTC). Normalise the
+            # caller's naive value to UTC so the comparison below is sound.
+            if since_dt.tzinfo is None:
+                since_dt = since_dt.replace(tzinfo=timezone.utc)
+
+        # Pick the right primitive. `search_messages` is the server-side
+        # text filter; without a query we want the full-history iterator.
+        # Neither primitive has min_date in pyrofork 2.3.69, so the date
+        # bound is enforced client-side via early-break — both iterators
+        # yield newest-first, so we stop the first time we cross the line.
+        if query:
+            stream = client.search_messages(entry["peer"], query=query)
+        else:
+            stream = client.get_chat_history(entry["peer"])
+
+        messages: list[dict[str, Any]] = []
+        truncated = False
+        try:
+            async for m in stream:
+                msg_date = getattr(m, "date", None)
+                if since_dt is not None and isinstance(msg_date, datetime):
+                    # Pyrogram dates are aware; defensively coerce naive ones
+                    # to UTC for an unambiguous comparison.
+                    cmp_date = (
+                        msg_date if msg_date.tzinfo is not None
+                        else msg_date.replace(tzinfo=timezone.utc)
+                    )
+                    if cmp_date < since_dt:
+                        break  # walked past the window — done.
+
+                sender = getattr(m, "from_user", None)
+                sender_label = ""
+                if sender is not None:
+                    uname = getattr(sender, "username", None)
+                    if uname:
+                        sender_label = f"@{uname}"
+                    else:
+                        sender_label = getattr(sender, "first_name", None) or str(
+                            getattr(sender, "id", "?"),
+                        )
+                text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
+                if not text:
+                    text = "<media>"
+                messages.append({
+                    "from": sender_label,
+                    "text": text,
+                    "date": self._format_date(msg_date),
+                })
+                if len(messages) >= limit:
+                    truncated = True
+                    break
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "status": "ok",
+                "count": len(messages),
+                "truncated": truncated,
+                "messages": messages,
+            },
+            ensure_ascii=False,
+        )
+
+    @tool(
         name="tg_scan_unread",
         description=(
             "Scan dialogs and return their recent messages in ONE call. "
