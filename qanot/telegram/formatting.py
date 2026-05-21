@@ -30,13 +30,31 @@ def _sanitize_response(text: str) -> str:
     return cleaned if cleaned else text
 
 
+def _strip_inner_markers(body: str) -> str:
+    """Drop ``**bold**`` / ```` `code` ```` markers from text destined for a
+    ``<pre>`` wrapper.
+
+    Telegram's HTML parser REJECTS nested formatting inside ``<pre>``
+    (it'd parse the whole message as malformed and the client falls back
+    to literal text \u2014 the 2026-05-21 second-chunk regression). The
+    wrapper provides monospace already, so stripping the markers is the
+    right loss: visual sameness, valid HTML.
+    """
+    body = _RE_BOLD.sub(r"\1", body)
+    body = _RE_INLINE_CODE.sub(r"\1", body)
+    return body
+
+
 def _md_to_html(text: str) -> str:
     """Convert agent markdown to Telegram HTML."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    text = _RE_CODE_BLOCK.sub(r"<pre>\2</pre>", text)
+
+    def wrap_code(m: re.Match) -> str:
+        return f"<pre>{_strip_inner_markers(m.group(2))}</pre>"
+    text = _RE_CODE_BLOCK.sub(wrap_code, text)
 
     def wrap_table(m: re.Match) -> str:
-        return f"\n<pre>{m.group(0).strip()}</pre>\n"
+        return f"\n<pre>{_strip_inner_markers(m.group(0).strip())}</pre>\n"
     text = _RE_TABLE.sub(wrap_table, text)
     text = _RE_HR.sub("\u2501" * 18, text)
     text = _RE_BOLD.sub(r"<b>\1</b>", text)

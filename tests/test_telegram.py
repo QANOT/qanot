@@ -31,6 +31,36 @@ class TestMdToHtml:
         result = _md_to_html("---")
         assert "━" in result
 
+    def test_table_with_bold_cells_no_nested_b_inside_pre(self):
+        """Telegram's HTML parser rejects nested formatting inside <pre> —
+        the 2026-05-21 regression where the second-chunk fallback dumped
+        raw tags. Table cells with **bold** must not produce <b> inside
+        the <pre> wrapper."""
+        import re
+
+        md = (
+            "| Hafta | Mavzu |\n"
+            "|---|---|\n"
+            "| **Präteritum** | war, hatte |\n"
+            "| **Konjunktiv II** | würde |\n"
+        )
+        out = _md_to_html(md)
+        for block in re.findall(r"<pre>(.*?)</pre>", out, re.DOTALL):
+            assert "<b>" not in block and "</b>" not in block, block
+        # cell text itself must survive (only the markers are dropped)
+        assert "Präteritum" in out
+        assert "Konjunktiv II" in out
+
+    def test_code_block_with_inner_markers_no_nested_tags(self):
+        """Same contract for fenced code blocks: ** and ` markers inside
+        the body must not become <b>/<code> tags nested in <pre>."""
+        import re
+
+        out = _md_to_html("```\nplain text with **bold** and `inline`\n```")
+        for block in re.findall(r"<pre>(.*?)</pre>", out, re.DOTALL):
+            assert "<b>" not in block and "<code>" not in block, block
+        assert "bold" in out and "inline" in out
+
 
 class TestSplitText:
     def test_short_text(self):
