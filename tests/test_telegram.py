@@ -62,6 +62,29 @@ class TestMdToHtml:
         assert "bold" in out and "inline" in out
 
 
+class TestSafeSplit:
+    """Regression: _split_text must never cut inside a <pre>...</pre>
+    block, or both chunks become unclosed-tag HTML that Telegram rejects
+    (plain-text fallback → raw tags visible — 2026-05-21 incident)."""
+
+    def test_split_skips_inside_pre(self):
+        prose1 = "para A\n" * 50          # ~350 chars
+        pre_body = "row\n" * 200          # ~800 chars — single big block
+        prose2 = "para B\n" * 50
+        text = prose1 + "<pre>" + pre_body + "</pre>\n" + prose2
+        chunks = _split_text(text, limit=900)
+        # ≥ 2 chunks (text is well over 900 chars).
+        assert len(chunks) >= 2
+        # Every chunk must have balanced <pre> tags (open count == close count).
+        for c in chunks:
+            assert c.count("<pre>") == c.count("</pre>"), (
+                f"unbalanced <pre> in chunk: {c[:80]!r}"
+            )
+
+    def test_short_text_unsplit(self):
+        assert _split_text("hello", limit=4000) == ["hello"]
+
+
 class TestSplitText:
     def test_short_text(self):
         assert _split_text("hello", limit=100) == ["hello"]

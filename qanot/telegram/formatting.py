@@ -64,8 +64,22 @@ def _md_to_html(text: str) -> str:
     return text
 
 
+_PRE_SPAN_RE = re.compile(r"<pre\b[^>]*>.*?</pre>", re.DOTALL)
+
+
 def _split_text(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
-    """Split text into chunks respecting line boundaries."""
+    """Split HTML text into chunks respecting tag boundaries.
+
+    The naive ``text.rfind('\\n', 0, limit)`` cuts inside a ``<pre>``
+    block when the limit falls there — Telegram rejects the resulting
+    unclosed-tag HTML on BOTH halves, falls back to plain text, and the
+    user sees raw tags (the 2026-05-21 second-chunk regression). Walk
+    backwards from the limit until we land on a newline that is NOT
+    inside any ``<pre>`` span, so each chunk's HTML stays balanced.
+    Only ``<pre>`` matters here because every other Telegram-supported
+    tag (``<b>``, ``<code>``, ``<i>``…) is single-line by construction
+    in ``_md_to_html``.
+    """
     if len(text) <= limit:
         return [text]
     chunks: list[str] = []
@@ -73,9 +87,38 @@ def _split_text(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
         if len(text) <= limit:
             chunks.append(text)
             break
-        cut = text.rfind("\n", 0, limit)
-        if cut <= 0:
-            cut = limit
+        cut = _safe_cut(text, limit)
         chunks.append(text[:cut])
         text = text[cut:].lstrip("\n")
     return chunks
+
+
+def _safe_cut(text: str, limit: int) -> int:
+    """Rightmost newline ≤ limit that is OUTSIDE every ``<pre>...</pre>``.
+
+    Returns ``limit`` only when no safe newline exists (e.g. one giant
+    ``<pre>`` dominates the message) — same degraded mode as before,
+    and rare in practice.
+    """
+    spans = [(m.start(), m.end()) for m in _PRE_SPAN_RE.finditer(text)]
+
+    def inside_pre(pos: int) -> bool:
+        for s, e in spans:
+            if s < pos < e:
+                return True
+            if s >= pos:
+                break
+        return False
+
+    upper = limit
+    while upper > 0:
+        cut = text.rfind("\n", 0, upper)
+        if cut <= 0:
+            break
+        if not inside_pre(cut):
+            return cut
+        upper = cut  # retry against the next-earlier newline
+
+    # No safe newline → fall back to the legacy behaviour.
+    cut = text.rfind("\n", 0, limit)
+    return cut if cut > 0 else limit
