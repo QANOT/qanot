@@ -162,22 +162,44 @@ class StreamingMixin:
     ) -> None:
         """Send a streaming draft via sendMessageDraft.
 
+        Each flush carries the FULL accumulated text (not a delta), so
+        running it through ``_md_to_html`` produces valid HTML on every
+        tick: only markdown spans that have reached their closing marker
+        are converted, unclosed spans stay literal. ``sendMessageDraft``
+        supports ``parse_mode`` since Bot API 9.5 — without it the user
+        sees raw ``**``/``##``/``<b>`` in the draft and the message only
+        becomes pretty once ``_send_final`` fires at end-of-stream.
+
         When ``thread_id`` is set, the draft is delivered into that
         thread (Bot API 10.0 Threaded Mode). Without it, drafts go to
         the base view — which would land the streaming output in the
         wrong place when the user is reading inside a thread.
         """
+        html = _md_to_html(text)[:4096]
+        kwargs: dict = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "text": html,
+            "parse_mode": ParseMode.HTML,
+        }
+        if thread_id:
+            kwargs["message_thread_id"] = thread_id
         try:
-            kwargs: dict = {
-                "chat_id": chat_id,
-                "draft_id": draft_id,
-                "text": text[:4096],
-            }
-            if thread_id:
-                kwargs["message_thread_id"] = thread_id
             await self.bot(SendMessageDraft(**kwargs))
+            return
         except Exception as e:
-            logger.debug("sendMessageDraft failed: %s", e)
+            # Rare: a partial chunk slipped past the markdown rules with
+            # a tag Telegram's strict HTML parser rejects. Degrade to
+            # plain text for THIS flush so the user still sees progress;
+            # the next flush will re-attempt with parse_mode and the
+            # final send_message renders the full reply correctly.
+            logger.debug("sendMessageDraft HTML failed (%s) — plain retry", e)
+            kwargs.pop("parse_mode", None)
+            kwargs["text"] = text[:4096]
+            try:
+                await self.bot(SendMessageDraft(**kwargs))
+            except Exception as e2:
+                logger.debug("sendMessageDraft plain retry failed: %s", e2)
 
     async def _send_final(self, chat_id: int, text: str, *, reply_to: int | None = None, thread_id: int | None = None) -> None:
         """Send the final formatted message, splitting if needed."""
