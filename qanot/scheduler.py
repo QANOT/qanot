@@ -55,6 +55,38 @@ BRIEFING_PROMPT = (
 )
 
 
+# Auto-appended to every user-authored isolated cron prompt (idempotent
+# — skipped when the prompt already names the outbox file). The
+# isolated cron pipeline reads `<workspace>/proactive-outbox.md` after
+# the agent terminates and routes its contents to the originating
+# chat/thread via the proactive queue. Without this nudge a typical
+# user prompt ("har kuni 13:00 da 10 ta nemis so'z yubor") makes the
+# agent compute the answer in working memory and then exit, dropping
+# the result on the floor.
+def _inject_outbox_reminder(prompt: str) -> str:
+    """Append the isolated-cron delivery reminder unless the prompt
+    already mentions the outbox file. Pure function — separate from
+    the scheduler so it's directly unit-testable."""
+    if "proactive-outbox.md" in prompt:
+        return prompt
+    return prompt + _OUTBOX_REMINDER_SUFFIX
+
+
+_OUTBOX_REMINDER_SUFFIX = (
+    "\n\n---\n\n"
+    "⚠️ DELIVERY (cron agent — read this carefully):\n"
+    "You are running as an isolated background job. Your reply is NOT "
+    "sent to the user automatically. After producing the message for "
+    "the user, use the `write_file` tool to OVERWRITE the file at "
+    "`proactive-outbox.md` (workspace-relative) with EXACTLY that "
+    "message — no preface, no meta-commentary, no \"here is your "
+    "result\". Whatever ends up in that file is what the user receives "
+    "verbatim in Telegram. Keep it short, natural, and ready-to-read. "
+    "If there is genuinely nothing to send (no-op job), leave the file "
+    "empty / do not write."
+)
+
+
 class CronScheduler:
     """Manages scheduled cron jobs using APScheduler with self-healing."""
 
@@ -375,6 +407,17 @@ class CronScheduler:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("consolidation: digest pre-pass failed: %s", exc)
+
+        # Idempotent outbox-write reminder. An isolated cron agent's
+        # output is NOT delivered automatically — the scheduler picks
+        # it up from proactive-outbox.md after the job ends and the
+        # adapter then DMs it (with the captured origin_chat/thread).
+        # User-created reminders ("13:00 da 10 ta so'z yubor") routinely
+        # omit this instruction; the agent does the work and the result
+        # vanishes (the 2026-05-23 13:00 deutsch-new-words incident).
+        # Skip when the prompt already mentions the outbox (builtin
+        # consolidation/heartbeat already do).
+        prompt = _inject_outbox_reminder(prompt)
 
         logger.info("Running isolated cron job: %s", job_name)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")

@@ -462,3 +462,30 @@ class TestProactiveOutbox:
             await sched._run_isolated(job_name="heartbeat", prompt="check")
 
         assert queue.empty()
+
+
+# ── Outbox-reminder injection (regression for 2026-05-23 13:00 incident) ──
+
+class TestOutboxReminder:
+    """Isolated-cron prompts that don't reference proactive-outbox.md
+    must get the delivery reminder auto-appended, so user-created
+    reminders ("har kuni 13:00 da 10 ta so'z yubor") actually reach
+    the user instead of vanishing inside the isolated agent."""
+
+    def test_user_prompt_gets_suffix_appended(self):
+        from qanot.scheduler import _inject_outbox_reminder
+
+        user_prompt = "Har kuni 13:00 da 10 ta yangi nemis so'zi yubor"
+        out = _inject_outbox_reminder(user_prompt)
+        assert out.startswith(user_prompt)
+        assert "proactive-outbox.md" in out
+        assert "write_file" in out
+
+    def test_idempotent_when_prompt_already_mentions_outbox(self):
+        """Builtin jobs (consolidation, heartbeat-with-followups)
+        already instruct the agent to write to the outbox. Re-injecting
+        would duplicate the section every restart."""
+        from qanot.scheduler import _inject_outbox_reminder
+
+        prompt = "Do consolidation work; write a summary to proactive-outbox.md."
+        assert _inject_outbox_reminder(prompt) == prompt
