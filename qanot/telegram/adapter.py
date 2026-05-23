@@ -1105,8 +1105,13 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 msg_type = msg.get("type", "")
                 text = msg.get("text", "")
                 source = msg.get("source", "")
+                chat_id = msg.get("chat_id")
+                thread_id = msg.get("thread_id")
                 if msg_type == "proactive" and text:
-                    await self._deliver_proactive(text, source)
+                    await self._deliver_proactive(
+                        text, source,
+                        chat_id=chat_id, thread_id=thread_id,
+                    )
                 elif msg_type == "system_event" and text:
                     await self.agent.run_turn(text)
             except asyncio.TimeoutError:
@@ -1115,8 +1120,18 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 logger.error("Proactive loop error: %s", e)
                 await asyncio.sleep(5)
 
-    async def _deliver_proactive(self, text: str, source: str = "") -> None:
-        """Deliver a proactive message to the owner (first allowed user)."""
+    async def _deliver_proactive(
+        self, text: str, source: str = "",
+        *, chat_id: int | None = None, thread_id: int | None = None,
+    ) -> None:
+        """Deliver a proactive message to the owner (first allowed user).
+
+        When the cron job carries an origin (``chat_id``/``thread_id`` from
+        the calling turn \u2014 captured by ``cron_create``), route the result
+        to that exact thread so a scheduled reminder lands where the user
+        asked from. Falls back to the owner's base DM (the legacy
+        behaviour, correct for builtin system jobs without an origin).
+        """
         if not self.config.allowed_users:
             logger.warning("No allowed_users configured \u2014 proactive message dropped")
             return
@@ -1124,12 +1139,15 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         source_tag = f" #{source}" if source else ""
         formatted = f"#agent{source_tag}\n{text}"
 
-        owner_id = self.config.allowed_users[0]
+        target_chat = chat_id or self.config.allowed_users[0]
         try:
-            await self._send_final(owner_id, formatted)
-            logger.info("Proactive message delivered to owner %d", owner_id)
+            await self._send_final(target_chat, formatted, thread_id=thread_id)
+            logger.info(
+                "Proactive message delivered to chat=%d thread=%s (source=%s)",
+                target_chat, thread_id, source,
+            )
         except Exception as e:
-            logger.warning("Failed to deliver proactive message to owner: %s", e)
+            logger.warning("Failed to deliver proactive message: %s", e)
 
     async def start(self) -> None:
         """Start the Telegram bot (polling or webhook based on config)."""

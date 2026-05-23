@@ -562,11 +562,19 @@ def register_builtin_tools(
         # Direct send via Telegram bot (immediate feedback to agent)
         bot = get_bot() if get_bot else None
         chat_id = get_chat_id() if get_chat_id else None
+        thread_id = get_thread_id() if get_thread_id else None
         if bot and chat_id:
             try:
                 from aiogram.types import FSInputFile
                 doc = FSInputFile(full)
-                await bot.send_document(chat_id=chat_id, document=doc)
+                # Carry message_thread_id so the file lands in the originating
+                # thread (Bot API 10.0). Without it Telegram delivers to the
+                # base view ("All" tab) instead of the topic the user asked
+                # from. Mirrors tg_send_poll / tg_send_voice.
+                send_kwargs: dict = {"chat_id": chat_id, "document": doc}
+                if thread_id:
+                    send_kwargs["message_thread_id"] = thread_id
+                await bot.send_document(**send_kwargs)
                 return json.dumps({"success": True, "sent": True, "path": full, "size": size})
             except Exception as e:
                 return json.dumps({"error": f"Telegram send failed: {e}", "path": full, "size": size})

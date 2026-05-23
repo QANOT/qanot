@@ -76,6 +76,23 @@ def register_cron_tools(
             "enabled": True,
         }
 
+        # Capture the calling turn's chat + thread so the scheduled
+        # delivery lands in the SAME topic the user asked from. Without
+        # this, every cron-fired message routes to the base chat view
+        # ("All" tab) — a paying-user-visible bug. Best-effort: when
+        # the agent isn't initialised (e.g. a unit test) we just skip
+        # the capture and fall back to base-chat delivery.
+        try:
+            from qanot.agent import Agent  # local import — avoids a startup cycle
+            inst = getattr(Agent, "_instance", None)
+            if inst is not None:
+                if getattr(inst, "current_chat_id", None) is not None:
+                    job["origin_chat_id"] = int(inst.current_chat_id)
+                if getattr(inst, "current_thread_id", None) is not None:
+                    job["origin_thread_id"] = int(inst.current_thread_id)
+        except Exception as exc:  # noqa: BLE001 — never block a cron create
+            logger.debug("cron_create: origin capture skipped: %s", exc)
+
         if at:
             # One-shot reminder at specific time
             job["at"] = at

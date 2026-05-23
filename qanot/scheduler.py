@@ -245,6 +245,12 @@ class CronScheduler:
         prompt = job["prompt"]
         delete_after_run = job.get("delete_after_run", False)
         tz = job.get("timezone", self.config.timezone)
+        # Origin chat/thread captured by cron_create — empty for builtin
+        # jobs (heartbeat, briefing, consolidation), set for user-created
+        # reminders. Carries through to _deliver_proactive so the result
+        # lands in the originating Telegram thread, not the base view.
+        origin_chat_id = job.get("origin_chat_id")
+        origin_thread_id = job.get("origin_thread_id")
 
         try:
             if at:
@@ -282,6 +288,8 @@ class CronScheduler:
                     "job_name": name,
                     "prompt": prompt,
                     "delete_after_run": delete_after_run,
+                    "origin_chat_id": origin_chat_id,
+                    "origin_thread_id": origin_thread_id,
                 },
                 replace_existing=True,
             )
@@ -301,7 +309,11 @@ class CronScheduler:
         except Exception as e:
             logger.warning("Failed to auto-delete job %s: %s", job_name, e)
 
-    async def _run_isolated(self, job_name: str, prompt: str, delete_after_run: bool = False) -> None:
+    async def _run_isolated(
+        self, job_name: str, prompt: str, delete_after_run: bool = False,
+        *, origin_chat_id: int | None = None,
+        origin_thread_id: int | None = None,
+    ) -> None:
         """Run an isolated agent for a cron job."""
         # Skip heartbeat/briefing if user is currently active (avoid wasting tokens)
         if job_name in ("heartbeat", "briefing") and not self._is_user_idle():
@@ -393,6 +405,8 @@ class CronScheduler:
                         "type": "proactive",
                         "text": outbox_content,
                         "source": job_name,
+                        "chat_id": origin_chat_id,
+                        "thread_id": origin_thread_id,
                     })
                     # Clear outbox after reading
                     outbox_path.write_text("", encoding="utf-8")
@@ -405,13 +419,19 @@ class CronScheduler:
             if delete_after_run:
                 self._delete_job(job_name)
 
-    async def _run_system_event(self, job_name: str, prompt: str, delete_after_run: bool = False) -> None:
+    async def _run_system_event(
+        self, job_name: str, prompt: str, delete_after_run: bool = False,
+        *, origin_chat_id: int | None = None,
+        origin_thread_id: int | None = None,
+    ) -> None:
         """Inject a prompt into the main agent's message queue."""
         logger.info("System event cron job: %s", job_name)
         await self.message_queue.put({
             "type": "proactive",
             "text": prompt,
             "source": job_name,
+            "chat_id": origin_chat_id,
+            "thread_id": origin_thread_id,
         })
         if delete_after_run:
             self._delete_job(job_name)
