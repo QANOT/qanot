@@ -447,3 +447,53 @@ class TestSnip:
 
         result, freed = ct.snip_messages(messages)
         assert freed == 0
+
+
+class TestPerConvIsolation:
+    """Two threads sharing one ContextTracker: a hot thread must not
+    push a quiet thread into compaction/buffer mode. Regression for
+    the 2026-05-23 cross-thread state leak."""
+
+    def test_needs_compaction_is_per_conv(self):
+        ct = ContextTracker(max_tokens=100_000)
+        # Thread A nearly full; thread B barely used.
+        ct.add_usage(80_000, 500, conv_key="user_42_thread_nemis")
+        ct.add_usage(2_000, 200, conv_key="user_42_thread_ovqat")
+        # Even though A's last_prompt_tokens still mirrors the legacy
+        # attribute as 2_000 (newer write wins), the slot-keyed decision
+        # must reflect each thread's OWN history.
+        assert ct.needs_compaction(conv_key="user_42_thread_nemis") is True
+        assert ct.needs_compaction(conv_key="user_42_thread_ovqat") is False
+
+    def test_buffer_active_is_per_conv(self, tmp_path):
+        ct = ContextTracker(max_tokens=100_000, workspace_dir=str(tmp_path))
+        ct.add_usage(60_000, 0, conv_key="user_42_thread_nemis")
+        # First crossing on A activates buffer for A only.
+        assert ct.check_threshold(conv_key="user_42_thread_nemis") is True
+        assert ct.is_buffer_active(conv_key="user_42_thread_nemis") is True
+        assert ct.is_buffer_active(conv_key="user_42_thread_ovqat") is False
+        # B's own check at a small size must NOT inherit A's flag.
+        ct.add_usage(3_000, 0, conv_key="user_42_thread_ovqat")
+        assert ct.check_threshold(conv_key="user_42_thread_ovqat") is False
+        assert ct.is_buffer_active(conv_key="user_42_thread_ovqat") is False
+
+    def test_compact_messages_resets_only_its_own_slot(self):
+        ct = ContextTracker(max_tokens=100_000)
+        ct.add_usage(80_000, 0, conv_key="user_42_thread_nemis")
+        ct.add_usage(2_000, 0, conv_key="user_42_thread_ovqat")
+        messages = [{"role": "user", "content": f"m{i}"} for i in range(20)]
+        ct.compact_messages(messages, conv_key="user_42_thread_nemis")
+        # Nemis slot reset to COMPACTION_TARGET fraction; Ovqat untouched.
+        from qanot.context import COMPACTION_TARGET
+        assert ct._slot("user_42_thread_nemis").last_prompt_tokens == int(100_000 * COMPACTION_TARGET)
+        assert ct._slot("user_42_thread_ovqat").last_prompt_tokens == 2_000
+
+    def test_legacy_attribute_back_compat_unchanged(self, tmp_path):
+        """Callers that never pass a conv_key (doctor, dashboard, old
+        tests) must keep seeing the single-tracker behaviour: the
+        most-recently-written value reflects in the legacy attribute."""
+        ct = ContextTracker(max_tokens=100_000, workspace_dir=str(tmp_path))
+        ct.add_usage(60_000, 0)        # legacy single-tracker call
+        assert ct.last_prompt_tokens == 60_000
+        assert ct.check_threshold() is True
+        assert ct.buffer_active is True

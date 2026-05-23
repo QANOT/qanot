@@ -5,8 +5,34 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# Sentinel used for callers that don't pass a conv_key (legacy back-compat
+# path, dashboard reads, single-tracker tests). Keeps the per-conv state
+# dict from having a `None` key while preserving the old single-state
+# semantics — every legacy call lands on the same slot.
+_GLOBAL_SLOT = "__global__"
+
+
+@dataclass
+class _ConvState:
+    """Per-conversation slot of state that USED to be global.
+
+    ``last_prompt_tokens`` and ``buffer_active`` were single fields on
+    ``ContextTracker`` and bled across threads — thread A reaching 90%
+    made thread B's ``needs_compaction()`` see 90% on its next turn and
+    spuriously compact a tiny conversation; thread A flipping
+    ``buffer_active`` propagated to every other thread. Each conv_key
+    now owns its own slot. Aggregates (``total_output``, ``api_calls``,
+    ``turn_count``) intentionally stay global on the tracker — they're
+    billing/operational counters, not per-thread state.
+    """
+    last_prompt_tokens: int = 0
+    buffer_active: bool = False
+    buffer_started: str | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -112,57 +138,119 @@ class ContextTracker:
         self.total_output = 0
         self.turn_count = 0
         self.api_calls = 0  # Total API calls (including tool loop iterations)
+        # Per-conversation slots — the actual decision state. Each thread
+        # writes its own slot via `add_usage(..., conv_key=...)`; each
+        # decision (`needs_compaction(conv_key=...)`, `is_buffer_active`)
+        # reads its own slot.
+        self._per_conv: dict[str, _ConvState] = {}
+        # Legacy "most recently active" view — kept as attributes so
+        # dashboard/doctor/old tests don't have to thread a conv_key
+        # through. Mirrors whichever slot wrote last via add_usage.
         self.buffer_active = False
         self._buffer_started: str | None = None
         # Context size: last API call's input_tokens = actual context window usage
         self.last_prompt_tokens = 0
+
+    def _slot(self, conv_key: str | None) -> _ConvState:
+        """Return the per-conv state slot (lazy-create on first touch).
+
+        ``None`` falls back to a single shared "_global_" slot — that
+        preserves the pre-per-thread API for any caller (tests, doctor)
+        that hasn't been wired with a conv_key yet.
+        """
+        key = conv_key or _GLOBAL_SLOT
+        slot = self._per_conv.get(key)
+        if slot is None:
+            slot = _ConvState()
+            self._per_conv[key] = slot
+        return slot
 
     @property
     def total_tokens(self) -> int:
         """Current context size: last prompt + all generated output."""
         return self.last_prompt_tokens + self.total_output
 
-    def get_context_percent(self) -> float:
-        """Get current context usage as a percentage.
+    def get_context_percent(self, conv_key: str | None = None) -> float:
+        """Get this conversation's current context usage as a percentage.
 
-        Uses last_prompt_tokens (actual context window usage from API).
-        This is the real context size — NOT accumulated input tokens.
+        Uses the per-conv slot's ``last_prompt_tokens`` so a freshly
+        started thread isn't blamed for a busy thread's recent call.
+        Falls back to the legacy "most recently active" view when
+        ``conv_key`` is None (back-compat for doctor/dashboard).
         """
         if self.max_tokens == 0:
             return 0.0
-        return (self.last_prompt_tokens / self.max_tokens) * 100.0
+        tokens = (
+            self._slot(conv_key).last_prompt_tokens
+            if conv_key is not None else self.last_prompt_tokens
+        )
+        return (tokens / self.max_tokens) * 100.0
 
-    def add_usage(self, input_tokens: int, output_tokens: int) -> None:
+    def is_buffer_active(self, conv_key: str | None = None) -> bool:
+        """Per-conv buffer-mode read.
+
+        Replaces the legacy ``tracker.buffer_active`` attribute access
+        for callers that hold a conv_key (the agent loop). The
+        attribute still exists for unscoped readers and reflects the
+        most recently active conv.
+        """
+        if conv_key is None:
+            return self.buffer_active
+        return self._slot(conv_key).buffer_active
+
+    def add_usage(
+        self, input_tokens: int, output_tokens: int,
+        conv_key: str | None = None,
+    ) -> None:
         """Record token usage from a provider response.
 
-        input_tokens = full context sent to API (messages + system prompt).
-        This is NOT additive — each call resends the full context.
-        We track the latest value as current context size.
+        ``input_tokens`` = full context sent to API (messages + system
+        prompt). NOT additive — each call resends the full context. We
+        track the latest value per-conv (so thread A's 90% doesn't leak
+        into thread B's needs_compaction() check on its next turn).
+
+        Buffer activation is driven by ``check_threshold(conv_key)``,
+        which the caller invokes right after this — keeping the
+        "just activated" return semantics intact.
         """
         self.total_output += output_tokens
         self.api_calls += 1
-        # input_tokens from API = actual context window size right now
+        # Per-conv slot is the authoritative state for decisions.
+        self._slot(conv_key).last_prompt_tokens = input_tokens
+        # Mirror "most recently active" tokens to the legacy attribute
+        # so the dashboard / doctor / old tests reading
+        # ``tracker.last_prompt_tokens`` see the freshest conv's view
+        # without needing a conv_key.
         self.last_prompt_tokens = input_tokens
         # Increment turn count only on first call per user turn (not tool iterations)
         # Turn count is managed separately in agent.py
 
-    def needs_compaction(self) -> bool:
-        """Check if context needs proactive compaction before next API call.
+    def needs_compaction(self, conv_key: str | None = None) -> bool:
+        """Check if THIS conversation needs proactive compaction.
 
-        Returns True if estimated next-turn context would exceed threshold.
+        Uses the per-conv slot so thread A finishing at 95% doesn't make
+        thread B's next-turn check fire spuriously on a 5K conversation.
+        ``avg_output`` stays global — it's a per-agent estimator and
+        an OK approximation for any conversation.
         """
         if self.max_tokens == 0:
             return False
-        # Estimate next turn: current prompt + avg output per turn
+        slot_tokens = (
+            self._slot(conv_key).last_prompt_tokens
+            if conv_key is not None else self.last_prompt_tokens
+        )
         avg_output = self.total_output / max(self.turn_count, 1)
-        # Apply safety margin for estimation error
-        return ((self.last_prompt_tokens + avg_output) * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
+        return ((slot_tokens + avg_output) * SAFETY_MARGIN) > (self.max_tokens * COMPACTION_THRESHOLD)
 
-    def needs_snip(self) -> bool:
-        """Check if context needs snipping (strip old tool results)."""
+    def needs_snip(self, conv_key: str | None = None) -> bool:
+        """Check if this conv needs snipping (strip old tool results)."""
         if self.max_tokens == 0:
             return False
-        return (self.last_prompt_tokens / self.max_tokens) > SNIP_THRESHOLD
+        slot_tokens = (
+            self._slot(conv_key).last_prompt_tokens
+            if conv_key is not None else self.last_prompt_tokens
+        )
+        return (slot_tokens / self.max_tokens) > SNIP_THRESHOLD
 
     def snip_messages(self, messages: list[dict]) -> tuple[list[dict], int]:
         """Strip verbose tool results from old messages to free context.
@@ -230,7 +318,10 @@ class ContextTracker:
         tokens_freed = chars_freed // 4
         return result, tokens_freed
 
-    def compact_messages(self, messages: list[dict], summary_text: str | None = None) -> list[dict]:
+    def compact_messages(
+        self, messages: list[dict], summary_text: str | None = None,
+        conv_key: str | None = None,
+    ) -> list[dict]:
         """Compact conversation history to reduce context usage.
 
         Args:
@@ -277,8 +368,12 @@ class ContextTracker:
             len(messages), len(compacted), removed_count, bool(summary_text),
         )
 
-        # Reset prompt token estimate after compaction to the target fraction of max
-        self.last_prompt_tokens = int(self.max_tokens * COMPACTION_TARGET)
+        # Reset prompt token estimate after compaction to the target
+        # fraction of max — on the PER-CONV slot for this conversation,
+        # and mirror to the legacy attribute for unscoped readers.
+        reset_to = int(self.max_tokens * COMPACTION_TARGET)
+        self._slot(conv_key).last_prompt_tokens = reset_to
+        self.last_prompt_tokens = reset_to
 
         return compacted
 
@@ -332,17 +427,29 @@ class ContextTracker:
 
         return "\n\n".join(parts)
 
-    def check_threshold(self) -> bool:
-        """Check if we've crossed 60% context threshold.
+    def check_threshold(self, conv_key: str | None = None) -> bool:
+        """Activate buffer mode for THIS conv if it just crossed the
+        50% threshold; return True only on the first crossing.
 
-        Returns True if we just crossed the threshold (first time).
+        Per-conv so thread A flipping the flag doesn't make thread B
+        also believe itself to be in buffer mode. The legacy
+        ``self.buffer_active`` attribute mirrors the most recently
+        active conv so old callers (dashboard, doctor) keep working.
         """
-        pct = self.get_context_percent()
-        if pct >= (BUFFER_THRESHOLD * 100) and not self.buffer_active:
+        pct = self.get_context_percent(conv_key=conv_key)
+        slot = self._slot(conv_key)
+        if pct >= (BUFFER_THRESHOLD * 100) and not slot.buffer_active:
+            slot.buffer_active = True
+            slot.buffer_started = datetime.now(timezone.utc).isoformat()
+            # Mirror to legacy attributes for unscoped readers.
             self.buffer_active = True
-            self._buffer_started = datetime.now(timezone.utc).isoformat()
+            self._buffer_started = slot.buffer_started
             self._init_working_buffer()
             return True
+        # Even on "already-active" path, refresh the mirror so the
+        # legacy view always reflects the most recently active conv.
+        self.buffer_active = slot.buffer_active
+        self._buffer_started = slot.buffer_started
         return False
 
     def _init_working_buffer(self) -> None:

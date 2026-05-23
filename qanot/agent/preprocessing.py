@@ -371,15 +371,20 @@ class _PreprocessingMixin:
 
         Returns (messages, system_prompt, tool_defs).
         """
-        # Tier 1: Snip old tool results (fast, no LLM)
-        if self.context.needs_snip() and not self.context.needs_compaction():
+        # Tier 1: Snip old tool results (fast, no LLM). Per-conv check
+        # so thread A's pressure doesn't push thread B to snip itself.
+        if (
+            self.context.needs_snip(conv_key=user_id)
+            and not self.context.needs_compaction(conv_key=user_id)
+        ):
             messages, freed = self.context.snip_messages(messages)
             if freed > 0:
                 self._conv_manager.set_messages(user_id, messages)
                 logger.info("Snipped old tool results, freed ~%d tokens", freed)
 
-        # Tier 2: LLM summarization compaction
-        if self.context.needs_compaction() and len(messages) > 6:
+        # Tier 2: LLM summarization compaction (per-conv decision +
+        # per-conv slot reset so other threads' counters are untouched).
+        if self.context.needs_compaction(conv_key=user_id) and len(messages) > 6:
             # Memory flush: save durable memories BEFORE context is lost
             await memory_flush(
                 messages, self.provider, self.tools,
@@ -389,11 +394,14 @@ class _PreprocessingMixin:
                 messages, self.provider, self.config, self.context,
                 hooks=self.hooks,
             )
-            compacted = self.context.compact_messages(messages, summary_text=summary)
+            compacted = self.context.compact_messages(
+                messages, summary_text=summary, conv_key=user_id,
+            )
             self._conv_manager.set_messages(user_id, compacted)
             messages = compacted
             logger.info("Proactive compaction triggered at %.1f%% (mode=%s)",
-                       self.context.get_context_percent(), self.config.compaction_mode)
+                       self.context.get_context_percent(conv_key=user_id),
+                       self.config.compaction_mode)
 
         # Repair messages only on the first iteration (cached_system is None)
         if cached_system is None:

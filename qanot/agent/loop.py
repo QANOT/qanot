@@ -112,9 +112,13 @@ class _LoopMixin:
 
     def _track_usage(self, response: ProviderResponse) -> None:
         """Track usage and check context threshold."""
+        # Pass the running conv_key so the per-conv slot is updated —
+        # without it thread A's high last_prompt_tokens would still
+        # govern thread B's next-turn needs_compaction() decision.
         self.context.add_usage(
             response.usage.input_tokens,
             response.usage.output_tokens,
+            conv_key=self._current_user_id,
         )
         # Per-user cost tracking — cumulative AND per-turn.
         # Per-turn record_iteration is what the runaway-loop guard
@@ -137,9 +141,9 @@ class _LoopMixin:
                 cache_write=response.usage.cache_creation_input_tokens,
                 cost=response.usage.cost,
             )
-        if self.context.check_threshold():
+        if self.context.check_threshold(conv_key=self._current_user_id):
             logger.warning("Context at %.1f%% — Working Buffer activated",
-                         self.context.get_context_percent())
+                         self.context.get_context_percent(conv_key=self._current_user_id))
 
     def _check_per_turn_caps(self) -> str | None:
         """Per-turn token + cost cap check. Returns reason-for-abort or None.
@@ -314,7 +318,9 @@ class _LoopMixin:
             user_id=self._current_user_id,
         )
 
-        if self.context.buffer_active:
+        # Per-conv buffer check: a different thread crossing 50%
+        # mustn't make THIS thread start writing buffer entries.
+        if self.context.is_buffer_active(self._current_user_id):
             summary = final_text if len(final_text) <= 200 else final_text[:200] + "..."
             self.context.append_to_buffer(user_message, summary)
 
