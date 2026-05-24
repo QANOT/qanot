@@ -1083,6 +1083,436 @@ class UserbotPlugin(Plugin):
                     return int(raw_id)
         return 0
 
+    # ── Media + edit/delete/react ─────────────────────────────────
+    #
+    # Same security model as tg_send_message: whitelist gate on the
+    # peer, rate-limit gate to throttle floods, audit-log on success
+    # and rejection. Edits and deletes are gated too — an attacker
+    # who can edit a message can smuggle banned content past the
+    # initial whitelist check.
+
+    def _resolve_file_input(self, ref: str) -> str:
+        """Translate an agent-supplied media reference into a value pyrogram
+        can consume (workspace-anchored path, absolute path, URL, or file_id).
+
+        Pyrogram auto-detects file_id / URL / path from the string itself; we
+        only need to anchor workspace-relative paths so incoming photos saved
+        by the telegram adapter ("uploads/<file_unique_id>.jpg") become real
+        paths the client can read.
+        """
+        if not ref:
+            return ref
+        if ref.startswith(("http://", "https://")):
+            return ref
+        if ref.startswith("/"):
+            return ref
+        if "/" not in ref and "\\" not in ref and "." not in ref and len(ref) > 20:
+            # Long opaque string with no separators → most likely file_id
+            return ref
+        return str(Path(self._workspace_dir) / ref)
+
+    async def _send_media_common(
+        self,
+        params: dict,
+        *,
+        media_type: str,
+        media_param: str,
+        send_method_name: str,
+        media_kwarg: str,
+    ) -> str:
+        """Shared body for tg_send_photo / tg_send_document.
+
+        Centralises the recipient-token → whitelist → rate-limit → audit
+        pipeline so each media tool only declares its own pyrogram call.
+        """
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        media_ref_raw = (params.get(media_param) or "").strip()
+        caption = params.get("caption") or ""
+        dry_run = bool(params.get("dry_run") or False)
+        reply_to_raw = params.get("reply_to_message_id")
+        try:
+            reply_to_message_id: int | None = int(reply_to_raw) if reply_to_raw else None
+        except (TypeError, ValueError):
+            reply_to_message_id = None
+        if reply_to_message_id is not None and reply_to_message_id <= 0:
+            reply_to_message_id = None
+
+        if not recipient_id:
+            return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
+        if not media_ref_raw:
+            return json.dumps({"status": "error", "error": f"{media_param} is required"}, ensure_ascii=False)
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {"status": "error", "error": (
+                    "recipient_id noto'g'ri yoki muddati tugagan. Avval tg_find_contact "
+                    "yoki tg_list_recent_chats chaqirib yangi token oling."
+                )},
+                ensure_ascii=False,
+            )
+
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {"status": "error", "error": (
+                    "Bu oluvchi userbot_recipient_whitelist ro'yxatida yo'q."
+                ), "recipient": label},
+                ensure_ascii=False,
+            )
+
+        media_ref = self._resolve_file_input(media_ref_raw)
+
+        if dry_run:
+            return json.dumps({
+                "status": "ok", "dry_run": True, "would_send": True,
+                "recipient": label, "media_type": media_type,
+                "file_ref": media_ref, "caption_len": len(caption),
+            }, ensure_ascii=False)
+
+        try:
+            self._rate_limiter.check(recipient_id)
+        except Exception as rle:
+            bucket = getattr(rle, "bucket", "unknown")
+            retry = int(getattr(rle, "retry_after_seconds", 0))
+            self._audit.rate_limit(recipient=label, bucket=bucket, retry_after=retry)
+            return json.dumps(
+                {"status": "error", "error": str(rle), "bucket": bucket,
+                 "retry_after_seconds": retry},
+                ensure_ascii=False,
+            )
+
+        send_method = getattr(client, send_method_name)
+        send_kwargs: dict[str, Any] = {media_kwarg: media_ref}
+        if caption:
+            send_kwargs["caption"] = caption
+        if reply_to_message_id:
+            send_kwargs["reply_to_message_id"] = reply_to_message_id
+
+        try:
+            msg = await send_method(entry["peer"], **send_kwargs)
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        message_id = int(getattr(msg, "id", 0) or getattr(msg, "message_id", 0) or 0)
+        self._rate_limiter.record(recipient_id)
+        self._audit.send_media(
+            recipient_id=recipient_id, recipient=label,
+            media_type=media_type, file_ref=media_ref,
+            caption=caption, message_id=message_id,
+            reply_to_message_id=reply_to_message_id,
+        )
+        icon = {"photo": "📷", "document": "📎"}.get(media_type, "📤")
+        preview_text = caption.strip() or f"<{media_type}>"
+        await self._post_preview_message(
+            f"{icon} <code>{label}</code> ga {media_type} yuborildi: {preview_text[:120]}",
+        )
+
+        result: dict[str, Any] = {
+            "status": "ok", "ok": True, "message_id": message_id,
+            "recipient": label, "media_type": media_type,
+        }
+        if reply_to_message_id:
+            result["reply_to_message_id"] = reply_to_message_id
+        return json.dumps(result, ensure_ascii=False)
+
+    @tool(
+        name="tg_send_photo",
+        description=(
+            "Send a photo AS the account owner. `photo` accepts a workspace-"
+            "relative path (e.g. 'uploads/AgADxyz.jpg' for an incoming photo "
+            "the telegram adapter saved), an absolute path, a public https "
+            "URL, or a Telegram file_id from a previous upload. Whitelist + "
+            "rate-limit + audit log apply (same as tg_send_message)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "photo"],
+            "properties": {
+                "recipient_id": {"type": "string", "description": "Opaque token from tg_find_contact / tg_list_recent_chats"},
+                "photo": {"type": "string", "description": "Path / URL / file_id"},
+                "caption": {"type": "string", "description": "Optional caption (max 1024 chars)"},
+                "reply_to_message_id": {"type": "integer"},
+                "dry_run": {"type": "boolean", "description": "If true, prepare without sending"},
+            },
+        },
+    )
+    async def tg_send_photo(self, params: dict) -> str:
+        return await self._send_media_common(
+            params, media_type="photo",
+            media_param="photo", send_method_name="send_photo",
+            media_kwarg="photo",
+        )
+
+    @tool(
+        name="tg_send_document",
+        description=(
+            "Send a document/file AS the account owner. `document` accepts a "
+            "workspace-relative path, absolute path, https URL, or file_id. "
+            "Up to 2 GB (4 GB for Premium accounts) — much larger than the "
+            "50 MB Bot API limit. Whitelist + rate-limit + audit apply."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "document"],
+            "properties": {
+                "recipient_id": {"type": "string"},
+                "document": {"type": "string", "description": "Path / URL / file_id"},
+                "caption": {"type": "string"},
+                "reply_to_message_id": {"type": "integer"},
+                "dry_run": {"type": "boolean"},
+            },
+        },
+    )
+    async def tg_send_document(self, params: dict) -> str:
+        return await self._send_media_common(
+            params, media_type="document",
+            media_param="document", send_method_name="send_document",
+            media_kwarg="document",
+        )
+
+    @tool(
+        name="tg_edit_message",
+        description=(
+            "Edit the TEXT of a message you previously sent via tg_send_message. "
+            "Use when the operator says 'tuzat / xato yozdim'. Telegram allows "
+            "edits for 48h after sending. For media captions use tg_edit_caption "
+            "(not yet implemented; delete + re-send instead). Whitelist + "
+            "rate-limit apply — an edit can smuggle content past the initial "
+            "send check, so it's gated like a fresh send."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "message_id", "text"],
+            "properties": {
+                "recipient_id": {"type": "string"},
+                "message_id": {"type": "integer", "description": "From tg_send_message result"},
+                "text": {"type": "string", "description": "New message body"},
+            },
+        },
+    )
+    async def tg_edit_message(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        text = params.get("text") or ""
+        try:
+            message_id = int(params.get("message_id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        if not recipient_id:
+            return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
+        if message_id <= 0:
+            return json.dumps({"status": "error", "error": "message_id is required (positive integer)"}, ensure_ascii=False)
+        if not text.strip():
+            return json.dumps({"status": "error", "error": "text is required (non-empty)"}, ensure_ascii=False)
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id noto'g'ri yoki muddati tugagan."},
+                ensure_ascii=False,
+            )
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {"status": "error", "error": (
+                    "Bu oluvchi whitelist'da yo'q."
+                ), "recipient": label},
+                ensure_ascii=False,
+            )
+
+        try:
+            self._rate_limiter.check(recipient_id)
+        except Exception as rle:
+            bucket = getattr(rle, "bucket", "unknown")
+            retry = int(getattr(rle, "retry_after_seconds", 0))
+            self._audit.rate_limit(recipient=label, bucket=bucket, retry_after=retry)
+            return json.dumps(
+                {"status": "error", "error": str(rle), "bucket": bucket,
+                 "retry_after_seconds": retry},
+                ensure_ascii=False,
+            )
+
+        try:
+            await client.edit_message_text(entry["peer"], message_id, text)
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        self._rate_limiter.record(recipient_id)
+        self._audit.edit_message(
+            recipient_id=recipient_id, recipient=label,
+            message_id=message_id, text=text,
+        )
+        await self._post_preview_message(
+            f"✏️ <code>{label}</code>: {message_id}-xabar tahrirlandi → {text[:120]}",
+        )
+        return json.dumps(
+            {"status": "ok", "ok": True, "message_id": message_id, "recipient": label},
+            ensure_ascii=False,
+        )
+
+    @tool(
+        name="tg_delete_message",
+        description=(
+            "Delete a message you previously sent (works for both sides — the "
+            "recipient also stops seeing it). Use when the operator says "
+            "'noto'g'ri yubordim, o'chir'. Only your OWN messages can be "
+            "deleted via userbot (Telegram restriction). Whitelist applies."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "message_id"],
+            "properties": {
+                "recipient_id": {"type": "string"},
+                "message_id": {"type": "integer"},
+            },
+        },
+    )
+    async def tg_delete_message(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        try:
+            message_id = int(params.get("message_id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        if not recipient_id:
+            return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
+        if message_id <= 0:
+            return json.dumps({"status": "error", "error": "message_id is required (positive integer)"}, ensure_ascii=False)
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id noto'g'ri yoki muddati tugagan."},
+                ensure_ascii=False,
+            )
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {"status": "error", "error": "Bu oluvchi whitelist'da yo'q.", "recipient": label},
+                ensure_ascii=False,
+            )
+
+        try:
+            await client.delete_messages(entry["peer"], [message_id], revoke=True)
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        self._audit.delete_message(
+            recipient_id=recipient_id, recipient=label, message_id=message_id,
+        )
+        await self._post_preview_message(
+            f"🗑 <code>{label}</code>: {message_id}-xabar o'chirildi",
+        )
+        return json.dumps(
+            {"status": "ok", "ok": True, "message_id": message_id, "recipient": label},
+            ensure_ascii=False,
+        )
+
+    @tool(
+        name="tg_react_to_message",
+        description=(
+            "Put an emoji reaction on a message in a chat — a lightweight "
+            "acknowledgement that does NOT count as a sent message. Useful for "
+            "'👍' on a colleague's update or '❤️' on a customer's thanks without "
+            "writing back. Pass empty string for emoji to REMOVE existing "
+            "reaction. Whitelist applies; rate limit does not (reactions are "
+            "free in Telegram's anti-spam model)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "message_id", "emoji"],
+            "properties": {
+                "recipient_id": {"type": "string"},
+                "message_id": {"type": "integer"},
+                "emoji": {"type": "string", "description": "Single emoji like '👍', '❤️', '🔥' (empty = remove)"},
+            },
+        },
+    )
+    async def tg_react_to_message(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        emoji = (params.get("emoji") or "").strip()
+        try:
+            message_id = int(params.get("message_id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        if not recipient_id:
+            return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
+        if message_id <= 0:
+            return json.dumps({"status": "error", "error": "message_id is required (positive integer)"}, ensure_ascii=False)
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id noto'g'ri yoki muddati tugagan."},
+                ensure_ascii=False,
+            )
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {"status": "error", "error": "Bu oluvchi whitelist'da yo'q.", "recipient": label},
+                ensure_ascii=False,
+            )
+
+        try:
+            # Empty emoji = remove reaction; pyrogram accepts emoji="" for that.
+            await client.send_reaction(entry["peer"], message_id, emoji=emoji or "")
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        self._audit.react(
+            recipient_id=recipient_id, recipient=label,
+            message_id=message_id, emoji=emoji,
+        )
+        # No preview message for reactions — they're meant to be a quiet ack.
+        return json.dumps(
+            {"status": "ok", "ok": True, "message_id": message_id,
+             "recipient": label, "emoji": emoji},
+            ensure_ascii=False,
+        )
+
     @tool(
         name="tg_forward_messages",
         description=(

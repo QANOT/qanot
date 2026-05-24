@@ -226,6 +226,78 @@ class AuditLog:
             "drop_author": drop_author,
         })
 
+    def send_media(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        media_type: str,
+        file_ref: str,
+        caption: str,
+        message_id: int,
+        reply_to_message_id: int | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {
+            "event": "send_media",
+            "media_type": media_type,
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "file_ref": file_ref,
+            "caption_preview": _preview(caption),
+            "caption_len": len(caption),
+            "message_id": message_id,
+        }
+        if reply_to_message_id:
+            entry["reply_to_message_id"] = reply_to_message_id
+        self._write(entry)
+
+    def edit_message(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        message_id: int,
+        text: str,
+    ) -> None:
+        self._write({
+            "event": "edit_message",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_id": message_id,
+            "text_preview": _preview(text),
+            "text_len": len(text),
+        })
+
+    def delete_message(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        message_id: int,
+    ) -> None:
+        self._write({
+            "event": "delete_message",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_id": message_id,
+        })
+
+    def react(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        message_id: int,
+        emoji: str,
+    ) -> None:
+        self._write({
+            "event": "react",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_id": message_id,
+            "emoji": emoji,
+        })
+
 
 def _utc_iso() -> str:
     t = time.gmtime()
