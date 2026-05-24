@@ -16,6 +16,8 @@ async def spawn_isolated_agent(
     prompt: str,
     session_id: str | None = None,
     max_iterations: int = 50,
+    origin_chat_id: int | None = None,
+    origin_thread_id: int | None = None,
 ) -> str:
     """Spawn an isolated agent that runs independently.
 
@@ -54,6 +56,18 @@ async def spawn_isolated_agent(
         prompt_mode="minimal",
         max_iterations=max_iterations,
     )
+
+    # Plumb the cron's origin onto the agent so `send_file` and
+    # `tg_send_*` (which read agent.current_chat_id / current_thread_id
+    # via getters from bootstrap/tool_registry.py) land in the
+    # originating Telegram thread, not the base view. Without this the
+    # outbox text routes correctly (payload carries the origin) but
+    # any file the agent sends DIRECTLY misses the thread — the
+    # 2026-05-24 13:00 deutsch-new-words anki .txt incident.
+    if origin_chat_id is not None:
+        agent._current_chat_id = origin_chat_id
+    if origin_thread_id is not None:
+        agent._current_thread_id = origin_thread_id
 
     result = await agent.run_turn(prompt)
     return result

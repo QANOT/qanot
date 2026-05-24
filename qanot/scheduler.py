@@ -432,6 +432,8 @@ class CronScheduler:
                 tool_registry=self.tool_registry,
                 prompt=prompt,
                 session_id=session_id,
+                origin_chat_id=origin_chat_id,
+                origin_thread_id=origin_thread_id,
             )
 
             # Suppress HEARTBEAT_OK — don't deliver to users
