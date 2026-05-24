@@ -1103,6 +1103,193 @@ class NotionPlugin(Plugin):
                 {"status": "error", **map_exception(e)}, ensure_ascii=False,
             )
 
+    # ── Update / delete a single block ────────────────────────────
+
+    @tool(
+        name="notion_update_block",
+        description=(
+            "Replace the TEXT of an existing block (paragraph, heading, list item, "
+            "to-do, quote, callout, toggle, or code). The block's TYPE is preserved "
+            "— pass markdown for the new content and only the rich_text is swapped. "
+            "Use this to FIX a wrong line in a page without rewriting the whole page. "
+            "For to-do blocks, also pass `checked` to flip the checkbox.\n\n"
+            "NOT supported: table, table_row, image, file, video, child_page, "
+            "child_database, divider, column_list, embed (Notion API forbids "
+            "type swaps; for tables, recreate the page instead)."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["block_id", "markdown"],
+            "properties": {
+                "block_id": {"type": "string", "description": "Target block UUID (find via notion_read_page)"},
+                "markdown": {"type": "string", "description": "New inline markdown content (** _ ` [text](url) supported)"},
+                "checked": {
+                    "type": "boolean",
+                    "description": "Only for to_do blocks: flip the checkbox state.",
+                },
+            },
+        },
+        # No memo validation: bodies/paragraphs are out of scope for the
+        # title-format memos (same reasoning as notion_append_to_page).
+    )
+    async def notion_update_block(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        block_id = (params.get("block_id") or "").strip()
+        md = params.get("markdown") or ""
+        if not block_id:
+            return json.dumps({"error": "block_id is required"}, ensure_ascii=False)
+        if not md.strip():
+            return json.dumps({"error": "markdown is required (non-empty)"}, ensure_ascii=False)
+
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import markdown_to_rich_text
+
+        _EDITABLE_TYPES = {
+            "paragraph", "heading_1", "heading_2", "heading_3",
+            "bulleted_list_item", "numbered_list_item", "to_do",
+            "quote", "callout", "toggle", "code",
+        }
+
+        try:
+            existing = await self._client.blocks.retrieve(block_id=block_id)
+            btype = existing.get("type")
+            if btype not in _EDITABLE_TYPES:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"block type '{btype}' is not editable via update_block",
+                    "hint": "Delete + recreate the parent page, or use notion_delete_block + notion_append_to_page.",
+                }, ensure_ascii=False)
+
+            new_rich_text = markdown_to_rich_text(md.strip())
+            inner: dict = {"rich_text": new_rich_text}
+
+            # Preserve existing block-specific fields the markdown can't carry.
+            if btype == "to_do":
+                inner["checked"] = bool(
+                    params["checked"] if "checked" in params
+                    else existing.get("to_do", {}).get("checked", False)
+                )
+            elif btype == "code":
+                inner["language"] = existing.get("code", {}).get("language", "plain text")
+            elif btype == "callout":
+                icon = existing.get("callout", {}).get("icon")
+                if icon:
+                    inner["icon"] = icon
+
+            await self._client.blocks.update(block_id=block_id, **{btype: inner})
+            return json.dumps({
+                "status": "ok",
+                "id": block_id,
+                "type": btype,
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("notion_update_block failed")
+            return json.dumps({"status": "error", **map_exception(e)}, ensure_ascii=False)
+
+    @tool(
+        name="notion_delete_block",
+        description=(
+            "Delete a single block by ID (soft delete — block moves to trash, "
+            "children go with it). Use this to remove ONE wrong line/section from "
+            "a page without touching the rest. To delete the entire page use "
+            "notion_archive_page instead."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["block_id"],
+            "properties": {
+                "block_id": {"type": "string", "description": "Target block UUID (find via notion_read_page)"},
+            },
+        },
+    )
+    async def notion_delete_block(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        block_id = (params.get("block_id") or "").strip()
+        if not block_id:
+            return json.dumps({"error": "block_id is required"}, ensure_ascii=False)
+
+        from nt_engine.errors import map_exception
+
+        try:
+            await self._client.blocks.delete(block_id=block_id)
+            return json.dumps({"status": "ok", "id": block_id}, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("notion_delete_block failed")
+            return json.dumps({"status": "error", **map_exception(e)}, ensure_ascii=False)
+
+    # ── Replace entire page content ───────────────────────────────
+
+    @tool(
+        name="notion_replace_page_content",
+        description=(
+            "Wipe ALL existing blocks from a page and replace them with new "
+            "markdown content in one call. Equivalent to: list all children → "
+            "delete each → append new markdown. Page title and properties are "
+            "preserved; only the body is replaced.\n\n"
+            "Destructive — deleted blocks go to trash. Use when the agent needs "
+            "to rebuild a page from scratch (e.g. 'rewrite this lesson with new "
+            "vocabulary') instead of burning iterations on per-block deletes."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["page_id", "markdown"],
+            "properties": {
+                "page_id": {"type": "string", "description": "Page or block whose children will be replaced"},
+                "markdown": {"type": "string", "description": "New body content as markdown (supports tables, headings, lists, code, etc.)"},
+            },
+        },
+    )
+    async def notion_replace_page_content(self, params: dict) -> str:
+        if not self._client:
+            return self._not_configured()
+        page_id = (params.get("page_id") or "").strip()
+        md = params.get("markdown") or ""
+        if not page_id:
+            return json.dumps({"error": "page_id is required"}, ensure_ascii=False)
+        if not md.strip():
+            return json.dumps({"error": "markdown is required (non-empty)"}, ensure_ascii=False)
+
+        from nt_engine.errors import map_exception
+        from nt_engine.markdown import markdown_to_blocks
+
+        new_blocks = markdown_to_blocks(md)
+        if not new_blocks:
+            return json.dumps({"error": "markdown produced no blocks"}, ensure_ascii=False)
+
+        try:
+            existing = await self._fetch_all_children(page_id, max_blocks=1000)
+            deleted = 0
+            for blk in existing:
+                bid = blk.get("id")
+                if not bid:
+                    continue
+                try:
+                    await self._client.blocks.delete(block_id=bid)
+                    deleted += 1
+                except Exception:
+                    # One stuck block (e.g. unsupported type) shouldn't abort
+                    # the whole replace — log and continue.
+                    logger.exception("replace_page_content: failed to delete block %s", bid)
+
+            created = 0
+            for i in range(0, len(new_blocks), 100):
+                chunk = new_blocks[i:i + 100]
+                await self._client.blocks.children.append(
+                    block_id=page_id, children=chunk,
+                )
+                created += len(chunk)
+
+            return json.dumps({
+                "status": "ok",
+                "deleted_blocks": deleted,
+                "appended_blocks": created,
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("notion_replace_page_content failed")
+            return json.dumps({"status": "error", **map_exception(e)}, ensure_ascii=False)
+
 
 # ── Module helpers ───────────────────────────────────────────────
 
