@@ -268,6 +268,23 @@ class AuditLog:
             "text_len": len(text),
         })
 
+    def edit_caption(
+        self,
+        *,
+        recipient_id: str,
+        recipient: str,
+        message_id: int,
+        caption: str,
+    ) -> None:
+        self._write({
+            "event": "edit_caption",
+            "recipient_id": recipient_id,
+            "recipient": recipient,
+            "message_id": message_id,
+            "caption_preview": _preview(caption),
+            "caption_len": len(caption),
+        })
+
     def delete_message(
         self,
         *,

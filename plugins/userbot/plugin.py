@@ -1373,6 +1373,94 @@ class UserbotPlugin(Plugin):
         )
 
     @tool(
+        name="tg_edit_caption",
+        description=(
+            "Edit the CAPTION of a media message (photo, document, video) you "
+            "previously sent via tg_send_photo / tg_send_document / etc. Use "
+            "when the operator says 'rasm to'g'ri, lekin yozuvni o'zgartir'. "
+            "For text-only messages use tg_edit_message instead — pyrogram "
+            "uses different endpoints. Telegram 48h window applies; whitelist "
+            "+ rate-limit gating mirrors tg_edit_message."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["recipient_id", "message_id", "caption"],
+            "properties": {
+                "recipient_id": {"type": "string"},
+                "message_id": {"type": "integer", "description": "From tg_send_photo / tg_send_document result"},
+                "caption": {"type": "string", "description": "New caption (max 1024 chars)"},
+            },
+        },
+    )
+    async def tg_edit_caption(self, params: dict) -> str:
+        client = await self._get_client()
+        if client is None:
+            return self._not_configured()
+
+        recipient_id = (params.get("recipient_id") or "").strip()
+        caption = params.get("caption") or ""
+        try:
+            message_id = int(params.get("message_id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        if not recipient_id:
+            return json.dumps({"status": "error", "error": "recipient_id is required"}, ensure_ascii=False)
+        if message_id <= 0:
+            return json.dumps({"status": "error", "error": "message_id is required (positive integer)"}, ensure_ascii=False)
+        if not caption.strip():
+            return json.dumps({"status": "error", "error": "caption is required (non-empty — use tg_delete_message to remove a media post entirely)"}, ensure_ascii=False)
+
+        entry = await self._lookup_token(recipient_id)
+        if entry is None:
+            return json.dumps(
+                {"status": "error", "error": "recipient_id noto'g'ri yoki muddati tugagan."},
+                ensure_ascii=False,
+            )
+        label = self._recipient_label(entry)
+
+        if not self._allowed_by_whitelist(entry):
+            self._audit.whitelist_reject(recipient=label)
+            return json.dumps(
+                {"status": "error", "error": "Bu oluvchi whitelist'da yo'q.", "recipient": label},
+                ensure_ascii=False,
+            )
+
+        try:
+            self._rate_limiter.check(recipient_id)
+        except Exception as rle:
+            bucket = getattr(rle, "bucket", "unknown")
+            retry = int(getattr(rle, "retry_after_seconds", 0))
+            self._audit.rate_limit(recipient=label, bucket=bucket, retry_after=retry)
+            return json.dumps(
+                {"status": "error", "error": str(rle), "bucket": bucket,
+                 "retry_after_seconds": retry},
+                ensure_ascii=False,
+            )
+
+        try:
+            await client.edit_message_caption(entry["peer"], message_id, caption=caption)
+        except Exception as e:
+            cls, friendly = self._friendly_rpc_error(e)
+            self._audit.send_error(recipient=label, error_class=cls)
+            return json.dumps(
+                {"status": "error", "error_class": cls, "error": friendly},
+                ensure_ascii=False,
+            )
+
+        self._rate_limiter.record(recipient_id)
+        self._audit.edit_caption(
+            recipient_id=recipient_id, recipient=label,
+            message_id=message_id, caption=caption,
+        )
+        await self._post_preview_message(
+            f"✏️ <code>{label}</code>: {message_id}-media caption tahrirlandi → {caption[:120]}",
+        )
+        return json.dumps(
+            {"status": "ok", "ok": True, "message_id": message_id, "recipient": label},
+            ensure_ascii=False,
+        )
+
+    @tool(
         name="tg_delete_message",
         description=(
             "Delete a message you previously sent (works for both sides — the "
