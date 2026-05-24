@@ -408,7 +408,8 @@ class NotionPlugin(Plugin):
         description=(
             "Append markdown content to the END of an existing Notion page or block. "
             "Supports: # headings, - bullets, 1. numbered, - [ ] todos, > quotes, "
-            "```code blocks```, ---dividers, and inline **bold**/*italic*/`code`/[links](url)."
+            "```code blocks```, ---dividers, GFM tables (| h1 | h2 |\\n|---|---|\\n| r1 | r2 |), "
+            "and inline **bold**/*italic*/`code`/[links](url)."
         ),
         parameters={
             "type": "object",

@@ -13,6 +13,9 @@ Covers the subset every agent workflow actually needs:
   > quote                        → quote
   ```lang\ncode\n```             → code (with language)
   ---  or  ***                   → divider
+  | h1 | h2 |
+  |----|----|                    → table (GFM-style; first row = column header)
+  | r1 | r2 |
   (anything else)                → paragraph
 
   Inline:
@@ -38,6 +41,7 @@ _TODO_RE = re.compile(r"^[\-\*]\s+\[([ xX])\]\s+(.*)$")
 _QUOTE_RE = re.compile(r"^>\s*(.*)$")
 _CODE_FENCE_RE = re.compile(r"^```(\w*)\s*$")
 _DIVIDER_RE = re.compile(r"^(---+|\*\*\*+)\s*$")
+_TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
 # Notion supports a fixed set of code languages; unknown languages fall back
 # to "plain text". The list comes from the official Notion API reference.
@@ -191,6 +195,58 @@ def _strip_whole_document_fence(md: str) -> str:
     return "\n".join(lines[1:-1])
 
 
+def _parse_table_row(line: str) -> list[str]:
+    """Split a GFM-style markdown table row into raw cell strings."""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_table_separator(line: str) -> bool:
+    """True if `line` is a GFM table separator like `|---|---|` or `|:--:|--|`."""
+    if not line or "|" not in line:
+        return False
+    cells = _parse_table_row(line)
+    if not cells:
+        return False
+    return all(_TABLE_SEP_CELL_RE.match(c) for c in cells)
+
+
+def _build_table_block(rows: list[list[str]]) -> dict[str, Any]:
+    """Build a Notion `table` block (with table_row children) from cell strings.
+
+    Notion requires every row to have exactly `table_width` cells, so short
+    rows are padded with empty cells and overlong rows are truncated.
+    """
+    width = max(len(r) for r in rows)
+    normalised = [
+        r + [""] * (width - len(r)) if len(r) < width else r[:width]
+        for r in rows
+    ]
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": width,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": [
+                {
+                    "object": "block",
+                    "type": "table_row",
+                    "table_row": {
+                        "cells": [markdown_to_rich_text(cell) for cell in row],
+                    },
+                }
+                for row in normalised
+            ],
+        },
+    }
+
+
 def markdown_to_blocks(md: str) -> list[dict[str, Any]]:
     """Convert a markdown string into a list of Notion block objects.
 
@@ -253,6 +309,26 @@ def markdown_to_blocks(md: str) -> list[dict[str, Any]]:
             flush_paragraph()
             blocks.append({"object": "block", "type": "divider", "divider": {}})
             i += 1
+            continue
+
+        # GFM table — a header row of `| ... | ... |` followed by a
+        # `|---|---|` separator row. Consume header + separator + all
+        # subsequent rows that still start with `|`.
+        if (
+            line.lstrip().startswith("|")
+            and i + 1 < len(lines)
+            and _is_table_separator(lines[i + 1].rstrip())
+        ):
+            flush_paragraph()
+            rows = [_parse_table_row(line)]
+            i += 2  # consume header + separator
+            while i < len(lines):
+                nxt = lines[i].rstrip()
+                if not nxt.lstrip().startswith("|") or _is_table_separator(nxt):
+                    break
+                rows.append(_parse_table_row(nxt))
+                i += 1
+            blocks.append(_build_table_block(rows))
             continue
 
         # Heading
@@ -379,6 +455,26 @@ def blocks_to_markdown(blocks: list[dict]) -> str:
             lines.append("```")
         elif btype == "divider":
             lines.append("---")
+        elif btype == "table":
+            children = inner.get("children") or []
+            grid: list[list[str]] = []
+            for child in children:
+                if child.get("type") != "table_row":
+                    continue
+                cells = child.get("table_row", {}).get("cells") or []
+                grid.append([_rich_text_to_markdown(c) for c in cells])
+            if not grid:
+                # Children not fetched by caller — emit a placeholder rather
+                # than silently dropping the block.
+                lines.append("[table block]")
+            else:
+                width = max(len(r) for r in grid)
+                grid = [r + [""] * (width - len(r)) for r in grid]
+                out = ["| " + " | ".join(grid[0]) + " |",
+                       "|" + "|".join(["---"] * width) + "|"]
+                for r in grid[1:]:
+                    out.append("| " + " | ".join(r) + " |")
+                lines.append("\n".join(out))
         elif btype == "callout":
             icon = inner.get("icon", {}).get("emoji", "💡")
             lines.append(f"> {icon} {text}")

@@ -139,6 +139,85 @@ def test_divider():
     assert blocks[0]["type"] == "divider"
 
 
+# ── GFM tables (2026-05-24 iteration-cap incident) ─────────────────
+
+def test_table_basic():
+    md = "| A | B |\n|---|---|\n| 1 | 2 |"
+    blocks = markdown_to_blocks(md)
+    assert len(blocks) == 1
+    blk = blocks[0]
+    assert blk["type"] == "table"
+    assert blk["table"]["table_width"] == 2
+    assert blk["table"]["has_column_header"] is True
+    rows = blk["table"]["children"]
+    assert len(rows) == 2
+    assert rows[0]["type"] == "table_row"
+    assert rows[0]["table_row"]["cells"][0][0]["plain_text"] == "A"
+    assert rows[1]["table_row"]["cells"][1][0]["plain_text"] == "2"
+
+
+def test_table_pads_short_rows():
+    """Notion requires every row to have exactly table_width cells."""
+    md = "| A | B | C |\n|---|---|---|\n| 1 | 2 |"
+    blocks = markdown_to_blocks(md)
+    rows = blocks[0]["table"]["children"]
+    assert blocks[0]["table"]["table_width"] == 3
+    assert len(rows[1]["table_row"]["cells"]) == 3
+    assert rows[1]["table_row"]["cells"][2] == []
+
+
+def test_table_with_inline_formatting():
+    md = "| Word | Meaning |\n|---|---|\n| **bold** | *italic* |"
+    blocks = markdown_to_blocks(md)
+    cells = blocks[0]["table"]["children"][1]["table_row"]["cells"]
+    assert cells[0][0]["annotations"]["bold"] is True
+    assert cells[1][0]["annotations"]["italic"] is True
+
+
+def test_table_with_surrounding_content():
+    md = "# German Lesson\n\n| DE | UZ |\n|---|---|\n| Haus | uy |\n\nMore notes."
+    blocks = markdown_to_blocks(md)
+    assert _types(blocks) == ["heading_1", "table", "paragraph"]
+
+
+def test_table_accepts_alignment_colons():
+    md = "| A | B | C |\n|:---|:---:|---:|\n| 1 | 2 | 3 |"
+    blocks = markdown_to_blocks(md)
+    assert blocks[0]["type"] == "table"
+    assert blocks[0]["table"]["table_width"] == 3
+
+
+def test_table_accepts_short_separator_dashes():
+    """Some markdown emitters use single dashes (`|-|-|`) — accept them too."""
+    md = "| A | B |\n|-|-|\n| 1 | 2 |"
+    blocks = markdown_to_blocks(md)
+    assert blocks[0]["type"] == "table"
+
+
+def test_pipe_line_without_separator_is_paragraph():
+    """A `| ... | ... |` line NOT followed by a `|---|` separator is text."""
+    md = "| not a table | line |"
+    blocks = markdown_to_blocks(md)
+    assert blocks[0]["type"] == "paragraph"
+
+
+def test_table_roundtrip_via_blocks_to_markdown():
+    md = "| A | B |\n|---|---|\n| 1 | 2 |"
+    blocks = markdown_to_blocks(md)
+    rendered = blocks_to_markdown(blocks)
+    assert "| A | B |" in rendered
+    assert "| 1 | 2 |" in rendered
+    assert "---" in rendered
+
+
+def test_blocks_to_markdown_table_without_children_is_placeholder():
+    """Top-level table fetched without recursing into children → placeholder."""
+    blocks = [{"object": "block", "type": "table",
+               "table": {"table_width": 2, "has_column_header": True,
+                         "has_row_header": False, "children": []}}]
+    assert "[table block]" in blocks_to_markdown(blocks)
+
+
 def test_inline_bold_italic_code():
     rt = markdown_to_rich_text("hello **world** and *there* with `code`")
     # One plain, one bold, one plain, one italic, one plain, one code
