@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -63,6 +64,36 @@ def _downscale_image(raw: bytes, max_size: int = 4_000_000, max_dim: int = 1200)
     result = out.getvalue()
     logger.info("Image compressed: %d → %d bytes (q=%d)", len(raw), len(result), quality)
     return result, "image/jpeg"
+
+
+async def save_photo_to_uploads(
+    bot: "Bot", message: "Message", workspace_dir: str | Path,
+) -> str | None:
+    """Save the largest incoming photo to `<workspace>/uploads/` and return the
+    workspace-relative path (e.g. ``uploads/AgADxyz.jpg``), or None on failure.
+
+    Without this, photos only reach the model as a base64 vision block — the
+    agent can SEE the image but cannot RE-USE it (channel_post_photo,
+    edit_image, OCR over read_file all need a path/url/file_id). Caching by
+    ``file_unique_id`` makes the call idempotent if the same image is resent.
+    """
+    if not message.photo:
+        return None
+    photo = message.photo[-1]
+    fname = f"{photo.file_unique_id}.jpg"
+    dl_dir = Path(workspace_dir) / "uploads"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    dl_path = dl_dir / fname
+    if dl_path.exists() and dl_path.stat().st_size > 0:
+        return f"uploads/{fname}"
+    try:
+        file = await bot.get_file(photo.file_id)
+        await bot.download_file(file.file_path, dl_path)
+        logger.info("Photo saved to workspace: uploads/%s", fname)
+        return f"uploads/{fname}"
+    except Exception as e:
+        logger.error("save_photo_to_uploads failed: %s", e)
+        return None
 
 
 async def download_photo(bot: "Bot", message: "Message") -> dict | None:

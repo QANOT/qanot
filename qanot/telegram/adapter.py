@@ -38,8 +38,9 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from qanot.telegram.formatting import _sanitize_response
 from qanot.telegram.handlers import HandlersMixin
 from qanot.telegram.media import (
-    download_photo, download_sticker, send_pending_files,
-    send_pending_images, send_pending_videos, send_voice_reply, transcribe_voice,
+    download_photo, download_sticker, save_photo_to_uploads,
+    send_pending_files, send_pending_images, send_pending_videos,
+    send_voice_reply, transcribe_voice,
 )
 from qanot.telegram.streaming import StreamingMixin
 
@@ -826,6 +827,21 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
                 images.append(image_data)
                 if not text:
                     text = "Bu rasmni tahlil qiling."
+                # Expose the photo to tool calls (channel_post_photo,
+                # read_file, edit_image). Without this the model can SEE
+                # the image (vision) but has no way to RE-USE it, and ends
+                # up grep-ing /tmp for the file (2026-05-24 incident with
+                # channel_post_photo). Save to workspace and inject both
+                # the path AND the Telegram file_id into the user-message
+                # context so downstream tools have direct handles.
+                rel_path = await save_photo_to_uploads(
+                    self.bot, message, self.config.workspace_dir,
+                )
+                marker_bits: list[str] = []
+                if rel_path:
+                    marker_bits.append(f"yuklandi: {rel_path}")
+                marker_bits.append(f"file_id: {message.photo[-1].file_id}")
+                text = f"[Rasm | {' | '.join(marker_bits)}] {text}".strip()
                 # Background: persist the image as a retrievable memo.
                 # Skipped silently when the agent has no memo router
                 # attached (RAG/FastEmbed disabled). The actual image
