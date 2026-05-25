@@ -57,17 +57,23 @@ async def spawn_isolated_agent(
         max_iterations=max_iterations,
     )
 
-    # Plumb the cron's origin onto the agent so `send_file` and
-    # `tg_send_*` (which read agent.current_chat_id / current_thread_id
-    # via getters from bootstrap/tool_registry.py) land in the
-    # originating Telegram thread, not the base view. Without this the
-    # outbox text routes correctly (payload carries the origin) but
-    # any file the agent sends DIRECTLY misses the thread — the
-    # 2026-05-24 13:00 deutsch-new-words anki .txt incident.
-    if origin_chat_id is not None:
-        agent._current_chat_id = origin_chat_id
-    if origin_thread_id is not None:
-        agent._current_thread_id = origin_thread_id
-
-    result = await agent.run_turn(prompt)
+    # Plumb the cron's origin through run_turn's chat/thread kwargs.
+    # That binds the ContextVars (_chat_id_var / _thread_id_var) for
+    # this task — and the tool getters in bootstrap/tool_registry.py
+    # read agent.current_chat_id, whose property pulls from those vars.
+    # So send_file / tg_send_message / tg_send_poll / tg_send_voice
+    # called BY THE CRON AGENT now resolve to the origin thread.
+    #
+    # The previous attempt set agent._current_chat_id directly — wrong
+    # in two ways: (1) the tool getter references the MAIN agent
+    # (agent_ref[0]), not this freshly-spawned isolated one, so polls
+    # were going wherever the user's last INTERACTIVE turn had pointed;
+    # (2) run_turn overwrote the instance attr to None anyway. The
+    # ContextVar is task-local, so it doesn't leak back into the main
+    # agent's interactive flow (its asyncio task is separate).
+    result = await agent.run_turn(
+        prompt,
+        chat_id=origin_chat_id,
+        thread_id=origin_thread_id,
+    )
     return result
