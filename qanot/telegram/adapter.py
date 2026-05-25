@@ -1164,6 +1164,33 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             )
         except Exception as e:
             logger.warning("Failed to deliver proactive message: %s", e)
+            return
+
+        # Record the proactive message into THIS thread's conversation
+        # history so when the user replies the agent has context for
+        # what it sent. Without this the cron's "Mini Dialog — Kun 4
+        # … translate it" message landed in Telegram but never in the
+        # conv buffer; the user's translation looked like a cold
+        # message and the agent had to ask "are you translating into
+        # German?" before catching up (2026-05-25 13:00 incident).
+        #
+        # conv_key mirrors _conv_key() so a future incoming user
+        # message in the same thread hits the same conversation.
+        try:
+            if target_chat < 0:
+                conv_key = (
+                    f"group_{target_chat}_topic_{thread_id}"
+                    if thread_id else f"group_{target_chat}"
+                )
+            else:
+                conv_key = (
+                    f"user_{target_chat}_thread_{thread_id}"
+                    if thread_id else str(target_chat)
+                )
+            messages = self.agent._conv_manager.ensure_messages(conv_key)
+            messages.append({"role": "assistant", "content": formatted})
+        except Exception as e:  # noqa: BLE001 — recording must never break delivery
+            logger.debug("Proactive conv-history record skipped: %s", e)
 
     async def start(self) -> None:
         """Start the Telegram bot (polling or webhook based on config)."""
