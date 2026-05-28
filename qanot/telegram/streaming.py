@@ -51,6 +51,7 @@ class StreamingMixin:
         last_sent_text = ""
         interval = self.config.stream_flush_interval
         drafting_paused = False
+        saw_tool_use = False
 
         done_response = None
         try:
@@ -68,6 +69,7 @@ class StreamingMixin:
                             last_flush = now
 
                 elif event.type == "tool_use":
+                    saw_tool_use = True
                     drafting_paused = True
                     if accumulated and accumulated != last_sent_text:
                         await self._send_draft(chat_id, draft_id, accumulated, thread_id=thread_id)
@@ -81,9 +83,17 @@ class StreamingMixin:
         finally:
             typing_task.cancel()
 
-        # Use accumulated stream text, fall back to done response content, then error message
         done_content = (done_response.content if done_response and done_response.content else "")
-        final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
+        if accumulated:
+            final_text = accumulated
+        elif done_content:
+            final_text = done_content
+        elif saw_tool_use:
+            # Tools spoke for the model (e.g. burst of tg_send_poll ending in
+            # end_turn with no narrative). Not an error — just nothing left to say.
+            return
+        else:
+            final_text = "Xatolik yuz berdi, qaytadan urinib ko'ring."
         await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
 
     async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None, system_prompt_override: str | None = None) -> None:
@@ -93,6 +103,7 @@ class StreamingMixin:
         last_flush = 0.0
         interval = self.config.stream_flush_interval
         sent_msg_id: int | None = None
+        saw_tool_use = False
 
         done_response = None
         try:
@@ -122,6 +133,9 @@ class StreamingMixin:
                                 logger.debug("Partial edit skipped (unchanged text): %s", e)
                         last_flush = now
 
+                elif event.type == "tool_use":
+                    saw_tool_use = True
+
                 elif event.type == "done":
                     done_response = event.response
                     break
@@ -129,7 +143,15 @@ class StreamingMixin:
             typing_task.cancel()
 
         done_content = (done_response.content if done_response and done_response.content else "")
-        final_text = accumulated or done_content or "Xatolik yuz berdi, qaytadan urinib ko'ring."
+        if accumulated:
+            final_text = accumulated
+        elif done_content:
+            final_text = done_content
+        elif saw_tool_use and sent_msg_id is None:
+            # Tools spoke for the model; no narrative text to send.
+            return
+        else:
+            final_text = "Xatolik yuz berdi, qaytadan urinib ko'ring."
         if sent_msg_id:
             html = _md_to_html(final_text)
             try:

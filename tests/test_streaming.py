@@ -186,3 +186,87 @@ class TestStreamEventFallback:
         assert events[0].text == "fallback text"
         assert events[1].tool_call.name == "x"
         assert events[2].response.content == "fallback text"
+
+
+class TestRespondStreamFinalText:
+    """Final-text fallback in _respond_stream — must NOT send the generic
+    'Xatolik yuz berdi' error when the model legitimately ends with no text
+    after a burst of tool calls (e.g. 5×tg_send_poll → end_turn empty).
+    Regression: 2026-05-28 thread 222670 incident.
+    """
+
+    @pytest.fixture
+    def mixin(self):
+        from qanot.telegram.streaming import StreamingMixin
+
+        class _Fake(StreamingMixin):
+            def __init__(self):
+                self._draft_counter = 0
+                self._draft_sends = []
+                self._final_sends = []
+                self.config = type("C", (), {"stream_flush_interval": 9999.0})()
+                self.bot = None
+                self.agent = None
+
+            async def _typing_loop(self, chat_id):
+                # cooperate with cancel()
+                try:
+                    while True:
+                        await __import__("asyncio").sleep(3600)
+                except __import__("asyncio").CancelledError:
+                    return
+
+            async def _send_draft(self, chat_id, draft_id, text, *, thread_id=None):
+                self._draft_sends.append(text)
+
+            async def _send_final(self, chat_id, text, *, reply_to=None, thread_id=None):
+                self._final_sends.append(text)
+
+        return _Fake()
+
+    def _stub_agent(self, events):
+        async def run_turn_stream(*args, **kwargs):
+            for ev in events:
+                yield ev
+
+        return type("A", (), {"run_turn_stream": staticmethod(run_turn_stream)})()
+
+    @pytest.mark.asyncio
+    async def test_no_error_when_tools_ended_turn_silently(self, mixin):
+        """Model emits tool_use events then ends with empty content —
+        send nothing (tools spoke for the model). Must NOT send 'Xatolik'."""
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t1", name="tg_send_poll", input={})),
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t2", name="tg_send_poll", input={})),
+            StreamEvent(type="done", response=ProviderResponse(
+                content="", stop_reason="end_turn", usage=Usage(10, 0),
+            )),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        assert mixin._final_sends == []  # nothing sent — silent end is correct
+        assert all("Xatolik" not in s for s in mixin._draft_sends)
+
+    @pytest.mark.asyncio
+    async def test_error_when_no_tools_and_no_text(self, mixin):
+        """Genuine empty response (no tool_use, no text) — fallback fires."""
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="done", response=ProviderResponse(
+                content="", stop_reason="end_turn", usage=Usage(1, 0),
+            )),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        assert len(mixin._final_sends) == 1
+        assert "Xatolik yuz berdi" in mixin._final_sends[0]
+
+    @pytest.mark.asyncio
+    async def test_uses_accumulated_text(self, mixin):
+        """Normal path: streamed text becomes the final message."""
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="text_delta", text="Hello "),
+            StreamEvent(type="text_delta", text="world"),
+            StreamEvent(type="done", response=ProviderResponse(
+                content="Hello world", stop_reason="end_turn", usage=Usage(5, 2),
+            )),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        assert mixin._final_sends == ["Hello world"]
