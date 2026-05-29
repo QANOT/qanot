@@ -513,10 +513,17 @@ class _LoopMixin:
             stop_reason = response.stop_reason if response else ("tool_use" if tool_calls else "end_turn")
             content = response.content if response else ""
             usage = response.usage if response else Usage()
+            active_tool_calls = response.tool_calls if (response and response.tool_calls) else tool_calls
 
             # ── Tool use ──
-            if stop_reason == "tool_use" and (response.tool_calls if response else tool_calls):
-                active_tool_calls = response.tool_calls if (response and response.tool_calls) else tool_calls
+            # Execute whenever the model emitted tool calls, REGARDLESS of
+            # stop_reason. Opus 4.8 returns stop_reason="end_turn" while still
+            # emitting tool_use blocks; gating on stop_reason=="tool_use" here
+            # silently dropped those calls (the bot replied with only its
+            # preamble, e.g. "tekshiraman:", then stopped). An assistant turn
+            # with tool_use blocks REQUIRES tool_result blocks next, so we must
+            # always run them. Regression: 2026-05-29 opus-4-8 switch.
+            if active_tool_calls:
                 messages.append(self._build_assistant_tool_message(content, active_tool_calls))
                 self._log_tool_use(content, active_tool_calls, usage)
 

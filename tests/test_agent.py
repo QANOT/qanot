@@ -140,6 +140,46 @@ class TestAgent:
         assert provider._call_count == 2
 
     @pytest.mark.asyncio
+    async def test_tool_use_with_end_turn_stop_reason(self, tmp_path):
+        """Opus 4.8 returns stop_reason='end_turn' WHILE emitting tool_use blocks.
+
+        The loop must execute the tool calls whenever they are present,
+        regardless of stop_reason — otherwise the tools are silently dropped
+        and the user only sees the preamble text.
+
+        Regression: 2026-05-29 — after the opus-4-8 switch the bot replied
+        'tekshiraman:' then stopped; telemetry showed stop=end_turn with
+        tool_calls=['run_command', 'run_command'] that never executed.
+        """
+        provider = FakeProvider([
+            # opus-4-8: tool_use blocks present BUT stop_reason == end_turn
+            ProviderResponse(
+                content="Haqsiz, tekshiraman:",
+                stop_reason="end_turn",
+                tool_calls=[ToolCall(id="t1", name="ping", input={})],
+                usage=Usage(10, 5),
+            ),
+            # Follow-up after the tool result
+            ProviderResponse(
+                content="Bugun 29-may.",
+                stop_reason="end_turn",
+                usage=Usage(15, 8),
+            ),
+        ])
+        config = make_config(tmp_path)
+        reg = ToolRegistry()
+
+        async def ping(_):
+            return json.dumps({"status": "pong"})
+
+        reg.register("ping", "Ping test", {"type": "object"}, ping)
+
+        agent = Agent(config=config, provider=provider, tool_registry=reg)
+        result = await agent.run_turn("tekshirib ko'r")
+        assert result == "Bugun 29-may."
+        assert provider._call_count == 2
+
+    @pytest.mark.asyncio
     async def test_max_iterations(self, tmp_path):
         """Agent should stop after MAX_ITERATIONS."""
         # Use unique inputs per call to avoid triggering loop detection
