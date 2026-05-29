@@ -253,7 +253,7 @@ class LifecycleHandlersMixin:
         if len(parts) > 1:
             model_hint = parts[1].strip().lower()
             model_map = {
-                "opus": "claude-opus-4-6",
+                "opus": "claude-opus-4-8",
                 "sonnet": "claude-sonnet-4-6",
                 "haiku": "claude-haiku-4-5-20251001",
             }

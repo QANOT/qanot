@@ -415,7 +415,7 @@ def register_video_tools(
     bot_limit = int(getattr(config, "video_per_bot_daily_limit", 50))
     user_cost_cap = float(getattr(config, "video_per_user_daily_cost_usd", 0.50))
     bot_cost_cap = float(getattr(config, "video_per_bot_daily_cost_usd", 5.00))
-    composition_model = getattr(config, "video_composition_model", "claude-sonnet-4-6")
+    composition_model = getattr(config, "video_composition_model", "claude-opus-4-8")
     default_duration = int(getattr(config, "video_default_duration_seconds", 30))
     max_duration = int(getattr(config, "video_max_duration_seconds", 60))
 

@@ -77,7 +77,7 @@ class Config:
     bot_token: str = ""
     # Legacy single-provider fields (still supported)
     provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6"
+    model: str = "claude-opus-4-8"
     api_key: str = ""
     # Multi-provider support
     providers: list[ProviderConfig] = field(default_factory=list)
@@ -292,7 +292,7 @@ class Config:
     # Model routing (cost optimization)
     routing_enabled: bool = False  # Route simple messages to cheaper model
     routing_model: str = "claude-haiku-4-5-20251001"  # Cheap model (greetings)
-    routing_mid_model: str = "claude-sonnet-4-6"  # Mid model (general conversation)
+    routing_mid_model: str = "claude-opus-4-8"  # Mid model (general conversation)
     routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
     # Image generation (Nano Banana / Gemini)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
@@ -316,7 +316,7 @@ class Config:
     video_per_bot_daily_limit: int = 50
     video_per_user_daily_cost_usd: float = 0.50
     video_per_bot_daily_cost_usd: float = 5.00
-    video_composition_model: str = "claude-sonnet-4-6"
+    video_composition_model: str = "claude-opus-4-8"
     video_default_duration_seconds: int = 30
     video_max_duration_seconds: int = 60
     # Reels (legacy plugins/reels) → qanot-video service routing.

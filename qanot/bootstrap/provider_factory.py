@@ -92,7 +92,7 @@ def build_provider(config: Config, logger: logging.Logger) -> LLMProvider:
     # Wrap with routing provider if enabled (cost optimization)
     if config.routing_enabled:
         from qanot.routing import RoutingProvider
-        routing_mid_model = getattr(config, "routing_mid_model", "claude-sonnet-4-6")
+        routing_mid_model = getattr(config, "routing_mid_model", "claude-opus-4-8")
         provider = RoutingProvider(
             provider=provider,
             cheap_model=config.routing_model,

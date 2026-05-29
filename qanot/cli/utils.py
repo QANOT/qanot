@@ -31,11 +31,11 @@ AI_PROVIDERS = {
     "anthropic": {
         "label": "Anthropic (Claude)",
         "models": [
-            ("claude-sonnet-4-6", "Claude Sonnet 4.6 — fast, recommended"),
-            ("claude-opus-4-6", "Claude Opus 4.6 — most capable"),
+            ("claude-opus-4-8", "Claude Opus 4.8 — most capable, recommended"),
+            ("claude-sonnet-4-6", "Claude Sonnet 4.6 — fast"),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 — cheapest"),
         ],
-        "default_model": "claude-sonnet-4-6",
+        "default_model": "claude-opus-4-8",
         "key_hint": "sk-ant-... or sk-ant-oat...",
     },
     "openai": {

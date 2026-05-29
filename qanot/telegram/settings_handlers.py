@@ -58,7 +58,7 @@ class SettingsHandlersMixin:
 
         current = self.config.model
         models = [
-            ("claude-opus-4-6", "Opus 4.6", "Eng kuchli"),
+            ("claude-opus-4-8", "Opus 4.8", "Eng kuchli"),
             ("claude-sonnet-4-6", "Sonnet 4.6", "Tez va sifatli"),
             ("claude-haiku-4-5-20251001", "Haiku 4.5", "Eng arzon"),
         ]
@@ -582,6 +582,7 @@ class SettingsHandlersMixin:
     async def _cb_model(self, callback: "CallbackQuery", model_id: str) -> None:
         self._switch_model(model_id)
         model_names = {
+            "claude-opus-4-8": "Opus 4.8",
             "claude-opus-4-6": "Opus 4.6",
             "claude-sonnet-4-6": "Sonnet 4.6",
             "claude-haiku-4-5-20251001": "Haiku 4.5",

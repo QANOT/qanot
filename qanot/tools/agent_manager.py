@@ -399,7 +399,7 @@ def register_agent_manager_tools(
                 },
                 "model": {
                     "type": "string",
-                    "description": "LLM model (bo'sh = asosiy model). Masalan: 'claude-opus-4-6', 'claude-haiku-4-5'.",
+                    "description": "LLM model (bo'sh = asosiy model). Masalan: 'claude-opus-4-8', 'claude-haiku-4-5'.",
                 },
                 "provider": {
                     "type": "string",

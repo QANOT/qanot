@@ -140,7 +140,7 @@ class RoutingProvider(LLMProvider):
         self,
         provider: LLMProvider,
         cheap_model: str = "claude-haiku-4-5-20251001",
-        mid_model: str = "claude-sonnet-4-6",
+        mid_model: str = "claude-opus-4-8",
         threshold: float = 0.3,
     ):
         self._provider = provider

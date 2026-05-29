@@ -267,7 +267,8 @@ class TestRoutingProvider:
     async def test_custom_threshold(self):
         """Higher threshold means more messages go to primary."""
         fake = FakeProvider(model="claude-sonnet-4-6")
-        router = RoutingProvider(fake, threshold=0.05)  # Very low threshold
+        # Pin mid_model to the primary so the assertion isolates threshold behavior
+        router = RoutingProvider(fake, mid_model="claude-sonnet-4-6", threshold=0.05)  # Very low threshold
 
         # Short question — would normally be simple, but threshold is very low
         await router.chat(self._make_messages("qanday?"))

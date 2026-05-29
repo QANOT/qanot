@@ -85,8 +85,8 @@ async def main() -> None:
     # Provider stack (single/multi/failover + optional routing wrapper)
     provider = build_provider(config, logger)
 
-    # Create context tracker (auto-detect 1M for Opus/Sonnet 4.6)
-    _1M_MODELS = ("claude-opus-4-6", "claude-sonnet-4-6")
+    # Create context tracker (auto-detect 1M for Opus 4.8 / Opus 4.6 / Sonnet 4.6)
+    _1M_MODELS = ("claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6")
     if config.max_context_tokens > 0:
         ctx_tokens = config.max_context_tokens
     elif any(m in config.model for m in _1M_MODELS):

@@ -78,5 +78,5 @@ class TestConfigDataclass:
     def test_default_values(self):
         config = Config()
         assert config.provider == "anthropic"
-        assert config.model == "claude-sonnet-4-6"
+        assert config.model == "claude-opus-4-8"
         assert config.max_context_tokens == 0  # 0 = auto-detect from model

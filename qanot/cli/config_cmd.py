@@ -56,7 +56,7 @@ def _config_help() -> None:
     print()
     print("Examples:")
     print("  qanot config show")
-    print("  qanot config set model claude-sonnet-4-6")
+    print("  qanot config set model claude-opus-4-8")
     print("  qanot config set response_mode partial")
     print("  qanot config add-provider")
     print()
