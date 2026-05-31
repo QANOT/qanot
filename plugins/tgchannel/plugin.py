@@ -931,6 +931,129 @@ class TgChannelPlugin(Plugin):
     async def channel_post_audio(self, params: dict) -> str:
         return await self._post_single_media(params, method="audio", required_param="audio")
 
+    @tool(
+        name="channel_post_voice",
+        description=(
+            "Post a VOICE message (waveform bubble) to the channel. Two modes:\n"
+            "1) Give 'text' (+ optional 'language': de/uz/en/ru) — it synthesizes "
+            "speech via TTS and posts it. Use for listening exercises / pronunciation.\n"
+            "2) Give a ready 'voice' (Telegram file_id, public URL, or local file path) "
+            "to post existing audio as a voice note.\n"
+            "Optional 'caption' (≤1024 chars). For long text, post the transcript "
+            "separately with channel_post."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string"},
+                "text": {"type": "string", "description": "Matn — TTS bilan ovozga aylantiriladi"},
+                "language": {"type": "string", "description": "de/uz/en/ru (default: uz)"},
+                "voice_name": {"type": "string", "description": "TTS ovoz nomi (ixtiyoriy)"},
+                "provider": {"type": "string", "description": "TTS provider override (ixtiyoriy)"},
+                "voice": {"type": "string", "description": "Tayyor audio: file_id / URL / local path ('text' o'rniga)"},
+                "caption": {"type": "string"},
+                "parse_mode": {"type": "string", "enum": ["HTML", "MarkdownV2", "none"]},
+                "protect_content": {"type": "boolean"},
+                "notify": {"type": "boolean"},
+                "buttons": {"type": "array"},
+            },
+        },
+    )
+    async def channel_post_voice(self, params: dict) -> str:
+        if self._client is None:
+            return self._not_configured()
+
+        # Mode 2: a ready voice file/URL/file_id — post directly.
+        if (params.get("voice") or "").strip():
+            return await self._post_single_media(params, method="voice", required_param="voice")
+
+        # Mode 1: synthesize from text via TTS, then post the generated file.
+        text = (params.get("text") or "").strip()
+        if not text:
+            return json.dumps(
+                {"error": "'text' (TTS uchun) yoki 'voice' (tayyor fayl) kerak"},
+                ensure_ascii=False,
+            )
+        if len(text) > 4000:
+            return json.dumps(
+                {"error": f"text too long ({len(text)} chars); ≤4000 ga bo'ling"},
+                ensure_ascii=False,
+            )
+
+        audio_path, cleanup_path, err = await self._tts_to_file(
+            text,
+            language=(params.get("language") or "").strip().lower() or None,
+            voice=(params.get("voice_name") or "").strip() or None,
+            provider=(params.get("provider") or "").strip().lower() or None,
+        )
+        if err:
+            return json.dumps({"error": err}, ensure_ascii=False)
+        try:
+            p = dict(params)
+            p["voice"] = audio_path
+            return await self._post_single_media(p, method="voice", required_param="voice")
+        finally:
+            if cleanup_path:
+                try:
+                    import os as _os
+                    _os.unlink(cleanup_path)
+                except Exception:
+                    pass
+
+    async def _tts_to_file(
+        self, text: str, *, language: str | None, voice: str | None, provider: str | None,
+    ) -> tuple[str, str | None, str | None]:
+        """Synthesize `text` to a local audio file. Returns (path, cleanup, error).
+
+        Mirrors the provider auto-selection in qanot.tools.builtin.tg_send_voice
+        (kept isolated here to avoid touching that working voice path):
+        non-Uzbek text prefers OpenAI → Aisha for natural multilingual TTS.
+        """
+        try:
+            from qanot.config import load_config
+            import os as _os
+            cfg = load_config(_os.environ.get("QANOT_CONFIG", "/data/config.json"))
+        except Exception as e:
+            return "", None, f"config load failed: {e}"
+
+        pinned = provider is not None
+        provider = provider or getattr(cfg, "voice_provider", None) or "muxlisa"
+        if language and language != "uz" and not pinned:
+            if cfg.get_voice_api_key("openai"):
+                provider = "openai"
+            elif cfg.get_voice_api_key("aisha"):
+                provider = "aisha"
+        api_key = cfg.get_voice_api_key(provider)
+        if not api_key:
+            return "", None, (
+                f"voice provider '{provider}' has no API key "
+                f"(set voice_api_keys.{provider} in config.json)"
+            )
+        if not language:
+            language = "uz"
+
+        try:
+            from qanot.voice import text_to_speech, download_audio
+            result = await text_to_speech(
+                text, api_key=api_key, provider=provider,
+                language=language, voice=voice, mood="neutral",
+            )
+        except Exception as e:
+            return "", None, f"TTS failed: {e}"
+
+        if result.audio_url:
+            try:
+                path = await download_audio(result.audio_url)
+                return path, path, None
+            except Exception as e:
+                return "", None, f"audio download failed: {e}"
+        if result.audio_data:
+            import tempfile as _tempfile
+            with _tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp.write(result.audio_data)
+                return tmp.name, tmp.name, None
+        return "", None, "TTS returned no audio"
+
     async def _post_single_media(
         self,
         params: dict,
@@ -986,6 +1109,7 @@ class TgChannelPlugin(Plugin):
                 "animation": self._client.send_animation,
                 "document": self._client.send_document,
                 "audio": self._client.send_audio,
+                "voice": self._client.send_voice,
             }[method]
         except KeyError:
             return json.dumps({"error": f"unknown media method: {method}"}, ensure_ascii=False)

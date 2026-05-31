@@ -409,6 +409,37 @@ class TelegramClient:
             reply_markup=reply_markup,
         )
 
+    async def send_voice(
+        self,
+        chat_id: int | str,
+        voice: str,
+        *,
+        caption: str | None = None,
+        parse_mode: str | None = "HTML",
+        duration: int | None = None,
+        protect_content: bool = False,
+        disable_notification: bool = False,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        """Post a voice message (waveform bubble) to a channel/chat.
+
+        `voice` may be a public URL, a Telegram file_id, or a local file
+        path (multipart upload). Mirrors send_audio but uses the Bot API
+        sendVoice method so Telegram renders it as a voice note.
+        """
+        return await self._send_media_generic(
+            "sendVoice",
+            chat_id=chat_id,
+            media_field="voice",
+            media=voice,
+            caption=caption,
+            parse_mode=parse_mode,
+            duration=duration,
+            protect_content=protect_content,
+            disable_notification=disable_notification,
+            reply_markup=reply_markup,
+        )
+
     async def _send_media_generic(
         self,
         method: str,

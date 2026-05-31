@@ -132,6 +132,21 @@ def test_send_photo_url_uses_json_path():
     assert call["json"]["has_spoiler"] is True
 
 
+def test_send_voice_url_uses_sendvoice_json_path():
+    c, session = _client([
+        _FakeResponse(200, {"ok": True, "result": {"message_id": 77}}),
+    ])
+    result = asyncio.run(c.send_voice(
+        -1001, "https://example.com/a.ogg", caption="hör zu", duration=14,
+    ))
+    assert result["message_id"] == 77
+    call = session.calls[0]
+    assert call["url"].endswith("/sendVoice")
+    assert call["json"] is not None
+    assert call["json"]["voice"] == "https://example.com/a.ogg"
+    assert call["json"]["duration"] == 14
+
+
 def test_send_poll_rejects_bad_options():
     c, session = _client([])
     with pytest.raises(TelegramAPIError):
