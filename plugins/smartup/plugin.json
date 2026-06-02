@@ -1,0 +1,21 @@
+{
+  "name": "smartup",
+  "version": "1.0.0",
+  "description": "Smartup ERP — tovarlar, tannarx, mijozlar va mijozlarga narx ro'yxati (Excel)",
+  "author": "Qanot AI",
+  "dependencies": [
+    "aiohttp",
+    "openpyxl"
+  ],
+  "required_config": [
+    "login",
+    "password"
+  ],
+  "cloud": {
+    "display_name": "Smartup",
+    "icon": "📦",
+    "category": "erp",
+    "connect_type": "miniapp",
+    "visible": true
+  }
+}
