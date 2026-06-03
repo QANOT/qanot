@@ -269,3 +269,49 @@ class TestDeliverProactive:
 
         # Should not raise
         await adapter._deliver_proactive("Important alert", source="cron")
+
+
+class TestStopCancelsTurn:
+    """/stop cancels the in-flight agent turn (#3)."""
+
+    def _adapter(self):
+        from qanot.telegram import TelegramAdapter
+
+        adapter = TelegramAdapter.__new__(TelegramAdapter)
+        adapter._active_turns = {}
+        adapter._pending_approvals = {}
+        adapter._send_final = AsyncMock()
+        adapter._check_command_access = lambda m: True
+        adapter._conv_key = lambda m: str(m.from_user.id)
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_active_turn(self):
+        import asyncio
+
+        adapter = self._adapter()
+        started = asyncio.Event()
+
+        async def long_turn():
+            started.set()
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(long_turn())
+        adapter._active_turns["12345"] = task
+        await started.wait()
+
+        await adapter._handle_stop(_make_message(user_id=12345))
+
+        # The turn task was cancelled and the confirmation was sent.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        sent = adapter._send_final.call_args[0][1]
+        assert "To'xtatildi" in sent
+
+    @pytest.mark.asyncio
+    async def test_stop_with_nothing_running(self):
+        adapter = self._adapter()
+        await adapter._handle_stop(_make_message(user_id=12345))
+        sent = adapter._send_final.call_args[0][1]
+        assert "Hech narsa" in sent

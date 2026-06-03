@@ -25,6 +25,7 @@ class LifecycleHandlersMixin:
     agent: "Agent"
     config: "Config"
     _pending_approvals: dict[str, dict]
+    _active_turns: dict
 
     # ── Config persistence helper ─────────────────────────
 
@@ -420,6 +421,19 @@ class LifecycleHandlersMixin:
         if not self._check_command_access(message):
             return
 
+        # Cancel the running agent turn for THIS conversation. aiogram handles
+        # the /stop update on a separate task, so this runs concurrently with
+        # the turn it cancels. Cancelling raises CancelledError into the
+        # streaming loop (finally blocks stop typing/heartbeat), which
+        # _process_turn catches and returns on — no error reply.
+        turn_cancelled = False
+        active = getattr(self, "_active_turns", None)
+        if active is not None:
+            turn = active.get(self._conv_key(message))
+            if turn is not None and not turn.done():
+                turn.cancel()
+                turn_cancelled = True
+
         # Cancel pending approvals for this user
         user_id = message.from_user.id
         cancelled = 0
@@ -429,11 +443,14 @@ class LifecycleHandlersMixin:
                 self._pending_approvals.pop(aid, None)
                 cancelled += 1
 
-        await self._send_final(
-            message.chat.id,
-            f"\u26d4 To'xtatildi. ({cancelled} so'rov bekor qilindi)" if cancelled
-            else "\u26d4 Hech narsa ishlamayotgan edi.",
-        )
+        if turn_cancelled or cancelled:
+            msg = (
+                f"\u26d4 To'xtatildi. ({cancelled} so'rov bekor qilindi)"
+                if cancelled else "\u26d4 To'xtatildi."
+            )
+        else:
+            msg = "\u26d4 Hech narsa ishlamayotgan edi."
+        await self._send_final(message.chat.id, msg)
 
     # ── Callback query router ─────────────────────────────
 

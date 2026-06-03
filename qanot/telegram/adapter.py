@@ -97,6 +97,9 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         self._bot_username: str | None = None
         self._user_locks: dict[str, asyncio.Lock] = {}
         self._pending_messages: dict[str, list[tuple]] = {}
+        # In-flight agent turn per conversation, so /stop can cancel it mid-run
+        # (aiogram processes the /stop update on a separate task, concurrently).
+        self._active_turns: dict[str, asyncio.Task] = {}
         self._pending_approvals: dict[str, dict] = {}
         # MCP install/remove proposals awaiting user approval (10-min TTL, in-memory only)
         self._pending_mcp_proposals: dict[str, dict] = {}
@@ -1074,11 +1077,20 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
             reply_to = None
         try:
             if mode == "stream":
-                await self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
+                coro = self._respond_stream(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
             elif mode == "partial":
-                await self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
+                coro = self._respond_partial(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
             else:
-                await self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
+                coro = self._respond_blocked(message.chat.id, conv_key, text, images=images, reply_to=reply_to, thread_id=thread_id, message_id=message.message_id, system_prompt_override=system_prompt_override)
+
+            # Run the turn as a tracked task so /stop can cancel it mid-run.
+            turn_task = asyncio.create_task(coro)
+            self._active_turns[conv_key] = turn_task
+            try:
+                await turn_task
+            finally:
+                if self._active_turns.get(conv_key) is turn_task:
+                    self._active_turns.pop(conv_key, None)
 
             await send_pending_images(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
             await send_pending_files(self.bot, message.chat.id, conv_key, self.agent, thread_id=thread_id)
@@ -1093,6 +1105,16 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
 
             await self._react(message.chat.id, message.message_id, "\u2705")
 
+        except asyncio.CancelledError:
+            # /stop cancelled this turn (the cancellation targets turn_task, not
+            # this handler). _handle_stop already sent the confirmation, so just
+            # acknowledge on the user's message and stop \u2014 no error reply.
+            logger.info("Turn cancelled by /stop: %s", conv_key)
+            try:
+                await self._react(message.chat.id, message.message_id, "\u26d4")
+            except Exception:
+                pass
+            return
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)
             await self._react(message.chat.id, message.message_id, "\u274c")
