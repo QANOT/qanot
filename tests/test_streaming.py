@@ -403,3 +403,45 @@ class TestToolProgressBubbles:
         assert any("Ishlayapman" in t for t in mixin.progress_sends)
         assert len(mixin.deleted) >= 1  # heartbeat bubbles cleaned up
         assert mixin._final_sends == ["ok"]
+
+
+class TestChunkIndicators:
+    """Split long replies get (i/n) footers (#7)."""
+
+    def _mixin(self):
+        from qanot.telegram.streaming import StreamingMixin
+
+        class _RecBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, **kw):
+                self.sent.append(kw.get("text", ""))
+                return type("M", (), {"message_id": len(self.sent)})()
+
+        class _Fake(StreamingMixin):
+            def __init__(self):
+                self.bot = _RecBot()
+                self.agent = None
+                self.config = type("C", (), {"workspace_dir": "/tmp"})()
+
+        return _Fake()
+
+    @pytest.mark.asyncio
+    async def test_single_chunk_has_no_indicator(self):
+        mixin = self._mixin()
+        await mixin._send_final(1, "short reply")
+        assert len(mixin.bot.sent) == 1
+        assert "(1/" not in mixin.bot.sent[0]
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_gets_numbered_footers(self):
+        mixin = self._mixin()
+        # Force a split: a paragraph well over MAX_MSG_LEN with newline cut points.
+        from qanot.telegram.formatting import MAX_MSG_LEN
+        para = ("lorem ipsum dolor sit amet\n" * ((MAX_MSG_LEN // 26) + 50))
+        await mixin._send_final(1, para)
+        assert len(mixin.bot.sent) >= 2
+        n = len(mixin.bot.sent)
+        for i, body in enumerate(mixin.bot.sent, start=1):
+            assert f"({i}/{n})" in body

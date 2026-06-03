@@ -321,10 +321,16 @@ class StreamingMixin:
         text = _sanitize_response(text)
         html = _md_to_html(text)
         chunks = _split_text(html)
+        total = len(chunks)
         last_message_id = 0
         for i, chunk in enumerate(chunks):
+            # On a split reply, footer each part with "(i/n)" so the reader
+            # knows more is coming and in what order. Appended outside any
+            # <pre> span (split guarantees balanced chunks), so it's safe in
+            # both the HTML and plain-text send paths. Single chunk: no footer.
+            body = chunk if total == 1 else f"{chunk}\n\n({i + 1}/{total})"
             sent_id = await self._send_final_chunk(
-                chat_id, chunk,
+                chat_id, body,
                 reply_to=reply_to if i == 0 else None,
                 thread_id=thread_id,
             )
