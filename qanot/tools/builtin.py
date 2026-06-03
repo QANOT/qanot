@@ -234,6 +234,7 @@ def register_builtin_tools(
     exec_security: str = "open",
     exec_allowlist: list[str] | None = None,
     approval_callback: Callable | None = None,
+    clarify_callback: Callable | None = None,
     get_bot: Callable | None = None,
     get_chat_id: Callable[[], int | None] | None = None,
     get_thread_id: Callable[[], int | None] | None = None,
@@ -244,6 +245,7 @@ def register_builtin_tools(
     exec_security: "open" | "cautious" | "strict"
     exec_allowlist: commands allowed in strict mode (prefix match)
     approval_callback: async fn(user_id, command, reason) -> bool (for inline buttons)
+    clarify_callback: async fn(user_id, question, options) -> str | None (ask_user)
     """
 
     # ── read_file ──
@@ -598,6 +600,64 @@ def register_builtin_tools(
         handler=send_file,
     )
 
+
+    # ── ask_user (agent-driven clarify) ──
+    async def ask_user(params: dict) -> str:
+        """Ask a multiple-choice question via inline buttons and wait for the tap.
+
+        Returns the chosen option so the agent can resolve ambiguity instead
+        of guessing. Unlike tg_send_poll (anonymous survey/quiz), this BLOCKS
+        the turn until the user answers and feeds the choice straight back.
+        """
+        question = (params.get("question") or "").strip()
+        options_raw = params.get("options")
+        if not question:
+            return json.dumps({"error": "question is required"})
+        if not isinstance(options_raw, list) or len(options_raw) < 2:
+            return json.dumps({"error": "options must be an array of 2-8 strings"})
+        options = [str(o).strip() for o in options_raw if str(o).strip()][:8]
+        if len(options) < 2:
+            return json.dumps({"error": "need at least 2 non-empty options"})
+        if clarify_callback is None:
+            return json.dumps({"error": "Clarify UI not available in this context."})
+        user_id = (get_user_id() if get_user_id else None) or ""
+        try:
+            answer = await clarify_callback(user_id, question, options)
+        except Exception as e:
+            return json.dumps({"error": f"clarify failed: {type(e).__name__}"})
+        if answer is None:
+            return json.dumps({
+                "answer": None,
+                "note": "No answer in time — use your best judgement or ask again in text.",
+            })
+        return json.dumps({"answer": answer})
+
+    registry.register(
+        name="ask_user",
+        description=(
+            "Ask the user a short multiple-choice question with tappable "
+            "buttons and WAIT for the answer. Use when a request is ambiguous "
+            "and guessing is risky (which file? which account? confirm before "
+            "a costly/irreversible action?). Returns the chosen option. Prefer "
+            "this over guessing; for free-form answers just ask in plain text."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["question", "options"],
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask (short, one line).",
+                },
+                "options": {
+                    "type": "array",
+                    "description": "2-8 answer choices; each ≤60 chars shown on a button.",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+        handler=ask_user,
+    )
 
     # ── tg_send_poll ──
     async def tg_send_poll(params: dict) -> str:

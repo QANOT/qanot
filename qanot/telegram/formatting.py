@@ -45,6 +45,67 @@ def _strip_inner_markers(body: str) -> str:
     return body
 
 
+def _table_cells(line: str) -> list[str]:
+    """Split one markdown table row into trimmed cells (drops the edge pipes)."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _is_separator_row(cells: list[str]) -> bool:
+    """True for the ``|---|:--:|`` divider row beneath a table header."""
+    return bool(cells) and all(
+        c and set(c) <= {"-", ":", " "} and "-" in c for c in cells
+    )
+
+
+def _render_table_to_bullets(table_text: str) -> str:
+    """Render a GFM table as Telegram-friendly bullet groups.
+
+    A pipe table is unreadable on a phone — it wraps and misaligns inside a
+    ``<pre>`` block. Instead, each data row becomes a bullet whose header is
+    the first column and whose remaining columns render as ``Label: value``
+    lines, e.g.::
+
+        • Apple
+          Narx: 100
+          Soni: 5
+
+    Falls back to the raw rows when the block isn't a real table.
+    """
+    rows = [r for r in table_text.splitlines() if r.strip()]
+    if len(rows) < 2:
+        return _strip_inner_markers(table_text.strip())
+
+    header = _table_cells(rows[0])
+    body_start = 1
+    if len(rows) > 1 and _is_separator_row(_table_cells(rows[1])):
+        body_start = 2
+    data_rows = rows[body_start:]
+    if not data_rows:
+        # Header only (no data) — show the header cells as a simple line.
+        return _strip_inner_markers(" · ".join(c for c in header if c))
+
+    groups: list[str] = []
+    for row in data_rows:
+        cells = _table_cells(row)
+        if not cells:
+            continue
+        first = _strip_inner_markers(cells[0]) or "—"
+        lines = [f"• <b>{first}</b>"]
+        for i in range(1, len(cells)):
+            val = _strip_inner_markers(cells[i])
+            if not val:
+                continue
+            label = _strip_inner_markers(header[i]) if i < len(header) and header[i] else ""
+            lines.append(f"   {label}: {val}" if label else f"   {val}")
+        groups.append("\n".join(lines))
+    return "\n\n".join(groups)
+
+
 def _md_to_html(text: str) -> str:
     """Convert agent markdown to Telegram HTML."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -54,7 +115,7 @@ def _md_to_html(text: str) -> str:
     text = _RE_CODE_BLOCK.sub(wrap_code, text)
 
     def wrap_table(m: re.Match) -> str:
-        return f"\n<pre>{_strip_inner_markers(m.group(0).strip())}</pre>\n"
+        return f"\n{_render_table_to_bullets(m.group(0))}\n"
     text = _RE_TABLE.sub(wrap_table, text)
     text = _RE_HR.sub("\u2501" * 18, text)
     text = _RE_BOLD.sub(r"<b>\1</b>", text)

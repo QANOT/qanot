@@ -269,3 +269,145 @@ class TestDeliverProactive:
 
         # Should not raise
         await adapter._deliver_proactive("Important alert", source="cron")
+
+
+class TestStopCancelsTurn:
+    """/stop cancels the in-flight agent turn (#3)."""
+
+    def _adapter(self):
+        from qanot.telegram import TelegramAdapter
+
+        adapter = TelegramAdapter.__new__(TelegramAdapter)
+        adapter._active_turns = {}
+        adapter._pending_approvals = {}
+        adapter._send_final = AsyncMock()
+        adapter._check_command_access = lambda m: True
+        adapter._conv_key = lambda m: str(m.from_user.id)
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_active_turn(self):
+        import asyncio
+
+        adapter = self._adapter()
+        started = asyncio.Event()
+
+        async def long_turn():
+            started.set()
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(long_turn())
+        adapter._active_turns["12345"] = task
+        await started.wait()
+
+        await adapter._handle_stop(_make_message(user_id=12345))
+
+        # The turn task was cancelled and the confirmation was sent.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        sent = adapter._send_final.call_args[0][1]
+        assert "To'xtatildi" in sent
+
+    @pytest.mark.asyncio
+    async def test_stop_with_nothing_running(self):
+        adapter = self._adapter()
+        await adapter._handle_stop(_make_message(user_id=12345))
+        sent = adapter._send_final.call_args[0][1]
+        assert "Hech narsa" in sent
+
+
+class TestAskUserClarify:
+    """ask_user tool + request_clarification button flow (#6)."""
+
+    @pytest.mark.asyncio
+    async def test_ask_user_tool_returns_choice(self):
+        import json
+        from qanot.registry import ToolRegistry
+        from qanot.tools.builtin import register_builtin_tools
+        from qanot.context import ContextTracker
+
+        async def clar(uid, q, opts):
+            assert uid == "1" and q == "Qaysi?" and opts == ["A", "B"]
+            return opts[1]
+
+        r = ToolRegistry()
+        register_builtin_tools(
+            r, "/tmp", ContextTracker(max_tokens=100000),
+            get_user_id=lambda: "1", clarify_callback=clar,
+        )
+        out = await r.execute("ask_user", {"question": "Qaysi?", "options": ["A", "B"]})
+        assert json.loads(out)["answer"] == "B"
+
+    @pytest.mark.asyncio
+    async def test_ask_user_rejects_too_few_options(self):
+        import json
+        from qanot.registry import ToolRegistry
+        from qanot.tools.builtin import register_builtin_tools
+        from qanot.context import ContextTracker
+
+        r = ToolRegistry()
+        register_builtin_tools(
+            r, "/tmp", ContextTracker(max_tokens=100000),
+            clarify_callback=lambda *a: None,
+        )
+        out = await r.execute("ask_user", {"question": "x", "options": ["only one"]})
+        assert "error" in json.loads(out)
+
+    @pytest.mark.asyncio
+    async def test_request_clarification_resolves_on_button(self):
+        import asyncio
+        from qanot.telegram import TelegramAdapter
+
+        adapter = TelegramAdapter.__new__(TelegramAdapter)
+        adapter._pending_clarifications = {}
+        adapter.agent = type("A", (), {"current_chat_id": 555, "current_thread_id": None})()
+
+        class _Bot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, **kw):
+                self.sent.append(kw)
+                return type("M", (), {"message_id": 1})()
+
+        adapter.bot = _Bot()
+
+        task = asyncio.create_task(
+            adapter.request_clarification("123", "Qaysi fayl?", ["a.txt", "b.txt"])
+        )
+        # let the coroutine send the buttons + register the pending future
+        for _ in range(5):
+            await asyncio.sleep(0)
+            if adapter._pending_clarifications:
+                break
+        assert len(adapter._pending_clarifications) == 1
+        assert any("Qaysi fayl?" in str(k.get("text", "")) for k in adapter.bot.sent)
+        clar_id = next(iter(adapter._pending_clarifications))
+
+        cb = MagicMock()
+        cb.from_user.id = 123
+        cb.message.edit_text = AsyncMock()
+        cb.answer = AsyncMock()
+        await adapter._cb_clarify(cb, f"clarify:{clar_id}:1", 123)
+
+        result = await task
+        assert result == "b.txt"
+        assert adapter._pending_clarifications == {}  # cleaned up
+
+    @pytest.mark.asyncio
+    async def test_clarify_wrong_user_cannot_answer(self):
+        import asyncio
+        from qanot.telegram import TelegramAdapter
+
+        adapter = TelegramAdapter.__new__(TelegramAdapter)
+        adapter._pending_clarifications = {
+            "abc": {"user_id": 111, "question": "q", "options": ["x", "y"],
+                    "future": asyncio.get_event_loop().create_future()},
+        }
+        cb = MagicMock()
+        cb.answer = AsyncMock()
+        await adapter._cb_clarify(cb, "clarify:abc:0", 999)  # different user
+        # future not resolved, pending kept
+        assert not adapter._pending_clarifications["abc"]["future"].done()
+        cb.answer.assert_awaited()

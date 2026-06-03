@@ -113,6 +113,16 @@ class Config:
     allowed_users: list[int] = field(default_factory=list)
     response_mode: str = "stream"  # "stream" | "partial" | "blocked"
     stream_flush_interval: float = 0.8  # seconds between draft updates
+    # Mid-turn tool-progress bubbles ("🔍 web_search …") shown while tools run.
+    #   "off"      — never show (legacy behaviour)
+    #   "minimal"  — one bubble per tool call: emoji + tool name
+    #   "detailed" — emoji + tool name + a short argument preview
+    # On success the bubbles are deleted once the final answer lands
+    # (tool_progress_cleanup); on error they stay as breadcrumbs.
+    tool_progress: str = "minimal"  # "off" | "minimal" | "detailed"
+    tool_progress_cleanup: bool = True  # delete progress bubbles after final reply
+    # "Still working… (N min — running: tool)" heartbeat for long turns.
+    long_run_notice_seconds: int = 60  # 0 disables; first notice after N s, then every N s
     telegram_mode: str = "polling"  # "polling" | "webhook"
     webhook_url: str = ""  # e.g. "https://bot.example.com/webhook"
     webhook_port: int = 8443  # local port for webhook server

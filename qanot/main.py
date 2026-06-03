@@ -170,6 +170,14 @@ async def main() -> None:
             reason=reason,
         )
 
+    async def _clarify_callback(user_id: str, question: str, options: list):
+        """Route an ask_user clarify question to Telegram inline buttons."""
+        if not _telegram_ref:
+            return None
+        return await _telegram_ref[0].request_clarification(
+            user_id=user_id, question=question, options=options,
+        )
+
     # Session writer + cron scheduler — both are needed by the pre-agent
     # tool registration (cron tools take a scheduler ref).
     session = SessionWriter(config.sessions_dir)
@@ -189,6 +197,7 @@ async def main() -> None:
         agent_ref=_agent_ref,
         telegram_ref=_telegram_ref,
         approval_callback=_approval_callback if config.exec_security == "cautious" else None,
+        clarify_callback=_clarify_callback,
         logger=logger,
     )
 

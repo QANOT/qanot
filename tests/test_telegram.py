@@ -31,13 +31,10 @@ class TestMdToHtml:
         result = _md_to_html("---")
         assert "━" in result
 
-    def test_table_with_bold_cells_no_nested_b_inside_pre(self):
-        """Telegram's HTML parser rejects nested formatting inside <pre> —
-        the 2026-05-21 regression where the second-chunk fallback dumped
-        raw tags. Table cells with **bold** must not produce <b> inside
-        the <pre> wrapper."""
-        import re
-
+    def test_table_renders_as_bullet_groups_not_pre(self):
+        """GFM tables render as mobile-readable bullet groups (#5), not a
+        <pre> dump. First column = bold bullet header; other columns become
+        'Label: value' lines. Cell **markers** are stripped from headers."""
         md = (
             "| Hafta | Mavzu |\n"
             "|---|---|\n"
@@ -45,11 +42,14 @@ class TestMdToHtml:
             "| **Konjunktiv II** | würde |\n"
         )
         out = _md_to_html(md)
-        for block in re.findall(r"<pre>(.*?)</pre>", out, re.DOTALL):
-            assert "<b>" not in block and "</b>" not in block, block
-        # cell text itself must survive (only the markers are dropped)
-        assert "Präteritum" in out
-        assert "Konjunktiv II" in out
+        # No <pre> wrapper for tables anymore.
+        assert "<pre>" not in out
+        # Bullet header is the first column, bolded, markers stripped.
+        assert "• <b>Präteritum</b>" in out
+        assert "• <b>Konjunktiv II</b>" in out
+        # Second column rendered as "Label: value".
+        assert "Mavzu: war, hatte" in out
+        assert "Mavzu: würde" in out
 
     def test_code_block_with_inner_markers_no_nested_tags(self):
         """Same contract for fenced code blocks: ** and ` markers inside
