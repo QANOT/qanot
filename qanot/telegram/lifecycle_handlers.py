@@ -25,6 +25,7 @@ class LifecycleHandlersMixin:
     agent: "Agent"
     config: "Config"
     _pending_approvals: dict[str, dict]
+    _pending_clarifications: dict[str, dict]
     _active_turns: dict
 
     # ── Config persistence helper ─────────────────────────
@@ -464,6 +465,11 @@ class LifecycleHandlersMixin:
             await self._cb_approval(callback, data, user_id)
             return
 
+        # ── Agent clarify: clarify:<id>:<option_index> ──
+        if data.startswith("clarify:"):
+            await self._cb_clarify(callback, data, user_id)
+            return
+
         # ── MCP install proposals: mcp_approve / mcp_deny / mcp_approve_trust ──
         if (
             data.startswith("mcp_approve:")
@@ -589,3 +595,95 @@ class LifecycleHandlersMixin:
         except asyncio.TimeoutError:
             self._pending_approvals.pop(approval_id, None)
             return False
+
+    # ── Agent-driven clarification (ask_user tool) ────────
+
+    async def _cb_clarify(self, callback: "CallbackQuery", data: str, user_id: int) -> None:
+        """Resolve a pending clarify question from an option button tap.
+
+        callback_data: ``clarify:<clar_id>:<option_index>``.
+        """
+        try:
+            _, clar_id, idx_str = data.split(":", 2)
+            idx = int(idx_str)
+        except (ValueError, IndexError):
+            await callback.answer("Noto‘g‘ri tanlov.", show_alert=True)
+            return
+        pending = self._pending_clarifications.get(clar_id)
+        if not pending:
+            await callback.answer("Bu savol muddati tugagan.", show_alert=True)
+            return
+        if pending["user_id"] != user_id:
+            await callback.answer("Faqat savol egasi javob bera oladi.", show_alert=True)
+            return
+        options = pending["options"]
+        if not (0 <= idx < len(options)):
+            await callback.answer("Noto‘g‘ri tanlov.", show_alert=True)
+            return
+        self._pending_clarifications.pop(clar_id, None)
+        choice = options[idx]
+        if not pending["future"].done():
+            pending["future"].set_result(choice)
+        try:
+            await callback.message.edit_text(
+                f"{pending['question']}\n\n✅ {choice}"
+            )
+        except Exception as e:
+            logger.debug("Failed to update clarify message: %s", e)
+        await callback.answer(choice)
+
+    async def request_clarification(
+        self, user_id: str, question: str, options: list[str],
+    ) -> str | None:
+        """Ask the user a multiple-choice question via inline buttons and wait.
+
+        Returns the chosen option text, or None on timeout / no chat. Used by
+        the ``ask_user`` tool so the agent can resolve ambiguity mid-turn
+        without guessing. Button taps arrive as callback queries (no per-conv
+        lock), so this resolves even while the turn holds the conversation lock.
+        """
+        chat_id = self.agent.current_chat_id if self.agent else None
+        thread_id = self.agent.current_thread_id if self.agent else None
+        if not chat_id:
+            return None
+        opts = [str(o).strip() for o in options if str(o).strip()][:8]
+        if len(opts) < 2:
+            return None
+
+        loop = asyncio.get_running_loop()
+        uid = int(user_id) if str(user_id).isdecimal() else 0
+        clar_id = hashlib.sha256(f"{uid}:{question}:{loop.time()}".encode()).hexdigest()[:12]
+        future: asyncio.Future = loop.create_future()
+        self._pending_clarifications[clar_id] = {
+            "user_id": uid,
+            "question": question,
+            "options": opts,
+            "future": future,
+        }
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        rows = [
+            [InlineKeyboardButton(text=opt[:60], callback_data=f"clarify:{clar_id}:{i}")]
+            for i, opt in enumerate(opts)
+        ]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+        send_kwargs: dict = {
+            "chat_id": chat_id,
+            "text": f"❓ {question}",
+            "reply_markup": keyboard,
+        }
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+        try:
+            await self.bot.send_message(**send_kwargs)
+        except Exception as e:
+            logger.warning("clarify send failed: %s", e)
+            self._pending_clarifications.pop(clar_id, None)
+            return None
+
+        try:
+            return await asyncio.wait_for(future, timeout=180)
+        except asyncio.TimeoutError:
+            self._pending_clarifications.pop(clar_id, None)
+            return None

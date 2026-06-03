@@ -47,6 +47,7 @@ async def register_pre_agent_tools(
     agent_ref: list,
     telegram_ref: list,
     approval_callback: Callable[[str, str, str], Awaitable[bool]] | None,
+    clarify_callback: Callable[[str, str, list], Awaitable[object]] | None = None,
     logger: logging.Logger,
 ) -> MCPManager | None:
     """Register every tool that can be registered before the Agent exists.
@@ -64,6 +65,7 @@ async def register_pre_agent_tools(
         exec_security=config.exec_security,
         exec_allowlist=config.exec_allowlist,
         approval_callback=approval_callback,
+        clarify_callback=clarify_callback,
         get_bot=lambda: telegram_ref[0].bot if telegram_ref else None,
         get_chat_id=lambda: agent_ref[0].current_chat_id if agent_ref else None,
         get_thread_id=lambda: agent_ref[0].current_thread_id if agent_ref else None,

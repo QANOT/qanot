@@ -101,6 +101,8 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         # (aiogram processes the /stop update on a separate task, concurrently).
         self._active_turns: dict[str, asyncio.Task] = {}
         self._pending_approvals: dict[str, dict] = {}
+        # Agent-driven clarify questions awaiting a button tap (in-memory, TTL via timeout)
+        self._pending_clarifications: dict[str, dict] = {}
         # MCP install/remove proposals awaiting user approval (10-min TTL, in-memory only)
         self._pending_mcp_proposals: dict[str, dict] = {}
         self._pending_mcp_removals: dict[str, dict] = {}
