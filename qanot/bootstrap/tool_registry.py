@@ -123,6 +123,16 @@ async def register_pre_agent_tools(
         sessions_dir=config.sessions_dir,
     )
 
+    # Cross-session transcript search (FTS5 over session JSONL). Lets the agent
+    # recall conversations older than the in-context history window.
+    from qanot.session_search import register_session_search_tool
+    register_session_search_tool(
+        tool_registry,
+        sessions_dir=config.sessions_dir,
+        workspace_dir=config.workspace_dir,
+        get_user_id=lambda: agent_ref[0].current_user_id if agent_ref else None,
+    )
+
     # Uzbekistan business tools (currency, IKPU, payments, tax calc) — 6 tools.
     if config.local_business_tools_enabled:
         from qanot.tools.local import register_local_tools

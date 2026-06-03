@@ -25,10 +25,11 @@
 ### Memory
 - `memory` — Persistent /memories directory (view, create, edit, delete, rename)
 - `memory_search` — Search across memory files (RAG hybrid search)
+- `session_search` — Full-text search over PAST conversation transcripts (all sessions, FTS5), grouped by date. Recall what was discussed/decided days or weeks ago — beyond the in-context history window. Complements memory_search (which only covers saved memory files).
 
 ### Session & Cost
 - `session_status` — Check context usage, token count
-- `cost_status` — Per-user token and cost statistics
+- `cost_status` — Per-user token and cost statistics (and `/usage` also shows OAuth rolling-window quota when available)
 
 ### Scheduling
 - `cron_create` — Create a scheduled job

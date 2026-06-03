@@ -136,6 +136,26 @@ class Dashboard:
             "buffer_active": status["buffer_active"],
             "active_conversations": self.agent._conv_manager.active_count(),
         }
+        # OAuth rolling-window quota (the binding limit for subscription bots).
+        try:
+            from qanot import usage_quota
+            snap = usage_quota.latest()
+            if snap is not None:
+                data["oauth_quota"] = {
+                    "captured_age_seconds": snap.age_seconds,
+                    "retry_after": snap.retry_after,
+                    "windows": {
+                        w.name: {
+                            "limit": w.limit,
+                            "remaining": w.remaining,
+                            "remaining_pct": w.remaining_pct,
+                            "reset_in_seconds": w.reset_in_seconds,
+                        }
+                        for w in snap.windows.values()
+                    },
+                }
+        except Exception:  # noqa: BLE001
+            pass
         return web.json_response(data)
 
     async def _handle_api_config(self, request: web.Request) -> web.Response:
