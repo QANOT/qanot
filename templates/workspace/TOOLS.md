@@ -16,6 +16,7 @@
 ### System
 - `run_command` — Run sandboxed shell commands (python3, curl, ffmpeg, zip, git, pip)
 - `send_file` — Send a file to the user via Telegram
+- `ask_user` — Ask a multiple-choice question with tappable buttons and wait for the answer. Use when a request is ambiguous and guessing is risky (which file? confirm a costly action?). Returns the chosen option.
 
 ### Web
 - `web_search` — Search the web via Brave Search API

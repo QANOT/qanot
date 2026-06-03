@@ -12,6 +12,9 @@
 
   "response_mode": "stream",
   "stream_flush_interval": 0.8,
+  "tool_progress": "minimal",
+  "tool_progress_cleanup": true,
+  "long_run_notice_seconds": 60,
   "telegram_mode": "polling",
   "webhook_url": "",
   "webhook_port": 8443,
