@@ -196,6 +196,21 @@ class AnthropicProvider(LLMProvider):
         self._container_id: str | None = None
 
     @staticmethod
+    def _capture_quota(headers) -> None:
+        """Snapshot Anthropic rate-limit headers into the global quota store.
+
+        Best-effort: never raises into the request path. Surfaced via /usage
+        and the dashboard so OAuth bots can see their rolling-window limits.
+        """
+        if headers is None:
+            return
+        try:
+            from qanot import usage_quota
+            usage_quota.update_from_headers(headers)
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
     def _extract_usage_dict(u) -> dict:
         """Extract usage dict from Anthropic response usage object."""
         return {
@@ -469,9 +484,12 @@ class AnthropicProvider(LLMProvider):
 
         for _overflow_attempt in range(2):
             try:
-                response = await self.client.messages.create(**kwargs)
+                _raw = await self.client.messages.with_raw_response.create(**kwargs)
+                response = _raw.parse()
+                self._capture_quota(getattr(_raw, "headers", None))
                 break
             except anthropic.APIError as e:
+                self._capture_quota(getattr(getattr(e, "response", None), "headers", None))
                 parsed = _parse_overflow(str(e))
                 if parsed and _overflow_attempt == 0:
                     input_tokens, _, context_limit = parsed
@@ -606,6 +624,11 @@ class AnthropicProvider(LLMProvider):
         for _overflow_attempt in range(2):
             try:
                 async with self.client.messages.stream(**kwargs) as stream:
+                    # Rate-limit headers arrive with the response head, before
+                    # the body finishes streaming — capture them up front.
+                    self._capture_quota(
+                        getattr(getattr(stream, "response", None), "headers", None)
+                    )
                     async for event in _iter_with_timeout(stream, STREAM_IDLE_TIMEOUT):
                         if event.type == "content_block_start":
                             block = event.content_block

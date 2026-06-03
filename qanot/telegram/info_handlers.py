@@ -176,6 +176,17 @@ class InfoHandlersMixin:
             f"Cost: ${stats['total_cost']:.4f}\n\n"
             f"**Umumiy:** ${total_cost:.4f}"
         )
+
+        # OAuth rolling-window quota (the binding limit for subscription bots,
+        # not dollars). Empty until the first API response of this process.
+        try:
+            from qanot import usage_quota
+            quota = usage_quota.format_report()
+            if quota:
+                text += f"\n\n{quota}"
+        except Exception as e:  # noqa: BLE001
+            logger.debug("quota report unavailable: %s", e)
+
         await self._send_final(message.chat.id, text)
 
     # ── /id ───────────────────────────────────────────────
