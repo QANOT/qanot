@@ -270,3 +270,104 @@ class TestRespondStreamFinalText:
         ])
         await mixin._respond_stream(1, "u", "hi")
         assert mixin._final_sends == ["Hello world"]
+
+
+class TestToolProgressBubbles:
+    """Per-tool progress bubbles + auto-cleanup (#1, #4)."""
+
+    def _mixin(self, mode: str = "minimal", cleanup: bool = True):
+        from qanot.telegram.streaming import StreamingMixin
+
+        class _Fake(StreamingMixin):
+            def __init__(self):
+                self._draft_counter = 0
+                self._final_sends = []
+                self.progress_sends = []      # (text)
+                self.deleted = []             # message_ids deleted
+                self._next_mid = 100
+                self.config = type("C", (), {
+                    "stream_flush_interval": 9999.0,
+                    "tool_progress": mode,
+                    "tool_progress_cleanup": cleanup,
+                })()
+                self.bot = None
+                self.agent = None
+
+            async def _typing_loop(self, chat_id):
+                try:
+                    while True:
+                        await __import__("asyncio").sleep(3600)
+                except __import__("asyncio").CancelledError:
+                    return
+
+            async def _send_draft(self, chat_id, draft_id, text, *, thread_id=None):
+                pass
+
+            async def _send_final(self, chat_id, text, *, reply_to=None, thread_id=None):
+                self._final_sends.append(text)
+
+            async def _send_tool_progress(self, chat_id, text, *, thread_id=None):
+                self.progress_sends.append(text)
+                self._next_mid += 1
+                return self._next_mid
+
+            async def _delete_messages(self, chat_id, message_ids):
+                self.deleted.extend(message_ids)
+
+        return _Fake()
+
+    def _stub_agent(self, events):
+        async def run_turn_stream(*args, **kwargs):
+            for ev in events:
+                yield ev
+        return type("A", (), {"run_turn_stream": staticmethod(run_turn_stream)})()
+
+    @pytest.mark.asyncio
+    async def test_minimal_mode_one_bubble_per_distinct_tool_then_cleanup(self):
+        mixin = self._mixin("minimal")
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t1", name="web_search", input={"query": "x"})),
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t2", name="web_search", input={"query": "y"})),  # dedup
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t3", name="read_file", input={"path": "/a"})),
+            StreamEvent(type="text_delta", text="done"),
+            StreamEvent(type="done", response=ProviderResponse(content="done", stop_reason="end_turn", usage=Usage(1, 1))),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        # minimal: no args, consecutive web_search deduped → 2 bubbles
+        assert mixin.progress_sends == ["🔍 web_search…", "📖 read_file…"]
+        assert mixin._final_sends == ["done"]
+        assert len(mixin.deleted) == 2  # both cleaned up on success
+
+    @pytest.mark.asyncio
+    async def test_detailed_mode_includes_arg_preview(self):
+        mixin = self._mixin("detailed")
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t1", name="web_search", input={"query": "weather Tashkent"})),
+            StreamEvent(type="done", response=ProviderResponse(content="ok", stop_reason="end_turn", usage=Usage(1, 1))),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        assert mixin.progress_sends == ["🔍 web_search: weather Tashkent"]
+
+    @pytest.mark.asyncio
+    async def test_off_mode_sends_no_bubbles(self):
+        mixin = self._mixin("off")
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t1", name="web_search", input={"query": "x"})),
+            StreamEvent(type="done", response=ProviderResponse(content="ok", stop_reason="end_turn", usage=Usage(1, 1))),
+        ])
+        await mixin._respond_stream(1, "u", "hi")
+        assert mixin.progress_sends == []
+        assert mixin.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_error_path_keeps_breadcrumbs(self):
+        """No text + no done content + tools didn't speak → error reply, bubbles kept."""
+        mixin = self._mixin("minimal")
+        mixin.agent = self._stub_agent([
+            StreamEvent(type="done", response=ProviderResponse(content="", stop_reason="end_turn", usage=Usage(1, 0))),
+        ])
+        # No tool_use here → error fallback; nothing to clean. Now with a tool but
+        # an empty error-shaped end is covered by the silent-tools test elsewhere.
+        await mixin._respond_stream(1, "u", "hi")
+        assert "Xatolik yuz berdi" in mixin._final_sends[0]
+        assert mixin.deleted == []

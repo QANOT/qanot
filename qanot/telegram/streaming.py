@@ -28,6 +28,61 @@ logger = logging.getLogger(__name__)
 _REPLY_VALIDATE_MAX_CHARS = 1200
 
 
+# Per-tool emoji for progress bubbles. Matched by substring so families of
+# tools (web_*, channel_*, smartup_*) share an icon without enumerating each.
+_TOOL_EMOJI_EXACT = {
+    "web_search": "🔍", "web_fetch": "🌐", "run_command": "⚙️",
+    "generate_image": "🎨", "edit_image": "🖌️", "send_file": "📎",
+    "create_reel": "🎬", "clip_video": "✂️",
+}
+_TOOL_EMOJI_PREFIX = (
+    ("web", "🌐"), ("search", "🔍"), ("rag", "📚"), ("memory", "🧠"),
+    ("read", "📖"), ("write", "📝"), ("edit", "✏️"), ("list", "📂"),
+    ("create_", "📝"), ("send", "📤"), ("channel_", "📣"), ("voice", "🎙️"),
+    ("image", "🎨"), ("cron", "⏰"), ("spawn", "🤖"), ("delegate", "🤖"),
+    ("agent", "🤖"), ("smartup", "📦"), ("sheets", "📊"), ("doc", "📄"),
+)
+
+
+def _tool_emoji(name: str) -> str:
+    """Pick a progress-bubble emoji for a tool name."""
+    if name in _TOOL_EMOJI_EXACT:
+        return _TOOL_EMOJI_EXACT[name]
+    low = name.lower()
+    for frag, emoji in _TOOL_EMOJI_PREFIX:
+        if frag in low:
+            return emoji
+    return "🔧"
+
+
+def _tool_arg_preview(tool_input: dict | None, limit: int = 80) -> str:
+    """One-line preview of the most salient tool argument, for 'detailed' mode."""
+    if not isinstance(tool_input, dict) or not tool_input:
+        return ""
+    # Prefer the human-meaningful field if present, else the first scalar.
+    for key in ("query", "q", "url", "name", "path", "title", "text", "prompt", "command", "code"):
+        if key in tool_input and isinstance(tool_input[key], (str, int, float)):
+            val = str(tool_input[key]).strip().replace("\n", " ")
+            return val[:limit] + ("…" if len(val) > limit else "")
+    for v in tool_input.values():
+        if isinstance(v, (str, int, float)):
+            val = str(v).strip().replace("\n", " ")
+            return val[:limit] + ("…" if len(val) > limit else "")
+    return ""
+
+
+def _tool_progress_text(mode: str, tool_call) -> str:
+    """Render a progress bubble for a tool call, or '' when nothing to show."""
+    if mode == "off" or tool_call is None:
+        return ""
+    name = getattr(tool_call, "name", "") or "tool"
+    emoji = _tool_emoji(name)
+    if mode == "detailed":
+        preview = _tool_arg_preview(getattr(tool_call, "input", None))
+        return f"{emoji} {name}: {preview}" if preview else f"{emoji} {name}…"
+    return f"{emoji} {name}…"
+
+
 class StreamingMixin:
     """Mixin providing response strategy methods for TelegramAdapter."""
 
@@ -52,6 +107,9 @@ class StreamingMixin:
         interval = self.config.stream_flush_interval
         drafting_paused = False
         saw_tool_use = False
+        progress_mode = getattr(self.config, "tool_progress", "off")
+        progress_ids: list[int] = []
+        last_progress_text = ""
 
         done_response = None
         try:
@@ -76,6 +134,16 @@ class StreamingMixin:
                         last_sent_text = accumulated
                     typing_task.cancel()
                     typing_task = asyncio.create_task(self._typing_loop(chat_id))
+                    if progress_mode != "off":
+                        bubble = _tool_progress_text(progress_mode, event.tool_call)
+                        # Dedupe consecutive identical bubbles — a batch of the
+                        # same tool (or minimal mode where args don't vary) would
+                        # otherwise spam one line per call.
+                        if bubble and bubble != last_progress_text:
+                            mid = await self._send_tool_progress(chat_id, bubble, thread_id=thread_id)
+                            if mid:
+                                progress_ids.append(mid)
+                            last_progress_text = bubble
 
                 elif event.type == "done":
                     done_response = event.response
@@ -84,6 +152,7 @@ class StreamingMixin:
             typing_task.cancel()
 
         done_content = (done_response.content if done_response and done_response.content else "")
+        cleanup = getattr(self.config, "tool_progress_cleanup", True)
         if accumulated:
             final_text = accumulated
         elif done_content:
@@ -91,10 +160,15 @@ class StreamingMixin:
         elif saw_tool_use:
             # Tools spoke for the model (e.g. burst of tg_send_poll ending in
             # end_turn with no narrative). Not an error — just nothing left to say.
+            if cleanup and progress_ids:
+                await self._delete_messages(chat_id, progress_ids)
             return
         else:
             final_text = "Xatolik yuz berdi, qaytadan urinib ko'ring."
+            cleanup = False  # keep progress breadcrumbs on the error path
         await self._send_final(chat_id, final_text, reply_to=reply_to, thread_id=thread_id)
+        if cleanup and progress_ids:
+            await self._delete_messages(chat_id, progress_ids)
 
     async def _respond_partial(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None, system_prompt_override: str | None = None) -> None:
         """Stream response via editMessageText (pre-9.5 fallback)."""
@@ -378,6 +452,35 @@ class StreamingMixin:
             ))
         except Exception as e:
             logger.debug("Reaction unavailable in chat %s: %s", chat_id, e)
+
+    async def _send_tool_progress(
+        self, chat_id: int, text: str, *, thread_id: int | None = None,
+    ) -> int:
+        """Send a transient tool-progress bubble. Returns message_id (0 on failure)."""
+        kwargs: dict = {"chat_id": chat_id, "text": text}
+        if thread_id:
+            kwargs["message_thread_id"] = thread_id
+        try:
+            msg = await self.bot.send_message(**kwargs)
+            return int(getattr(msg, "message_id", 0) or 0)
+        except Exception as e:
+            logger.debug("tool-progress bubble send failed: %s", e)
+            return 0
+
+    async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
+        """Best-effort delete of bot messages (progress bubbles, heartbeats).
+
+        Silently ignores failures — in groups the bot may lack delete rights,
+        and a bubble older than 48h can't be deleted. Either way a leftover
+        progress line is harmless, so we never surface the error.
+        """
+        for mid in message_ids:
+            if not mid:
+                continue
+            try:
+                await self.bot.delete_message(chat_id=chat_id, message_id=mid)
+            except Exception as e:
+                logger.debug("progress bubble delete failed (%s): %s", mid, e)
 
     async def _register_commands(self) -> None:
         """Register dynamic bot commands with Telegram (appears in / menu)."""

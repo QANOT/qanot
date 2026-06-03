@@ -527,6 +527,15 @@ class _LoopMixin:
                 messages.append(self._build_assistant_tool_message(content, active_tool_calls))
                 self._log_tool_use(content, active_tool_calls, usage)
 
+                # Surface each tool to the streaming UI BEFORE it runs, so the
+                # user sees "running web_search…" during execution rather than
+                # after. One event per call drives the per-tool progress bubbles
+                # (telegram/streaming.py); the consumer also uses these to pause
+                # draft streaming while tools run. Non-stream callers ignore them.
+                if stream:
+                    for tc in active_tool_calls:
+                        yield StreamEvent(type="tool_use", tool_call=tc)
+
                 tool_results, result_hash = await self._execute_tools(active_tool_calls)
 
                 break_msg = self._process_tool_use(
@@ -553,8 +562,6 @@ class _LoopMixin:
                     return
 
                 messages.append({"role": "user", "content": tool_results})
-                if stream:
-                    yield StreamEvent(type="tool_use", tool_call=active_tool_calls[0] if active_tool_calls else None)
 
             # ── End turn ──
             elif stop_reason == "end_turn":
