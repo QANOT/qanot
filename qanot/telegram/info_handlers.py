@@ -178,10 +178,11 @@ class InfoHandlersMixin:
         )
 
         # OAuth rolling-window quota (the binding limit for subscription bots,
-        # not dollars). Empty until the first API response of this process.
+        # not dollars): the 5h session + weekly windows from /api/oauth/usage,
+        # falling back to captured rate-limit headers for API-key accounts.
         try:
             from qanot import usage_quota
-            quota = usage_quota.format_report()
+            quota = await usage_quota.build_usage_report(self.config.api_key)
             if quota:
                 text += f"\n\n{quota}"
         except Exception as e:  # noqa: BLE001

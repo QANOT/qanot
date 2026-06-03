@@ -136,18 +136,22 @@ class Dashboard:
             "buffer_active": status["buffer_active"],
             "active_conversations": self.agent._conv_manager.active_count(),
         }
-        # OAuth rolling-window quota (the binding limit for subscription bots).
+        # OAuth rolling-window quota (the binding limit for subscription bots):
+        # the 5h/weekly windows from /api/oauth/usage, else captured headers.
         try:
             from qanot import usage_quota
-            snap = usage_quota.latest()
+            snap = await usage_quota.fetch_oauth_usage(self.config.api_key)
+            if snap is None:
+                snap = usage_quota.latest_headers()
             if snap is not None:
                 data["oauth_quota"] = {
-                    "captured_age_seconds": snap.age_seconds,
-                    "retry_after": snap.retry_after,
+                    "source": snap.source,
+                    "unavailable_reason": snap.unavailable_reason,
+                    "extra_usage": snap.extra_usage,
                     "windows": {
                         w.name: {
-                            "limit": w.limit,
-                            "remaining": w.remaining,
+                            "label": w.label,
+                            "used_pct": round(w.used_pct) if w.used_pct is not None else None,
                             "remaining_pct": w.remaining_pct,
                             "reset_in_seconds": w.reset_in_seconds,
                         }
