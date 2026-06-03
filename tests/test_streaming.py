@@ -275,7 +275,7 @@ class TestRespondStreamFinalText:
 class TestToolProgressBubbles:
     """Per-tool progress bubbles + auto-cleanup (#1, #4)."""
 
-    def _mixin(self, mode: str = "minimal", cleanup: bool = True):
+    def _mixin(self, mode: str = "minimal", cleanup: bool = True, heartbeat: int = 0):
         from qanot.telegram.streaming import StreamingMixin
 
         class _Fake(StreamingMixin):
@@ -289,6 +289,7 @@ class TestToolProgressBubbles:
                     "stream_flush_interval": 9999.0,
                     "tool_progress": mode,
                     "tool_progress_cleanup": cleanup,
+                    "long_run_notice_seconds": heartbeat,
                 })()
                 self.bot = None
                 self.agent = None
@@ -371,3 +372,34 @@ class TestToolProgressBubbles:
         await mixin._respond_stream(1, "u", "hi")
         assert "Xatolik yuz berdi" in mixin._final_sends[0]
         assert mixin.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_fires_during_long_turn_and_cleans_up(self):
+        """With a short notice interval and a slow turn, the '⏳' heartbeat
+        fires at least once and its messages are cleaned up on success (#2)."""
+        import asyncio
+
+        mixin = self._mixin("off", heartbeat=1)  # 1s interval (clamped int floor)
+        # patch sleep so the 1s heartbeat interval elapses fast in the test
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(secs):
+            await real_sleep(min(secs, 0.02))
+
+        async def slow_stream(*args, **kwargs):
+            await real_sleep(0.07)  # ~3 heartbeat ticks at 0.02 each
+            yield StreamEvent(type="text_delta", text="ok")
+            yield StreamEvent(type="done", response=ProviderResponse(
+                content="ok", stop_reason="end_turn", usage=Usage(1, 1)))
+
+        mixin.agent = type("A", (), {"run_turn_stream": staticmethod(slow_stream)})()
+        import qanot.telegram.streaming as _s
+        orig = _s.asyncio.sleep
+        _s.asyncio.sleep = fast_sleep
+        try:
+            await mixin._respond_stream(1, "u", "hi")
+        finally:
+            _s.asyncio.sleep = orig
+        assert any("Ishlayapman" in t for t in mixin.progress_sends)
+        assert len(mixin.deleted) >= 1  # heartbeat bubbles cleaned up
+        assert mixin._final_sends == ["ok"]

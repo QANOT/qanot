@@ -110,6 +110,7 @@ class StreamingMixin:
         progress_mode = getattr(self.config, "tool_progress", "off")
         progress_ids: list[int] = []
         last_progress_text = ""
+        hb_task = self._start_heartbeat(chat_id, thread_id, progress_ids)
 
         done_response = None
         try:
@@ -150,6 +151,8 @@ class StreamingMixin:
                     break
         finally:
             typing_task.cancel()
+            if hb_task is not None:
+                hb_task.cancel()
 
         done_content = (done_response.content if done_response and done_response.content else "")
         cleanup = getattr(self.config, "tool_progress_cleanup", True)
@@ -244,11 +247,17 @@ class StreamingMixin:
     async def _respond_blocked(self, chat_id: int, user_id: str, text: str, *, images: list[dict] | None = None, reply_to: int | None = None, thread_id: int | None = None, message_id: int | None = None, system_prompt_override: str | None = None) -> None:
         """Wait for full response, then send."""
         typing_task = asyncio.create_task(self._typing_loop(chat_id))
+        hb_ids: list[int] = []
+        hb_task = self._start_heartbeat(chat_id, thread_id, hb_ids)
         try:
             response = await self.agent.run_turn(text, user_id=user_id, images=images, chat_id=chat_id, message_id=message_id, thread_id=thread_id, system_prompt_override=system_prompt_override)
         finally:
             typing_task.cancel()
+            if hb_task is not None:
+                hb_task.cancel()
         await self._send_final(chat_id, response or "(No response)", reply_to=reply_to, thread_id=thread_id)
+        if getattr(self.config, "tool_progress_cleanup", True) and hb_ids:
+            await self._delete_messages(chat_id, hb_ids)
 
     # ── Low-level send methods ───────────────────────────────
 
@@ -466,6 +475,48 @@ class StreamingMixin:
         except Exception as e:
             logger.debug("tool-progress bubble send failed: %s", e)
             return 0
+
+    def _start_heartbeat(
+        self, chat_id: int, thread_id: int | None, sink: list[int],
+    ) -> "asyncio.Task | None":
+        """Start a 'still working…' heartbeat task, or None when disabled.
+
+        Sends a progress message every ``long_run_notice_seconds`` so long
+        turns (heavy tools, many iterations) don't look frozen. Sent ids are
+        appended to ``sink`` so they're cleaned up alongside tool bubbles.
+        """
+        interval = int(getattr(self.config, "long_run_notice_seconds", 0) or 0)
+        if interval <= 0:
+            return None
+        return asyncio.create_task(
+            self._heartbeat_loop(chat_id, interval, thread_id, sink)
+        )
+
+    async def _heartbeat_loop(
+        self, chat_id: int, interval: int, thread_id: int | None, sink: list[int],
+    ) -> None:
+        """Emit '⏳ Ishlayapman… (elapsed)' every ``interval`` seconds until cancelled."""
+        elapsed = 0
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                elapsed += interval
+                mins, secs = divmod(elapsed, 60)
+                if mins and secs:
+                    human = f"{mins} daq {secs} s"
+                elif mins:
+                    human = f"{mins} daqiqa"
+                else:
+                    human = f"{secs} soniya"
+                mid = await self._send_tool_progress(
+                    chat_id, f"⏳ Ishlayapman… ({human})", thread_id=thread_id,
+                )
+                if mid:
+                    sink.append(mid)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:  # noqa: BLE001 — heartbeat must never break a turn
+            logger.debug("heartbeat loop stopped: %s", e)
 
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
         """Best-effort delete of bot messages (progress bubbles, heartbeats).
