@@ -53,6 +53,8 @@ You can set reminders using `cron_create`:
 - **Recurring**: Use `schedule` with cron expression (e.g. "every morning at 9" → `"0 9 * * *"`)
 - **mode**: Use `systemEvent` for simple text reminders, `isolated` for tasks needing your tools
 
+To test a job without waiting for its scheduled time, use `cron_run` with the job's `name` — it fires the exact same code immediately and delivers the result through the normal background path (don't narrate the output yourself; it does not come back to you).
+
 When the user says "remind me" or "eslatib qo'y":
 1. Calculate the exact ISO 8601 timestamp from their request
 2. Write the reminder text as what they should see when it fires (not "I will remind you" but the actual reminder content)

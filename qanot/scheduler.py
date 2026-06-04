@@ -109,6 +109,9 @@ class CronScheduler:
         self._last_user_activity: float = 0.0
         # Idle threshold: skip heartbeat if user was active within this window (seconds)
         self._idle_threshold = 300  # 5 minutes
+        # Live background tasks spawned by run_now() — kept referenced so
+        # the event loop doesn't garbage-collect a manual run mid-flight.
+        self._manual_runs: set[asyncio.Task] = set()
 
     def record_user_activity(self) -> None:
         """Record that a user interacted with the bot."""
@@ -480,6 +483,43 @@ class CronScheduler:
         })
         if delete_after_run:
             self._delete_job(job_name)
+
+    async def run_now(self, job_name: str) -> dict:
+        """Manually trigger a job immediately, bypassing its schedule.
+
+        Fires the SAME handler the schedule would (``_run_isolated`` or
+        ``_run_system_event``) as a background task, so the result is
+        delivered through the normal proactive path — no reconstruction
+        by hand, no risk of claiming a delivery that never happened.
+
+        Returns at once with a status dict (the job's output is NOT
+        awaited here — it arrives via the proactive queue / outbox just
+        like a scheduled fire). ``delete_after_run`` is forced off: a
+        manual test run must never consume a one-shot reminder.
+        """
+        job = next(
+            (j for j in self._ensure_builtin_jobs(self._load_jobs())
+             if j["name"] == job_name),
+            None,
+        )
+        if job is None:
+            return {"error": f"Job '{job_name}' not found"}
+
+        mode = job.get("mode", "isolated")
+        handler = self._run_isolated if mode == "isolated" else self._run_system_event
+        coro = handler(
+            job_name=job_name,
+            prompt=job.get("prompt", ""),
+            delete_after_run=False,
+            origin_chat_id=job.get("origin_chat_id"),
+            origin_thread_id=job.get("origin_thread_id"),
+        )
+        task = asyncio.create_task(coro)
+        self._manual_runs.add(task)
+        task.add_done_callback(self._manual_runs.discard)
+
+        logger.info("Manually triggered cron job: %s (mode=%s)", job_name, mode)
+        return {"success": True, "job_name": job_name, "mode": mode}
 
     async def reload_jobs(self) -> None:
         """Reload all jobs from disk."""

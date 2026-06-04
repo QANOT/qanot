@@ -245,3 +245,34 @@ def register_cron_tools(
         handler=cron_update,
         category="cron",
     )
+
+    # ── cron_run ──
+    async def cron_run(params: dict) -> str:
+        name = str(params.get("name", "")).strip()
+        if not name:
+            return json.dumps({"error": "name is required"})
+        if not (scheduler_ref and hasattr(scheduler_ref, "run_now")):
+            return json.dumps({"error": "Scheduler unavailable — cannot run jobs manually"})
+        result = await scheduler_ref.run_now(name)
+        return json.dumps(result, ensure_ascii=False)
+
+    registry.register(
+        name="cron_run",
+        description=(
+            "Manually trigger a scheduled job RIGHT NOW, bypassing its schedule. "
+            "Runs the exact same code the schedule would — use it to test a cron "
+            "without waiting for its time. The result is delivered through the "
+            "normal background path (it is NOT returned to you here), so don't "
+            "narrate the job's output yourself. The job is NOT deleted, even "
+            "one-shot reminders."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string", "description": "Name of the job to run now (see cron_list)"},
+            },
+        },
+        handler=cron_run,
+        category="cron",
+    )

@@ -489,3 +489,112 @@ class TestOutboxReminder:
 
         prompt = "Do consolidation work; write a summary to proactive-outbox.md."
         assert _inject_outbox_reminder(prompt) == prompt
+
+
+# ── Manual trigger (run_now / cron_run) ──────────────────────
+
+class TestRunNow:
+    """run_now fires the real handler immediately, in the background,
+    so a manual trigger uses the EXACT scheduled code path — no
+    hand-reconstruction that the prod bot tends to bluff."""
+
+    def _seed_jobs(self, tmp_path, jobs):
+        cron_dir = tmp_path / "cron"
+        cron_dir.mkdir(parents=True, exist_ok=True)
+        (cron_dir / "jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_unknown_job_returns_error(self, tmp_path):
+        config = make_config(tmp_path)
+        sched = CronScheduler(config=config, provider=MagicMock(), tool_registry=MagicMock())
+        result = await sched.run_now("does-not-exist")
+        assert "error" in result
+        assert not sched._manual_runs  # nothing spawned
+
+    @pytest.mark.asyncio
+    async def test_system_event_job_enqueues_with_origin(self, tmp_path):
+        """A systemEvent job must deliver to its captured origin
+        chat/thread — the same routing the schedule would use."""
+        self._seed_jobs(tmp_path, [{
+            "name": "topic-post", "mode": "systemEvent",
+            "prompt": "Kun 14 mavzu", "schedule": "30 2 * * *",
+            "enabled": True, "origin_chat_id": 555, "origin_thread_id": 7,
+        }])
+        config = make_config(tmp_path)
+        queue = asyncio.Queue()
+        sched = CronScheduler(config=config, provider=MagicMock(),
+                              tool_registry=MagicMock(), message_queue=queue)
+
+        result = await sched.run_now("topic-post")
+        assert result["success"] is True
+        assert result["mode"] == "systemEvent"
+
+        await asyncio.gather(*sched._manual_runs)  # let the background task finish
+        msg = await queue.get()
+        assert msg["text"] == "Kun 14 mavzu"
+        assert msg["chat_id"] == 555
+        assert msg["thread_id"] == 7
+        assert msg["source"] == "topic-post"
+
+    @pytest.mark.asyncio
+    async def test_isolated_job_runs_handler_and_survives(self, tmp_path):
+        """A manual run of a one-shot ('at') job must NOT delete it —
+        delete_after_run is forced off so the reminder isn't consumed."""
+        self._seed_jobs(tmp_path, [{
+            "name": "report", "mode": "isolated",
+            "prompt": "make report", "at": "2020-01-01T00:00:00+00:00",
+            "delete_after_run": True, "enabled": True,
+        }])
+        config = make_config(tmp_path)
+        (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+        sched = CronScheduler(config=config, provider=MagicMock(), tool_registry=MagicMock())
+
+        with patch("qanot.agent.spawn_isolated_agent",
+                   new_callable=AsyncMock, return_value="done") as mock_spawn:
+            result = await sched.run_now("report")
+            await asyncio.gather(*sched._manual_runs)
+            mock_spawn.assert_called_once()
+
+        assert result["success"] is True
+        # delete_after_run forced False → the job is still on disk
+        assert any(j["name"] == "report" for j in sched._load_jobs())
+
+
+class TestCronRunTool:
+    """The agent-facing cron_run tool delegates to scheduler.run_now."""
+
+    @pytest.mark.asyncio
+    async def test_tool_registered_and_delegates(self, tmp_path):
+        from qanot.registry import ToolRegistry
+        from qanot.tools.cron import register_cron_tools
+
+        sched = MagicMock()
+        sched.run_now = AsyncMock(
+            return_value={"success": True, "job_name": "x", "mode": "isolated"})
+        reg = ToolRegistry()
+        register_cron_tools(reg, str(tmp_path / "cron"), scheduler_ref=sched)
+
+        assert "cron_run" in reg.tool_names
+        out = await reg.get_handler("cron_run")({"name": "x"})
+        sched.run_now.assert_awaited_once_with("x")
+        assert json.loads(out)["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_tool_requires_name(self, tmp_path):
+        from qanot.registry import ToolRegistry
+        from qanot.tools.cron import register_cron_tools
+
+        reg = ToolRegistry()
+        register_cron_tools(reg, str(tmp_path / "cron"), scheduler_ref=MagicMock())
+        out = await reg.get_handler("cron_run")({"name": "  "})
+        assert "error" in json.loads(out)
+
+    @pytest.mark.asyncio
+    async def test_tool_without_scheduler(self, tmp_path):
+        from qanot.registry import ToolRegistry
+        from qanot.tools.cron import register_cron_tools
+
+        reg = ToolRegistry()
+        register_cron_tools(reg, str(tmp_path / "cron"), scheduler_ref=None)
+        out = await reg.get_handler("cron_run")({"name": "x"})
+        assert "error" in json.loads(out)
