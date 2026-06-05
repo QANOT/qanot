@@ -645,6 +645,15 @@ class _LoopMixin:
                 if modified is not None:
                     final_text = modified
 
+                # Post-turn self-review (A1): every N turns, reflect on the
+                # conversation and capture durable lessons. Fire-and-forget,
+                # cadenced, quality-gated — never blocks or slows the reply.
+                try:
+                    from qanot.self_review import schedule_self_review
+                    schedule_self_review(self, user_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("self-review scheduling failed: %s", e)
+
                 yield StreamEvent(type="done", response=response or ProviderResponse(content=final_text))
                 return
 

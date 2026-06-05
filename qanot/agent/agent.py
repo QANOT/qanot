@@ -120,6 +120,8 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         # the loop drains them into the next tool_result message so the model
         # course-corrects WITHOUT the turn being killed and restarted.
         self._pending_steer: dict[str, list[str]] = {}
+        # Per-conversation turn counter driving the post-turn self-review (A1).
+        self._review_turn_count: dict[str, int] = {}
         # Per-user pending images queue (populated by generate_image tool)
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
