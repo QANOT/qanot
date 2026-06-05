@@ -265,3 +265,44 @@ class TestHistory:
         # v1 + v2 should both be there; the current SKILL.md is v3.
         assert any("v1" in b for b in bodies)
         assert any("v2" in b for b in bodies)
+
+
+class TestFuzzyPatch:
+    """patch_body falls back to whitespace-tolerant line matching."""
+
+    def test_exact_patch_still_works(self, tmp_path):
+        store = SkillStore(tmp_path)
+        store.create("s", "d", "line one\nline two\nline three")
+        store.patch_body("s", "line two", "LINE TWO")
+        body = parse_skill_file(tmp_path / "s" / "SKILL.md").body
+        assert "LINE TWO" in body and "line two" not in body
+
+    def test_fuzzy_patch_tolerates_indentation_drift(self, tmp_path):
+        store = SkillStore(tmp_path)
+        # body has indentation + trailing spaces the model won't reproduce
+        store.create("s", "d", "step:\n    do thing  \n    then next")
+        # model quotes it without the exact whitespace
+        store.patch_body("s", "do thing\nthen next", "do thing\ndone")
+        body = parse_skill_file(tmp_path / "s" / "SKILL.md").body
+        assert "done" in body and "then next" not in body
+
+    def test_fuzzy_patch_single_line_drift(self, tmp_path):
+        store = SkillStore(tmp_path)
+        store.create("s", "d", "alpha\n   beta value   \ngamma")
+        store.patch_body("s", "beta value", "beta CHANGED")
+        body = parse_skill_file(tmp_path / "s" / "SKILL.md").body
+        assert "beta CHANGED" in body
+
+    def test_ambiguous_still_errors(self, tmp_path):
+        from qanot.skills.store import StoreError
+        store = SkillStore(tmp_path)
+        store.create("s", "d", "dup\nmiddle\ndup")
+        with pytest.raises(StoreError, match="ambiguous"):
+            store.patch_body("s", "dup", "X")
+
+    def test_not_found_errors(self, tmp_path):
+        from qanot.skills.store import StoreError
+        store = SkillStore(tmp_path)
+        store.create("s", "d", "hello world")
+        with pytest.raises(StoreError, match="not found"):
+            store.patch_body("s", "nonexistent text here", "X")
