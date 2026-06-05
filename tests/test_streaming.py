@@ -445,3 +445,63 @@ class TestChunkIndicators:
         n = len(mixin.bot.sent)
         for i, body in enumerate(mixin.bot.sent, start=1):
             assert f"({i}/{n})" in body
+
+
+class TestMidTurnSteer:
+    """A4: /steer injects a note into the running turn without killing it."""
+
+    def test_add_steer_queues(self, tmp_path):
+        agent = Agent(config=make_config(tmp_path), provider=StreamingFakeProvider(),
+                      tool_registry=ToolRegistry())
+        assert agent.add_steer("u1", "") is False        # empty → not queued
+        assert agent.add_steer("u1", "use staging") is True
+        assert agent._pending_steer["u1"] == ["use staging"]
+
+    @pytest.mark.asyncio
+    async def test_steer_injected_into_tool_result(self, tmp_path):
+        provider = StreamingFakeProvider()
+        provider.add_round([
+            StreamEvent(type="tool_use", tool_call=ToolCall(id="t1", name="ping", input={})),
+            StreamEvent(type="done", response=ProviderResponse(
+                content="", stop_reason="tool_use",
+                tool_calls=[ToolCall(id="t1", name="ping", input={})], usage=Usage(10, 5))),
+        ])
+        provider.add_round([
+            StreamEvent(type="done", response=ProviderResponse(
+                content="ok", stop_reason="end_turn", usage=Usage(5, 2))),
+        ])
+        reg = ToolRegistry()
+        holder: dict = {}
+
+        async def ping(_):
+            # simulate a /steer arriving while the tool runs
+            holder["agent"].add_steer("u1", "use the staging DB")
+            return json.dumps({"status": "pong"})
+
+        reg.register("ping", "Ping", {"type": "object"}, ping)
+        agent = Agent(config=make_config(tmp_path), provider=provider, tool_registry=reg)
+        holder["agent"] = agent
+
+        async for _ in agent.run_turn_stream("do ping", user_id="u1"):
+            pass
+
+        # the steer note must appear as a text block in some user message
+        msgs = agent._get_messages("u1")
+        blob = json.dumps(msgs, default=str)
+        assert "use the staging DB" in blob
+        assert agent._pending_steer.get("u1") in (None, [])  # drained
+
+    @pytest.mark.asyncio
+    async def test_stale_steer_cleared_at_turn_start(self, tmp_path):
+        provider = StreamingFakeProvider()
+        provider.add_round([
+            StreamEvent(type="done", response=ProviderResponse(
+                content="hi", stop_reason="end_turn", usage=Usage(3, 1))),
+        ])
+        agent = Agent(config=make_config(tmp_path), provider=provider,
+                      tool_registry=ToolRegistry())
+        agent._pending_steer["u1"] = ["stale note from before"]
+        async for _ in agent.run_turn_stream("hello", user_id="u1"):
+            pass
+        # a steer with no in-flight turn must not leak into this fresh turn
+        assert agent._pending_steer.get("u1") in (None, [])

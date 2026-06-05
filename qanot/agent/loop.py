@@ -447,6 +447,11 @@ class _LoopMixin:
         cached_system: str | None = None
         cached_tool_defs: list[dict] | None = None
 
+        # Drop any steer note left over from a prior turn — steer only applies
+        # to the turn that is actually running when /steer arrives.
+        if user_id:
+            self._pending_steer.pop(user_id, None)
+
         for iteration in range(self._max_iterations):
             messages, system, tool_defs = await self._prepare_iteration(
                 messages, user_id,
@@ -615,6 +620,19 @@ class _LoopMixin:
                     messages.append({"role": "assistant", "content": break_msg})
                     yield StreamEvent(type="done", response=ProviderResponse(content=break_msg))
                     return
+
+                # Drain any mid-turn /steer notes into THIS tool_result message
+                # so the model sees the correction on its next iteration without
+                # the turn being cancelled. A user message may carry tool_result
+                # blocks + a trailing text block together.
+                steers = self._pending_steer.pop(user_id, None) if user_id else None
+                if steers:
+                    note = " ".join(steers)
+                    tool_results.append({
+                        "type": "text",
+                        "text": f"[Foydalanuvchidan qo'shimcha ko'rsatma (mid-turn): {note}]",
+                    })
+                    logger.info("Applied %d steer note(s) for %s", len(steers), user_id)
 
                 messages.append({"role": "user", "content": tool_results})
 

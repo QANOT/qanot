@@ -568,6 +568,7 @@ class StreamingMixin:
             BotCommand(command="leavecall", description="Ovozli suhbatdan chiqish"),
             BotCommand(command="callstatus", description="Qo'ng'iroq holati"),
             BotCommand(command="stop", description="Amalni to'xtatish"),
+            BotCommand(command="steer", description="Ishlayotgan amalni yo'naltirish"),
             BotCommand(command="id", description="Foydalanuvchi ID"),
             BotCommand(command="help", description="Barcha buyruqlar"),
         ]
