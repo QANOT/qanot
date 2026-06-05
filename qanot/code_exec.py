@@ -105,6 +105,16 @@ def _is_allowed_import(module_name: str) -> bool:
     return root == "qanot_tools" or root in ALLOWED_STDLIB
 
 
+def _is_dunder(name: str) -> bool:
+    """True for ``__dunder__`` names (the sandbox-escape surface)."""
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
+# Builtins whose string argument could name a dunder to reach the escape
+# surface without a literal ``.__class__`` attribute node.
+_REFLECTION_BUILTINS = frozenset({"getattr", "setattr", "delattr", "vars"})
+
+
 def validate_script(script: str) -> None:
     """AST-walk the script and reject anything off the whitelist.
 
@@ -134,6 +144,27 @@ def validate_script(script: str) -> None:
         # belt-and-suspenders. Catches `__import__('os')` style attacks.
         elif isinstance(node, ast.Name) and node.id in {"__import__", "exec", "eval", "compile"}:
             raise CodeValidationError(f"disallowed name {node.id!r}")
+        # Block dunder-attribute traversal — the classic in-process escape
+        # ``().__class__.__bases__[0].__subclasses__()`` that walks from a
+        # harmless object to ``os``/``__builtins__``. A pure-data script never
+        # needs ``__class__``/``__globals__``/``__mro__``/etc.
+        elif isinstance(node, ast.Attribute) and _is_dunder(node.attr):
+            raise CodeValidationError(f"disallowed dunder attribute {node.attr!r}")
+        # Same escape in string form: getattr(x, "__class__"), vars(x), …
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _REFLECTION_BUILTINS
+        ):
+            for arg in node.args:
+                if (
+                    isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)
+                    and _is_dunder(arg.value)
+                ):
+                    raise CodeValidationError(
+                        f"disallowed dunder via {node.func.id}: {arg.value!r}"
+                    )
 
 
 def _safe_builtins() -> dict[str, Any]:

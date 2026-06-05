@@ -192,6 +192,28 @@ class MemoStore:
         references; ``""`` defaults give plain-text memos the same shape
         as before.
         """
+        path = self.root / f"{name}.md"
+
+        # Injection scan BEFORE write. Memos are re-injected into the system
+        # prompt as <system-reminder> blocks on every matching turn, so a memo
+        # captured from a poisoned user message ("ignore previous instructions",
+        # tag spoofing, secret exfil) is a live prompt-injection vector. Reuse
+        # the skill guard's scanner; reject DANGEROUS content so it never lands.
+        try:
+            from qanot.skills.guard import scan_text, Verdict
+            scan = scan_text(
+                "\n".join(filter(None, [description, body, why, how_to_apply])),
+                label=f"memo:{name}",
+            )
+            if scan.verdict == Verdict.DANGEROUS:
+                logger.warning(
+                    "Rejected memo %r — injection scan DANGEROUS: %s",
+                    name, "; ".join(f.category for f in scan.findings[:3]),
+                )
+                return WriteResult(name=name, path=path, action="rejected")
+        except Exception as exc:  # noqa: BLE001 — scanner must never block a clean write
+            logger.debug("memo injection scan skipped: %s", exc)
+
         # Render via the spec module so validation lives in one place.
         content = render_memo(
             name=name, description=description, memo_type=memo_type, body=body,
@@ -200,7 +222,6 @@ class MemoStore:
             duration_sec=duration_sec,
             why=why, how_to_apply=how_to_apply,
         )
-        path = self.root / f"{name}.md"
         existed = path.is_file()
         _atomic_write_text(path, content)
 
