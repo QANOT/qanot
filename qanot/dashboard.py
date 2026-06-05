@@ -100,6 +100,7 @@ class Dashboard:
         self.app.router.add_get("/api/status", self._handle_api_status)
         self.app.router.add_get("/api/config", self._handle_api_config)
         self.app.router.add_get("/api/costs", self._handle_api_costs)
+        self.app.router.add_get("/api/insights", self._handle_api_insights)
         self.app.router.add_get("/api/memory", self._handle_api_memory)
         self.app.router.add_get("/api/memory/{filename}", self._handle_api_memory_file)
         self.app.router.add_get("/api/tools", self._handle_api_tools)
@@ -175,6 +176,18 @@ class Dashboard:
             "max_context_tokens": self.config.max_context_tokens,
             "heartbeat_enabled": self.config.heartbeat_enabled,
         }
+        return web.json_response(data)
+
+    async def _handle_api_insights(self, request: web.Request) -> web.Response:
+        try:
+            days = max(1, min(90, int(request.query.get("days", "30"))))
+        except (TypeError, ValueError):
+            days = 30
+        from qanot.insights import generate_insights
+        import asyncio
+        data = await asyncio.to_thread(
+            generate_insights, self.config.sessions_dir, days=days,
+        )
         return web.json_response(data)
 
     async def _handle_api_costs(self, request: web.Request) -> web.Response:

@@ -557,6 +557,7 @@ class StreamingMixin:
             BotCommand(command="plugins", description="Pluginlar boshqaruvi"),
             BotCommand(command="status", description="Sessiya holati"),
             BotCommand(command="usage", description="Token sarfi va narxi"),
+            BotCommand(command="insights", description="Statistika: tool/cost/faollik trendi"),
             BotCommand(command="context", description="Kontekst tafsilotlari"),
             BotCommand(command="config", description="Barcha sozlamalar"),
             BotCommand(command="reset", description="Suhbatni tozalash"),
@@ -567,6 +568,7 @@ class StreamingMixin:
             BotCommand(command="leavecall", description="Ovozli suhbatdan chiqish"),
             BotCommand(command="callstatus", description="Qo'ng'iroq holati"),
             BotCommand(command="stop", description="Amalni to'xtatish"),
+            BotCommand(command="steer", description="Ishlayotgan amalni yo'naltirish"),
             BotCommand(command="id", description="Foydalanuvchi ID"),
             BotCommand(command="help", description="Barcha buyruqlar"),
         ]

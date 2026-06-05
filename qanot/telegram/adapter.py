@@ -233,6 +233,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_usage(message: Message) -> None:
             await self._handle_usage(message)
 
+        @self.dp.message(F.text.startswith("/insights"))
+        async def handle_insights(message: Message) -> None:
+            await self._handle_insights(message)
+
         @self.dp.message(F.text.startswith("/compact"))
         async def handle_compact(message: Message) -> None:
             await self._handle_compact(message)
@@ -260,6 +264,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         @self.dp.message(F.text.startswith("/stop"))
         async def handle_stop(message: Message) -> None:
             await self._handle_stop(message)
+
+        @self.dp.message(F.text.startswith("/steer"))
+        async def handle_steer(message: Message) -> None:
+            await self._handle_steer(message)
 
         @self.dp.message(F.text.startswith("/config"))
         async def handle_config(message: Message) -> None:

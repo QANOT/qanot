@@ -453,6 +453,38 @@ class LifecycleHandlersMixin:
             msg = "\u26d4 Hech narsa ishlamayotgan edi."
         await self._send_final(message.chat.id, msg)
 
+    # ── /steer ────────────────────────────────────────────
+
+    async def _handle_steer(self, message: "Message") -> None:
+        """Handle /steer <note> — nudge the in-flight turn without killing it."""
+        if not self._check_command_access(message):
+            return
+        parts = (message.text or "").split(maxsplit=1)
+        note = parts[1].strip() if len(parts) > 1 else ""
+        if not note:
+            await self._send_final(
+                message.chat.id,
+                "Foydalanish: /steer <ko'rsatma> — ishlayotgan amalni yo'naltirish.",
+            )
+            return
+        conv_key = self._conv_key(message)
+        active = getattr(self, "_active_turns", None)
+        running = (
+            active is not None
+            and conv_key in active
+            and not active[conv_key].done()
+        )
+        if not running:
+            await self._send_final(
+                message.chat.id,
+                "Hozir ishlayotgan amal yo'q — /steer faqat davom etayotgan navbatga ta'sir qiladi.",
+            )
+            return
+        self.agent.add_steer(conv_key, note)
+        await self._send_final(
+            message.chat.id, "✏️ Ko'rsatma qo'shildi — agent keyingi qadamda hisobga oladi.",
+        )
+
     # ── Callback query router ─────────────────────────────
 
     async def _handle_callback_query(self, callback: "CallbackQuery") -> None:

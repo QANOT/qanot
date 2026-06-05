@@ -116,6 +116,10 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         # in that case <system-reminder> injection is a no-op and the
         # agent falls back to the unstructured MEMORY.md path.
         self._memo_router = None
+        # Mid-turn steer notes per conversation. A /steer command appends here;
+        # the loop drains them into the next tool_result message so the model
+        # course-corrects WITHOUT the turn being killed and restarted.
+        self._pending_steer: dict[str, list[str]] = {}
         # Per-user pending images queue (populated by generate_image tool)
         self._pending_images: dict[str, list[str]] = {}
         # Per-user pending files queue (populated by send_file tool)
@@ -163,6 +167,15 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
     def pop_pending_videos(self, user_id: str) -> list[str]:
         """Pop all pending video paths for a user."""
         return self._pending_videos.pop(user_id, [])
+
+    def add_steer(self, conv_key: str, text: str) -> bool:
+        """Queue a mid-turn steer note for a conversation. Returns True if a
+        turn is plausibly in flight (the note was queued)."""
+        text = (text or "").strip()
+        if not text:
+            return False
+        self._pending_steer.setdefault(conv_key, []).append(text[:500])
+        return True
 
     def attach_rag(self, rag_indexer) -> None:
         """Attach RAG indexer for auto-context injection.

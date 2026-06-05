@@ -190,6 +190,28 @@ class InfoHandlersMixin:
 
         await self._send_final(message.chat.id, text)
 
+    # ── /insights ─────────────────────────────────────────
+
+    async def _handle_insights(self, message: "Message") -> None:
+        """Handle /insights [days] — usage/tool/cost/activity trends."""
+        if not self._check_command_access(message):
+            return
+        # Optional day window: "/insights 7" (default 30, clamp 1..90).
+        days = 30
+        parts = (message.text or "").split()
+        if len(parts) > 1 and parts[1].isdigit():
+            days = max(1, min(90, int(parts[1])))
+        try:
+            from qanot.insights import generate_insights, format_insights
+            import asyncio
+            data = await asyncio.to_thread(
+                generate_insights, self.config.sessions_dir, days=days,
+            )
+            await self._send_final(message.chat.id, format_insights(data))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("insights generation failed: %s", e)
+            await self._send_final(message.chat.id, "Insights hosil qilishda xatolik.")
+
     # ── /id ───────────────────────────────────────────────
 
     async def _handle_id(self, message: "Message") -> None:
