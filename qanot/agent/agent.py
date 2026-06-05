@@ -98,10 +98,16 @@ class Agent(_LoopMixin, _PreprocessingMixin, _ConversationMixin):
         # 2026-05-14). Negative / zero values disable time-based
         # eviction entirely; the MAX_CONVERSATIONS LRU cap still applies.
         configured_ttl = getattr(config, "conversation_ttl_seconds", None)
+        # Coerce defensively: a non-numeric value (a mocked config, a bad
+        # JSON type) must fall back to the default rather than crash __init__.
+        try:
+            configured_ttl = float(configured_ttl) if configured_ttl is not None else None
+        except (TypeError, ValueError):
+            configured_ttl = None
         if configured_ttl is None or configured_ttl <= 0:
             effective_ttl = float("inf") if configured_ttl == 0 else CONVERSATION_TTL
         else:
-            effective_ttl = float(configured_ttl)
+            effective_ttl = configured_ttl
         self._conv_manager = ConversationManager(
             history_limit=config.history_limit,
             ttl=effective_ttl,

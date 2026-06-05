@@ -52,8 +52,11 @@ class TestConversationSnapshot:
         assert new_manager.get_messages("user1")[0]["content"] == "hello"
         assert len(new_manager.get_messages("user2")) == 1
 
-        # Snapshot file should be deleted after load
-        assert not snapshot_path.exists()
+        # Snapshot file is intentionally KEPT after load: periodic snapshots
+        # make it the canonical recovery point until the next ~5-min write,
+        # so a crash right after startup still has a restore point
+        # (qanot/conversation.py:load_snapshot).
+        assert snapshot_path.exists()
 
     def test_snapshot_skips_none_user(self, manager, tmp_snapshot_dir):
         msgs = manager.ensure_messages(None)

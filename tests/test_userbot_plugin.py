@@ -634,11 +634,19 @@ class TestSetupGate:
             "tg_find_contact",
             "tg_send_message",
             "tg_send_checklist",
+            "tg_send_document",
+            "tg_send_photo",
             "tg_forward_messages",
             "tg_list_recent_chats",
             "tg_get_chat_history",
             "tg_scan_unread",
             "tg_find_mentions",
+            "tg_find_chat",
+            "tg_search_messages_in_chat",
+            "tg_edit_message",
+            "tg_edit_caption",
+            "tg_delete_message",
+            "tg_react_to_message",
         }
 
 
