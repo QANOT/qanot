@@ -58,6 +58,19 @@ FLUSH_MAX_ITERS = 2
 FLUSH_RECENT_MESSAGES = 20  # Only send last N messages (not entire conversation)
 
 
+def _extract_summary_body(content: str) -> str:
+    """Pull the summary text out of a ``[CONVERSATION SUMMARY …]`` block,
+    dropping the header line and the ``[End of summary…]`` footer."""
+    s = content
+    nl = s.find("\n\n")
+    if nl != -1:
+        s = s[nl + 2:]
+    foot = s.rfind("\n\n[End of summary")
+    if foot != -1:
+        s = s[:foot]
+    return s.strip()
+
+
 async def memory_flush(
     messages: list[dict],
     provider: LLMProvider,
@@ -197,10 +210,37 @@ async def summarize_for_compaction(
     if len(messages) <= 6:
         return None
 
+    # Mirror compact_messages' boundary EXACTLY (including the active-task
+    # anchor) so the summary covers precisely the messages that get removed —
+    # no double-counting of anchored tail messages.
+    from qanot.context import _last_user_request_index
     keep_recent = min(4, len(messages) // 2)
-    middle = messages[2:-keep_recent]
+    tail_start = len(messages) - keep_recent
+    anchor_idx = _last_user_request_index(messages)
+    if anchor_idx is not None and 2 <= anchor_idx < tail_start:
+        tail_start = anchor_idx
+    middle = messages[2:tail_start]
     if not middle:
         return None
+
+    # Persistent summary: pull any prior [CONVERSATION SUMMARY] out of the
+    # middle and pass it as the base to UPDATE — otherwise each compaction
+    # re-summarizes the previous summary from scratch and bleeds detail.
+    previous_summary: str | None = None
+    kept_middle: list[dict] = []
+    for m in middle:
+        c = m.get("content")
+        if (
+            m.get("role") == "user" and isinstance(c, str)
+            and c.startswith("[CONVERSATION SUMMARY")
+        ):
+            previous_summary = _extract_summary_body(c)
+        else:
+            kept_middle.append(m)
+    middle = kept_middle
+    if not middle:
+        # Only the prior summary was in the middle — nothing new to fold in.
+        return previous_summary
 
     tokens_before_prune = estimate_messages_tokens(middle)
 
@@ -235,6 +275,7 @@ async def summarize_for_compaction(
             messages=middle,
             context_window=config.max_context_tokens,
             parts=parts,
+            previous_summary=previous_summary,
         )
         if summary and len(summary) > 20:
             logger.info("Multi-stage compaction summary: %d chars", len(summary))

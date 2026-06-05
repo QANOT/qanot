@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from qanot.context import ContextTracker, _last_user_request_index
 
 
@@ -62,3 +64,66 @@ def test_compaction_unchanged_when_request_already_recent():
     out = ct.compact_messages(msgs, summary_text="S", conv_key="u1")
     blob = json.dumps(out)
     assert "recent ask" in blob
+
+
+# ── #2: persistent compaction summary ─────────────────────────────────
+
+def test_extract_summary_body():
+    from qanot.flush import _extract_summary_body
+    block = ("[CONVERSATION SUMMARY — 3 messages compacted]\n\n"
+             "OLD FACTS: bambuk=falcon, price source=order$export\n\n"
+             "[End of summary. Recent conversation continues below.]")
+    assert _extract_summary_body(block) == "OLD FACTS: bambuk=falcon, price source=order$export"
+
+
+@pytest.mark.asyncio
+async def test_compaction_reuses_prior_summary(tmp_path):
+    """A second compaction must UPDATE the prior [CONVERSATION SUMMARY],
+    not re-summarize it from scratch — so the prior summary text reaches the
+    summarizer as base context."""
+    from qanot.config import Config
+    from qanot.context import ContextTracker
+    from qanot.flush import summarize_for_compaction
+    from qanot.providers.base import ProviderResponse
+
+    captured: list[str] = []
+
+    class _FakeProvider:
+        model = "fake"
+
+        async def chat(self, messages, tools=None, system=None):
+            captured.append(messages[-1]["content"])
+            return ProviderResponse(
+                content="Updated summary integrating the prior facts and new markup rule.")
+
+    cfg = Config(
+        workspace_dir=str(tmp_path / "ws"),
+        sessions_dir=str(tmp_path / "s"),
+        cron_dir=str(tmp_path / "c"),
+        compaction_mode="safeguard",
+        max_context_tokens=200_000,
+    )
+    import os
+    os.makedirs(cfg.workspace_dir, exist_ok=True)
+
+    prior = ("[CONVERSATION SUMMARY — 3 messages compacted]\n\n"
+             "PRIOR: user is Falcon distributor; sale prices via order$export\n\n"
+             "[End of summary. Recent conversation continues below.]")
+    msgs = [
+        {"role": "user", "content": "init"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": prior},                  # the prior summary
+        {"role": "user", "content": "new: add 30% markup default"},
+        {"role": "assistant", "content": "noted the markup"},
+        {"role": "user", "content": "and round to 1000"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "recent ask"},
+        {"role": "assistant", "content": "working"},
+    ]
+    out = await summarize_for_compaction(
+        msgs, _FakeProvider(), cfg, ContextTracker(max_tokens=200_000),
+    )
+    assert out  # a summary was produced
+    # The prior summary's content must have reached the summarizer as base.
+    joined = "\n".join(captured)
+    assert "PRIOR: user is Falcon distributor" in joined

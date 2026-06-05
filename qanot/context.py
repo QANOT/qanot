@@ -130,12 +130,19 @@ def truncate_tool_result(
 
 def _last_user_request_index(messages: list[dict]) -> int | None:
     """Index of the most recent genuine user request (role=user, string
-    content) — i.e. an actual ask, not a tool_result carrier. None if absent.
+    content) — i.e. an actual ask, not a tool_result carrier or a synthetic
+    [CONVERSATION SUMMARY]/[CONTEXT COMPACTION] block. None if absent.
     """
     for i in range(len(messages) - 1, -1, -1):
         m = messages[i]
-        if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str):
-            return i
+        if not (isinstance(m, dict) and m.get("role") == "user"):
+            continue
+        c = m.get("content")
+        if not isinstance(c, str):
+            continue
+        if c.startswith("[CONVERSATION SUMMARY") or c.startswith("[CONTEXT COMPACTION"):
+            continue
+        return i
     return None
 
 
