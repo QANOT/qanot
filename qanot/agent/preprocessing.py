@@ -419,6 +419,12 @@ class _PreprocessingMixin:
                 matched = match_skills(self._skills, user_message)
                 if matched:
                     active_skills_content = format_active_skills(matched)
+                    # Record activations so the curator's freshness anchor is
+                    # actual use, not creation date. Without this, last_used_at
+                    # never updates and skills get archived 90 days after they're
+                    # CREATED regardless of how often they fire. Best-effort, off
+                    # the event loop — must never slow or fail the turn.
+                    self._record_skill_uses(matched)
             system = self._build_system_prompt(active_skills_content=active_skills_content, turn_prompt_override=turn_prompt_override)
         # Lazy tool loading: only send tools the user likely needs
         if cached_tool_defs is not None:
@@ -426,6 +432,37 @@ class _PreprocessingMixin:
         else:
             tool_defs = self.tools.get_lazy_definitions(user_message)
         return messages, system, tool_defs
+
+    def _record_skill_uses(self, matched: list) -> None:
+        """Bump use_count/last_used_at for activated skills (best-effort, off-loop).
+
+        Never blocks or fails the turn — usage telemetry is advisory and the
+        curator tolerates occasional drift.
+        """
+        names: list[str] = []
+        for item in matched:
+            spec = getattr(item, "spec", item)
+            name = getattr(spec, "name", None)
+            if name:
+                names.append(name)
+        if not names:
+            return
+        from pathlib import Path
+
+        def _write() -> None:
+            try:
+                from qanot.skills.usage import UsageStore
+                store = UsageStore(Path(self.config.workspace_dir) / "skills")
+                for n in names:
+                    store.record_use(n)
+            except Exception:  # noqa: BLE001
+                pass
+
+        try:
+            import asyncio
+            asyncio.get_running_loop().create_task(asyncio.to_thread(_write))
+        except RuntimeError:
+            _write()  # no event loop (e.g. tests) — do it inline
 
     async def _init_turn(
         self, user_message: str, user_id: str | None, *, images: list[dict] | None = None,
