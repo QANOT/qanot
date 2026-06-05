@@ -49,6 +49,22 @@ _LONG_RUNNING_TOOLS = frozenset({
     "publish_clip_to_meta",  # Meta Graph container polling can take minutes
 })
 LONG_TOOL_TIMEOUT = 1800  # 30 minutes for heavy tools (transcription of long videos)
+# Read-only, side-effect-free, order-independent tools. When a single assistant
+# turn emits a batch of ONLY these (e.g. 3× web_search, or read_file + memory_
+# search), we run them concurrently instead of serially — a 3-5× latency win on
+# a common pattern. Anything that writes, sends, spawns, or mutates state is
+# excluded and keeps running sequentially. Conservative by design: an unknown
+# tool (most plugins) is treated as unsafe and serialized.
+_PARALLEL_SAFE_TOOLS = frozenset({
+    # builtin reads / pure compute
+    "read_file", "list_files", "memory_search", "session_search", "recall_lessons",
+    "web_search", "web_fetch", "session_status", "cost_status", "cost_stats",
+    "compaction_stats", "cache_stats", "currency_rate", "ikpu_search",
+    "tax_calculator", "weather", "read_docx", "read_xlsx", "read_pdf", "read_pptx",
+    # read-only plugin queries (all $export / GET, no writes)
+    "smartup_search_products", "smartup_categories", "smartup_price_types",
+    "smartup_status", "smartup_customers",
+})
 # Default TTL before idle conversations are evicted from memory.
 # Raised from 1 hour (3600s) to 7 days (604800s) on 2026-05-14 after a
 # real bug: user idled a Telegram thread 7 hours, returned, and the bot
@@ -251,62 +267,76 @@ class _LoopMixin:
         except Exception as e:
             logger.debug("Failed to write error lesson to daily notes: %s", e)
 
-    async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
-        """Execute tool calls and return (tool_result blocks, combined result hash)."""
+    async def _execute_one_tool(self, tc: ToolCall) -> tuple[dict, str]:
+        """Execute a single tool call → (tool_result block, result string)."""
         import time as _time
-        tool_results: list[dict] = []
-        result_parts: list[str] = []
-        for tc in tool_calls:
-            logger.info("Executing tool: %s", tc.name)
-            timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
-            tool_started = _time.monotonic()
-            tool_error: str | None = None
+        logger.info("Executing tool: %s", tc.name)
+        timeout = LONG_TOOL_TIMEOUT if tc.name in _LONG_RUNNING_TOOLS else TOOL_TIMEOUT
+        tool_started = _time.monotonic()
+        tool_error: str | None = None
+        try:
+            result = await self.tools.execute(
+                tc.name, tc.input, timeout=timeout,
+                workspace_dir=self.config.workspace_dir,
+            )
+        except Exception as e:
+            logger.error("Tool %s raised unexpected exception: %s", tc.name, e)
+            tool_error = f"{type(e).__name__}: {e}"
+            result = json.dumps({"error": f"Tool execution failed: {type(e).__name__}"})
+
+        # Strip verbose detail fields from JSON results to save context
+        result = strip_verbose_result(result)
+
+        if is_deterministic_error(result):
             try:
-                result = await self.tools.execute(
-                    tc.name, tc.input, timeout=timeout,
-                    workspace_dir=self.config.workspace_dir,
-                )
-            except Exception as e:
-                logger.error("Tool %s raised unexpected exception: %s", tc.name, e)
-                tool_error = f"{type(e).__name__}: {e}"
-                result = json.dumps({"error": f"Tool execution failed: {type(e).__name__}"})
+                result_data = json.loads(result)
+                result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
+                result = json.dumps(result_data)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-            # Strip verbose detail fields from JSON results to save context
-            result = strip_verbose_result(result)
+        duration_ms = int((_time.monotonic() - tool_started) * 1000)
 
-            if is_deterministic_error(result):
-                try:
-                    result_data = json.loads(result)
-                    result_data["_hint"] = "This error is permanent. Do not retry with the same parameters."
-                    result = json.dumps(result_data)
-                except (json.JSONDecodeError, TypeError):
-                    pass
+        # on_tool_use hook fires after every tool execution. Plugins
+        # can subscribe for audit logging, cost tracking, redaction
+        # of secrets in results, or anomaly detection. Best-effort —
+        # exceptions in handlers are swallowed by the registry.
+        try:
+            await self.hooks.fire(
+                "on_tool_use",
+                tool_name=tc.name,
+                tool_input=tc.input,
+                result=result,
+                duration_ms=duration_ms,
+                error=tool_error,
+                user_id=getattr(self, "current_user_id", "") or "",
+            )
+        except Exception as e:
+            logger.warning("on_tool_use hook fire failed: %s", e)
 
-            duration_ms = int((_time.monotonic() - tool_started) * 1000)
+        block = {"type": "tool_result", "tool_use_id": tc.id, "content": result}
+        return block, result
 
-            # on_tool_use hook fires after every tool execution. Plugins
-            # can subscribe for audit logging, cost tracking, redaction
-            # of secrets in results, or anomaly detection. Best-effort —
-            # exceptions in handlers are swallowed by the registry.
-            try:
-                await self.hooks.fire(
-                    "on_tool_use",
-                    tool_name=tc.name,
-                    tool_input=tc.input,
-                    result=result,
-                    duration_ms=duration_ms,
-                    error=tool_error,
-                    user_id=getattr(self, "current_user_id", "") or "",
-                )
-            except Exception as e:
-                logger.warning("on_tool_use hook fire failed: %s", e)
+    async def _execute_tools(self, tool_calls: list[ToolCall]) -> tuple[list[dict], str]:
+        """Execute tool calls and return (tool_result blocks, combined result hash).
 
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tc.id,
-                "content": result,
-            })
-            result_parts.append(result)
+        A batch of ONLY read-safe tools (``_PARALLEL_SAFE_TOOLS``) runs
+        concurrently; anything else runs sequentially. Result order is always
+        preserved (asyncio.gather keeps order), so the assistant message's
+        tool_use blocks still line up with their tool_result blocks.
+        """
+        parallel = (
+            len(tool_calls) >= 2
+            and all(tc.name in _PARALLEL_SAFE_TOOLS for tc in tool_calls)
+        )
+        if parallel:
+            logger.info("Running %d read-safe tools concurrently", len(tool_calls))
+            pairs = await asyncio.gather(*(self._execute_one_tool(tc) for tc in tool_calls))
+        else:
+            pairs = [await self._execute_one_tool(tc) for tc in tool_calls]
+
+        tool_results = [p[0] for p in pairs]
+        result_parts = [p[1] for p in pairs]
         combined_hash = result_fingerprint("|".join(result_parts))
         return tool_results, combined_hash
 
