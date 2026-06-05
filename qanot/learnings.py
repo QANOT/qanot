@@ -78,6 +78,24 @@ def append_learning(
     if len(les) > MAX_LESSON_LEN:
         raise ValueError(f"lesson too long (max {MAX_LESSON_LEN} chars, got {len(les)})")
 
+    # Injection scan — the ~5 most recent lessons auto-inject into the system
+    # prompt every session, so a lesson carrying "ignore previous instructions"
+    # / tag spoofing / secret exfil is a persistent prompt-injection vector.
+    # Reuse the skill guard's scanner; reject DANGEROUS content outright.
+    try:
+        from qanot.skills.guard import scan_text, Verdict
+        scan = scan_text(f"{obs}\n{les}", label="learning")
+        if scan.verdict == Verdict.DANGEROUS:
+            raise ValueError(
+                "lesson rejected by injection scan ("
+                + ", ".join(sorted({f.category for f in scan.findings}))
+                + ") — rephrase without instruction-override / exfil patterns"
+            )
+    except ValueError:
+        raise
+    except Exception:  # noqa: BLE001 — scanner must never block a clean write
+        pass
+
     entry: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "user_id": (user_id or "").strip()[:64],

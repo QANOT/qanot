@@ -62,6 +62,31 @@ CONVERSATION_TTL = 7 * 24 * 3600  # 7 days in seconds
 MAX_COMPACTION_RETRIES = 2  # Max overflow->compact->retry cycles
 BASE_DELAY = 1.0  # seconds, base for exponential backoff
 MAX_DELAY = 30.0  # seconds, backoff ceiling
+# Honor a server Retry-After up to this cap. Beyond it we'd pin the turn for
+# too long — the per-turn caps and the user's patience win; we give up instead.
+RETRY_AFTER_CAP = 60.0
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Server-provided Retry-After (seconds) from a provider error, or None.
+
+    Anthropic/httpx errors carry ``.response.headers``; on a 429 the server
+    tells us exactly when to come back. Honoring it beats blind exponential
+    backoff (which burns 3 guaranteed failures before giving up)."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return None
+    try:
+        val = headers.get("retry-after")
+    except Exception:  # noqa: BLE001
+        return None
+    if val is None:
+        return None
+    try:
+        return max(0.0, float(str(val).strip()))
+    except (TypeError, ValueError):
+        return None  # HTTP-date form is rare for Anthropic; fall back to backoff
 
 # Sentinel for iteration control flow
 _CONTINUE = "_CONTINUE"  # retry iteration (e.g. after overflow compaction)
@@ -613,7 +638,8 @@ class _LoopMixin:
 
         # Transient errors: try non-streaming fallback
         if error_type in TRANSIENT_FAILURES:
-            await asyncio.sleep(3)
+            ra = _retry_after_seconds(error)
+            await asyncio.sleep(min(ra, RETRY_AFTER_CAP) if ra is not None else 3)
             try:
                 response = await self.provider.chat(
                     messages=messages,
@@ -687,10 +713,19 @@ class _LoopMixin:
                     or (attempt == 0 and error_type == ERROR_UNKNOWN)
                 )
                 if attempt < max_retries and retryable:
-                    base = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
-                    jitter = random.uniform(0, 0.25 * base)
-                    backoff = base + jitter
-                    logger.info("Retrying in %.1fs...", backoff)
+                    ra = _retry_after_seconds(e)
+                    if ra is not None:
+                        # Server told us when to come back — honor it (capped).
+                        backoff = min(ra, RETRY_AFTER_CAP) + random.uniform(0, 0.5)
+                        logger.info(
+                            "Retrying after server Retry-After=%.0fs (waiting %.1fs)...",
+                            ra, backoff,
+                        )
+                    else:
+                        base = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
+                        jitter = random.uniform(0, 0.25 * base)
+                        backoff = base + jitter
+                        logger.info("Retrying in %.1fs...", backoff)
                     await asyncio.sleep(backoff)
                     continue
 
