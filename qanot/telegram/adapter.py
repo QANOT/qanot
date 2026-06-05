@@ -233,6 +233,10 @@ class TelegramAdapter(HandlersMixin, StreamingMixin):
         async def handle_usage(message: Message) -> None:
             await self._handle_usage(message)
 
+        @self.dp.message(F.text.startswith("/insights"))
+        async def handle_insights(message: Message) -> None:
+            await self._handle_insights(message)
+
         @self.dp.message(F.text.startswith("/compact"))
         async def handle_compact(message: Message) -> None:
             await self._handle_compact(message)
