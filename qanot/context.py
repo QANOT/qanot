@@ -128,6 +128,24 @@ def truncate_tool_result(
     return truncate_with_marker(result, max_chars)
 
 
+def _last_user_request_index(messages: list[dict]) -> int | None:
+    """Index of the most recent genuine user request (role=user, string
+    content) — i.e. an actual ask, not a tool_result carrier or a synthetic
+    [CONVERSATION SUMMARY]/[CONTEXT COMPACTION] block. None if absent.
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if not (isinstance(m, dict) and m.get("role") == "user"):
+            continue
+        c = m.get("content")
+        if not isinstance(c, str):
+            continue
+        if c.startswith("[CONVERSATION SUMMARY") or c.startswith("[CONTEXT COMPACTION"):
+            continue
+        return i
+    return None
+
+
 class ContextTracker:
     """Track cumulative token usage and manage context thresholds."""
 
@@ -341,9 +359,19 @@ class ContextTracker:
         keep_recent = min(4, len(messages) // 2)
         keep_start = 2
 
+        # Anchor: never summarize away the user's most recent real request. If
+        # a long tool sequence pushed it out of the last keep_recent messages,
+        # extend the tail to start at that request so the agent doesn't "forget
+        # what it was just asked" after compaction. A user text message is a
+        # clean boundary — no dangling tool_use/tool_result pair to orphan.
+        tail_start = len(messages) - keep_recent
+        anchor_idx = _last_user_request_index(messages)
+        if anchor_idx is not None and keep_start <= anchor_idx < tail_start:
+            tail_start = anchor_idx
+
         head = messages[:keep_start]
-        tail = messages[-keep_recent:]
-        removed_count = len(messages) - keep_start - keep_recent
+        tail = messages[tail_start:]
+        removed_count = len(messages) - keep_start - len(tail)
 
         if summary_text:
             # LLM-generated summary

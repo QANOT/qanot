@@ -46,6 +46,18 @@ SUMMARIZATION_PROMPT = (
     "---\n\n"
 )
 
+MERGE_PROMPT_ITERATIVE = (
+    "Update an EXISTING conversation summary by integrating new segments.\n\n"
+    "RULES:\n"
+    "- PRESERVE every fact, decision, ID, path and open item already in the "
+    "existing summary — do NOT drop detail just because it's old.\n"
+    "- INTEGRATE the new segments: add new facts, advance task statuses "
+    "(in-progress → done), and append new open items.\n"
+    "- Resolve contradictions in favour of the NEWER segments.\n"
+    "- Keep it one cohesive summary, not two stitched halves.\n\n"
+    "---\n\n"
+)
+
 MERGE_PROMPT = (
     "Merge these partial summaries into a single cohesive summary.\n\n"
     "MUST PRESERVE:\n"
@@ -490,6 +502,7 @@ async def summarize_in_stages(
     messages: list[dict],
     context_window: int,
     parts: int = DEFAULT_PARTS,
+    previous_summary: str | None = None,
 ) -> str:
     """Multi-stage summarization like OpenClaw.
 
@@ -516,6 +529,7 @@ async def summarize_in_stages(
     ):
         return await summarize_with_fallback(
             provider, messages, max_chunk_tokens, context_window,
+            previous_summary=previous_summary,
         )
 
     # Stage 1: Split and summarize each part independently
@@ -527,6 +541,7 @@ async def summarize_in_stages(
     if len(splits) <= 1:
         return await summarize_with_fallback(
             provider, messages, max_chunk_tokens, context_window,
+            previous_summary=previous_summary,
         )
 
     # Summarize parts concurrently
@@ -552,14 +567,26 @@ async def summarize_in_stages(
     if not valid_summaries:
         return "Context compaction failed. Check workspace files for context."
 
-    if len(valid_summaries) == 1:
+    if len(valid_summaries) == 1 and not previous_summary:
         return valid_summaries[0]
 
-    # Stage 2: Merge partial summaries
-    merge_text = MERGE_PROMPT + "".join(
+    # Stage 2: Merge partial summaries. With a prior summary we run an
+    # ITERATIVE update (preserve all existing detail, integrate the new
+    # parts) instead of producing a fresh summary that re-loses old detail.
+    parts_blob = "".join(
         f"### Part {i}\n{summary}\n\n"
         for i, summary in enumerate(valid_summaries, 1)
     )
+    if previous_summary:
+        merge_text = (
+            MERGE_PROMPT_ITERATIVE
+            + "### Existing summary (preserve ALL of this)\n"
+            + previous_summary
+            + "\n\n### New segments to integrate\n\n"
+            + parts_blob
+        )
+    else:
+        merge_text = MERGE_PROMPT + parts_blob
 
     try:
         response = await provider.chat(

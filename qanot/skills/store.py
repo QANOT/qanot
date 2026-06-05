@@ -70,6 +70,31 @@ def _now_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
+def _fuzzy_line_patch(body: str, old: str, new: str) -> str | None:
+    """Whitespace-tolerant single-span replace.
+
+    Matches ``old``'s lines against ``body``'s lines by *stripped* equality
+    (so indentation / trailing-space drift is forgiven) and replaces a UNIQUE
+    span with ``new``. Returns the patched body, or None when there is no
+    match or more than one (ambiguous — refuse, like the exact path).
+    """
+    body_lines = body.splitlines()
+    s_old = [ln.strip() for ln in old.splitlines()]
+    if not s_old:
+        return None
+    s_body = [ln.strip() for ln in body_lines]
+    m = len(s_old)
+    spans = [i for i in range(len(s_body) - m + 1) if s_body[i:i + m] == s_old]
+    if len(spans) != 1:
+        return None
+    i = spans[0]
+    patched = body_lines[:i] + new.splitlines() + body_lines[i + m:]
+    out = "\n".join(patched)
+    if body.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def _atomic_write_text(path: Path, content: str) -> None:
     """tempfile-in-same-dir + os.replace.
 
@@ -294,13 +319,22 @@ class SkillStore:
         existing = parse_skill_file(skill_md)
         body = existing.body
         count = body.count(old_substring)
-        if count == 0:
-            raise StoreError(f"old_substring not found in {name}")
         if count > 1:
             raise StoreError(
                 f"old_substring appears {count} times in {name} — ambiguous"
             )
-        new_body = body.replace(old_substring, new_substring, 1)
+        if count == 1:
+            new_body = body.replace(old_substring, new_substring, 1)
+            return self.edit(name, new_body, scan_strict=scan_strict)
+
+        # Exact match failed — try a whitespace-tolerant line-span match. The
+        # model often quotes skill text with indentation/trailing-space drift;
+        # an exact-only patch then fails and forces a full rewrite. Match by
+        # per-line stripped equality, requiring a UNIQUE span (still safe to
+        # re-run). Single-line patches work too.
+        new_body = _fuzzy_line_patch(body, old_substring, new_substring)
+        if new_body is None:
+            raise StoreError(f"old_substring not found in {name}")
         return self.edit(name, new_body, scan_strict=scan_strict)
 
     # ─── archive / restore ───────────────────────────────────────
