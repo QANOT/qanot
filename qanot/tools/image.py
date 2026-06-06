@@ -309,13 +309,15 @@ def register_image_tools(
         return base64.b64decode(resp.data[0].b64_json)
 
     async def _openai_edit(prompt: str, img_model: str, source_bytes: bytes, params: dict) -> bytes:
-        size, _quality = _openai_opts(params)
+        size, quality = _openai_opts(params)
         client = _get_openai_client()
         buf = BytesIO(source_bytes)
         buf.name = "source.png"
-        # gpt-image edits don't take a quality arg the same way; pass size only.
+        # quality=high → best output tier; input_fidelity=high → preserve the
+        # source's face/logo/fine detail (critical for avatar & branded slides).
         resp = await client.images.edit(
-            model=img_model, image=buf, prompt=prompt, size=size, n=1,
+            model=img_model, image=buf, prompt=prompt, size=size,
+            quality=quality, input_fidelity="high", n=1,
         )
         return base64.b64decode(resp.data[0].b64_json)
 

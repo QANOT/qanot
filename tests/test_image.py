@@ -447,6 +447,8 @@ class TestAvatarFreeze:
                 captured["called"] = True
                 # image arg is a BytesIO of the avatar bytes
                 captured["src"] = kw["image"].getvalue()
+                captured["quality"] = kw.get("quality")
+                captured["fidelity"] = kw.get("input_fidelity")
                 return MagicMock(data=[MagicMock(b64_json=base64.b64encode(b"OUT").decode())])
 
         r = self._reg(tmp_path)
@@ -454,3 +456,4 @@ class TestAvatarFreeze:
             out = json.loads(await r.get_handler("edit_image")({"prompt": "make a CTA slide", "source": "avatar"}))
         assert out["status"] == "ok"
         assert captured["called"] and captured["src"] == b"\x89PNG\r\n\x1a\nAVATAR"
+        assert captured["quality"] == "high" and captured["fidelity"] == "high"
