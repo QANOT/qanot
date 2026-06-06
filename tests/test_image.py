@@ -456,4 +456,23 @@ class TestAvatarFreeze:
             out = json.loads(await r.get_handler("edit_image")({"prompt": "make a CTA slide", "source": "avatar"}))
         assert out["status"] == "ok"
         assert captured["called"] and captured["src"] == b"\x89PNG\r\n\x1a\nAVATAR"
-        assert captured["quality"] == "high" and captured["fidelity"] == "high"
+        # default model is gpt-image-2 → high quality, NO input_fidelity (it 400s on it)
+        assert captured["quality"] == "high" and captured["fidelity"] is None
+
+    @pytest.mark.asyncio
+    async def test_edit_image_15_gets_input_fidelity(self, tmp_path):
+        (tmp_path / "avatar.jpg").write_bytes(b"AV")
+        captured = {}
+
+        class _Images:
+            async def edit(self, **kw):
+                captured["model"] = kw.get("model")
+                captured["fidelity"] = kw.get("input_fidelity")
+                return MagicMock(data=[MagicMock(b64_json=base64.b64encode(b"O").decode())])
+
+        r = self._reg(tmp_path)
+        with patch("openai.AsyncOpenAI", return_value=MagicMock(images=_Images())):
+            out = json.loads(await r.get_handler("edit_image")(
+                {"prompt": "x", "source": "avatar", "model": "gpt-image-1.5"}))
+        assert out["status"] == "ok"
+        assert captured["model"] == "gpt-image-1.5" and captured["fidelity"] == "high"

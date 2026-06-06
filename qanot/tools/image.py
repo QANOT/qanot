@@ -41,6 +41,10 @@ DEFAULT_IMAGE_MODEL = DEFAULT_GEMINI_MODEL  # historical default
 # OpenAI gpt-image params
 OPENAI_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
 OPENAI_QUALITIES = {"low", "medium", "high", "auto"}
+# Models that accept the `input_fidelity` edit param. gpt-image-2 REJECTS it
+# (400 invalid_input_fidelity_model) because it already processes reference
+# images at high fidelity internally — so we must NOT send it there.
+INPUT_FIDELITY_MODELS = {"gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"}
 DEFAULT_OPENAI_SIZE = "1024x1024"
 DEFAULT_OPENAI_QUALITY = "high"
 
@@ -313,12 +317,15 @@ def register_image_tools(
         client = _get_openai_client()
         buf = BytesIO(source_bytes)
         buf.name = "source.png"
-        # quality=high → best output tier; input_fidelity=high → preserve the
-        # source's face/logo/fine detail (critical for avatar & branded slides).
-        resp = await client.images.edit(
-            model=img_model, image=buf, prompt=prompt, size=size,
-            quality=quality, input_fidelity="high", n=1,
+        kwargs: dict = dict(
+            model=img_model, image=buf, prompt=prompt, size=size, quality=quality, n=1,
         )
+        # input_fidelity=high preserves the source face/logo detail — but only
+        # gpt-image-1.x accept it. gpt-image-2 is high-fidelity by default and
+        # 400s if the param is sent, so only include it where supported.
+        if img_model in INPUT_FIDELITY_MODELS:
+            kwargs["input_fidelity"] = "high"
+        resp = await client.images.edit(**kwargs)
         return base64.b64decode(resp.data[0].b64_json)
 
     # ── generate_image ──────────────────────────────────────
