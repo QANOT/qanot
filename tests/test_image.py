@@ -378,3 +378,25 @@ class TestOpenAIBackend:
         handler = registry.get_handler("generate_image")
         out = json.loads(await handler({"prompt": "x", "model": "gemini-3-pro-image-preview"}))
         assert "error" in out and "available" in out
+
+
+# --- edit_image uploads/ fallback (no base64 block in context) -------------
+
+class TestEditUploadsFallback:
+
+    def test_latest_upload_picks_newest_user_image(self, tmp_path):
+        import os, time
+        from qanot.tools.image import _latest_upload_bytes
+        up = tmp_path / "uploads"; up.mkdir()
+        (up / "old.jpg").write_bytes(b"OLD")
+        (up / "gen_999.png").write_bytes(b"GENERATED")   # our output, must be ignored
+        time.sleep(0.02)
+        (up / "new.jpg").write_bytes(b"NEW")
+        os.utime(up / "gen_999.png", None)               # make generated newest by mtime
+        assert _latest_upload_bytes(up) == b"NEW"         # still picks user image
+
+    def test_latest_upload_none_when_empty(self, tmp_path):
+        from qanot.tools.image import _latest_upload_bytes
+        (tmp_path / "uploads").mkdir()
+        assert _latest_upload_bytes(tmp_path / "uploads") is None
+        assert _latest_upload_bytes(tmp_path / "nope") is None

@@ -130,6 +130,32 @@ def _find_last_image_in_conversation(get_user_id: Callable[[], str | None] | Non
     return None
 
 
+def _latest_upload_bytes(uploads_dir: Path) -> bytes | None:
+    """Most recently uploaded USER image from ``<workspace>/uploads/``.
+
+    Robust fallback for ``edit_image``: the base64 vision block is stripped
+    from the conversation by context management to save tokens, so a few turns
+    after a photo arrives the in-context copy is gone — but the file on disk
+    (saved by ``save_photo_to_uploads``) survives. Excludes our own generated
+    outputs (``gen_*`` / ``edit_*``) so we never "edit" a prior generation.
+    """
+    try:
+        if not uploads_dir.is_dir():
+            return None
+        exts = {".jpg", ".jpeg", ".png", ".webp"}
+        candidates = [
+            p for p in uploads_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in exts
+            and not p.name.startswith(("gen_", "edit_"))
+        ]
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        return latest.read_bytes()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def register_image_tools(
     registry: ToolRegistry,
     workspace_dir: str,
@@ -348,10 +374,15 @@ def register_image_tools(
         if err:
             return err
 
+        # Prefer the in-context base64 block (freshest), then fall back to the
+        # last photo saved on disk — the base64 copy is stripped from context
+        # after a couple of turns, but the uploads/ file survives.
         source_bytes = _find_last_image_in_conversation(get_user_id)
         if not source_bytes:
+            source_bytes = _latest_upload_bytes(images_dir.parent / "uploads")
+        if not source_bytes:
             return json.dumps({
-                "error": "No image found in conversation. The user must send a photo first.",
+                "error": "No image found. Ask the user to send the photo again.",
             })
 
         try:
