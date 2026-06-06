@@ -323,7 +323,7 @@ class TestGenerateImageRateLimit:
         current_user = {"id": "u1"}
         register_image_tools(
             registry,
-            api_key="fake-key",
+            gemini_api_key="fake-key",
             workspace_dir=str(tmp_path),
             get_user_id=lambda: current_user["id"],
             per_user_hourly=10,
@@ -357,7 +357,7 @@ class TestGenerateImageRateLimit:
         current_user = {"id": "u1"}
         register_image_tools(
             registry,
-            api_key="fake-key",
+            gemini_api_key="fake-key",
             workspace_dir=str(tmp_path),
             get_user_id=lambda: current_user["id"],
             per_user_hourly=10,
@@ -385,7 +385,7 @@ class TestGenerateImageRateLimit:
         registry = ToolRegistry()
         register_image_tools(
             registry,
-            api_key="fake-key",
+            gemini_api_key="fake-key",
             workspace_dir=str(tmp_path),
             get_user_id=lambda: "u1",
             per_user_hourly=0,
@@ -405,7 +405,7 @@ class TestGenerateImageRateLimit:
         registry = ToolRegistry()
         register_image_tools(
             registry,
-            api_key="fake-key",
+            gemini_api_key="fake-key",
             workspace_dir=str(tmp_path),
             get_user_id=lambda: None,
             per_user_hourly=2,

@@ -51,6 +51,7 @@
   "routing_threshold": 0.3,
 
   "image_api_key": "",
+  "image_openai_api_key": "",
   "image_model": "gemini-3-pro-image-preview",
   "web_search_per_user_hourly": 20,
   "image_gen_per_user_hourly": 10,

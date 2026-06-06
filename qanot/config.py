@@ -304,9 +304,10 @@ class Config:
     routing_model: str = "claude-haiku-4-5-20251001"  # Cheap model (greetings)
     routing_mid_model: str = "claude-opus-4-8"  # Mid model (general conversation)
     routing_threshold: float = 0.3  # Complexity score threshold (0.0-1.0)
-    # Image generation (Nano Banana / Gemini)
+    # Image generation (multi-provider: Gemini / OpenAI)
     image_api_key: str = ""  # Dedicated Gemini key for images (optional, uses provider key if empty)
-    image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro (highest quality)
+    image_openai_api_key: str = ""  # OpenAI key for gpt-image-* models (empty = use main api_key if provider=openai)
+    image_model: str = "gemini-3-pro-image-preview"  # default model; auto-falls back to an available provider
     # Per-user hourly caps on expensive tools (bill-leak protection).
     # 0 = unlimited (opt out). Counted per-user-per-tool, not shared.
     # web_search hits Brave (~$0.01/query), generate_image hits Gemini
@@ -531,7 +532,7 @@ def load_config(path: str | None = None) -> Config:
     # that could enable injection attacks in HTTP headers, file paths, or API calls
     _SENSITIVE_FIELDS = {
         'bot_token', 'api_key', 'brave_api_key', 'voice_api_key',
-        'image_api_key', 'webhook_url', 'base_url',
+        'image_api_key', 'image_openai_api_key', 'webhook_url', 'base_url',
         'soul_path', 'tools_path', 'workspace_dir', 'sessions_dir',
         'cron_dir', 'plugins_dir',
         'voicecall_api_hash', 'voicecall_session',

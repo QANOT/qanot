@@ -270,6 +270,7 @@ def register_post_agent_tools(
     rag_engine: RAGEngine | None,
     rag_indexer: MemoryIndexer | None,
     gemini_api_key: str | None,
+    openai_image_api_key: str | None = None,
     mcp_manager: MCPManager | None,
     telegram: TelegramAdapter,
     logger: logging.Logger,
@@ -303,16 +304,18 @@ def register_post_agent_tools(
 
         add_write_hook(_on_memory_write)
 
-    # Image generation tool (needs agent reference for pending images)
-    if gemini_api_key:
+    # Image generation tools (multi-provider: Gemini Nano Banana + OpenAI gpt-image).
+    # Registered when EITHER provider key is available.
+    if gemini_api_key or openai_image_api_key:
         from qanot.tools.image import register_image_tools
         register_image_tools(
-            tool_registry, gemini_api_key, config.workspace_dir,
+            tool_registry, config.workspace_dir,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_image_api_key,
             model=config.image_model,
             get_user_id=get_user_id,
             per_user_hourly=config.image_gen_per_user_hourly,
         )
-        logger.info("Image generation enabled (Nano Banana / %s)", config.image_model)
 
     # Video render tool (HyperFrames-based; talks to qanot-video service).
     # Only when video_engine is set to "hyperframes". "legacy_reels" leaves

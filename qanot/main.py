@@ -19,6 +19,7 @@ from qanot.hooks import HookRegistry
 from qanot.bootstrap import (
     build_provider,
     find_gemini_key,
+    find_openai_image_key,
     register_post_agent_tools,
     register_pre_agent_tools,
     setup_plugins,
@@ -203,6 +204,7 @@ async def main() -> None:
 
     # Find Gemini API key for image generation (registered post-agent)
     gemini_api_key = find_gemini_key(config)
+    openai_image_api_key = find_openai_image_key(config)
 
     # Plugins: discover, register tools, wire lifecycle hooks, freeze registry.
     await setup_plugins(config, tool_registry, agent_hooks, logger)
@@ -290,6 +292,7 @@ async def main() -> None:
         rag_engine=rag_engine,
         rag_indexer=rag_indexer,
         gemini_api_key=gemini_api_key,
+        openai_image_api_key=openai_image_api_key,
         mcp_manager=mcp_manager,
         telegram=telegram,
         logger=logger,

@@ -1,4 +1,9 @@
-"""Image generation & editing — Nano Banana (Gemini native image API)."""
+"""Image generation & editing — multi-provider (Gemini Nano Banana + OpenAI gpt-image).
+
+Model name selects the backend: ``gpt-image-*`` → OpenAI, ``gemini-*`` → Gemini.
+Both backends produce raw PNG bytes which flow through the same save/queue path,
+so rate-limiting, the pending-image queue, and tool schemas are provider-agnostic.
+"""
 
 from __future__ import annotations
 
@@ -15,14 +20,34 @@ from qanot.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Nano Banana Pro — highest quality
-DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview"
-
-SUPPORTED_MODELS = {
+# ── model catalogue ─────────────────────────────────────────
+GEMINI_MODELS = {
     "gemini-3-pro-image-preview",      # Nano Banana Pro (highest quality)
     "gemini-3.1-flash-image-preview",  # Nano Banana 2 (fast)
     "gemini-2.5-flash-image",          # Nano Banana (speed optimized)
 }
+OPENAI_MODELS = {
+    "gpt-image-2",        # #1 ranked (2026), newest
+    "gpt-image-1.5",
+    "gpt-image-1",
+    "gpt-image-1-mini",   # cheapest
+}
+SUPPORTED_MODELS = GEMINI_MODELS | OPENAI_MODELS
+
+DEFAULT_GEMINI_MODEL = "gemini-3-pro-image-preview"
+DEFAULT_OPENAI_MODEL = "gpt-image-2"
+DEFAULT_IMAGE_MODEL = DEFAULT_GEMINI_MODEL  # historical default
+
+# OpenAI gpt-image params
+OPENAI_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+OPENAI_QUALITIES = {"low", "medium", "high", "auto"}
+DEFAULT_OPENAI_SIZE = "1024x1024"
+DEFAULT_OPENAI_QUALITY = "high"
+
+
+def _provider_for(model: str) -> str:
+    """Return the backend provider for a model name."""
+    return "openai" if model in OPENAI_MODELS else "gemini"
 
 
 def _save_and_queue(
@@ -53,7 +78,7 @@ def _save_and_queue(
 
 
 def _extract_image_from_response(response) -> tuple[bytes | None, str]:
-    """Extract image data and text from Gemini response.
+    """Extract image data and text from a Gemini response.
 
     Returns (image_bytes_or_None, response_text).
     """
@@ -103,30 +128,64 @@ def _find_last_image_in_conversation(get_user_id: Callable[[], str | None] | Non
 
 def register_image_tools(
     registry: ToolRegistry,
-    api_key: str,
     workspace_dir: str,
     *,
+    gemini_api_key: str | None = None,
+    openai_api_key: str | None = None,
     model: str = DEFAULT_IMAGE_MODEL,
     get_user_id: Callable[[], str | None] | None = None,
     per_user_hourly: int = 0,
 ) -> None:
-    """Register image generation and editing tools.
+    """Register image generation and editing tools (multi-provider).
+
+    At least one of ``gemini_api_key`` / ``openai_api_key`` must be set, else
+    this is a no-op (caller is expected to gate, but we double-guard here).
 
     Args:
         per_user_hourly: Max ``generate_image`` calls per user per hour.
-            0 disables rate limiting (preserves legacy behavior). Only
-            applied to ``generate_image`` — editing is gated by the user
-            sending a fresh photo so its bill-leak risk is naturally
-            bounded.
+            0 disables rate limiting. Only applied to ``generate_image`` —
+            editing is gated by the user sending a fresh photo so its
+            bill-leak risk is naturally bounded.
     """
-    _client = None
+    if not gemini_api_key and not openai_api_key:
+        logger.warning("register_image_tools called with no provider key — skipping")
+        return
 
-    def _get_client():
-        nonlocal _client
-        if _client is None:
+    # Which models are actually usable given the keys we have.
+    available_models: set[str] = set()
+    if gemini_api_key:
+        available_models |= GEMINI_MODELS
+    if openai_api_key:
+        available_models |= OPENAI_MODELS
+
+    # Effective default: honor the configured model if its provider key exists,
+    # otherwise fall back to a sensible default for whichever key we have.
+    if model in available_models:
+        default_model = model
+    elif openai_api_key:
+        default_model = DEFAULT_OPENAI_MODEL
+    elif gemini_api_key:
+        default_model = DEFAULT_GEMINI_MODEL
+    else:  # unreachable (guarded above)
+        default_model = model
+
+    _gemini_client = None
+
+    def _get_gemini_client():
+        nonlocal _gemini_client
+        if _gemini_client is None:
             from google import genai
-            _client = genai.Client(api_key=api_key)
-        return _client
+            _gemini_client = genai.Client(api_key=gemini_api_key)
+        return _gemini_client
+
+    _openai_client = None
+
+    def _get_openai_client():
+        nonlocal _openai_client
+        if _openai_client is None:
+            from openai import AsyncOpenAI
+            _openai_client = AsyncOpenAI(api_key=openai_api_key)
+        return _openai_client
 
     images_dir = Path(workspace_dir) / "generated"
 
@@ -173,24 +232,25 @@ def register_image_tools(
         prompt = params.get("prompt", "").strip()
         if not prompt:
             return None, None, json.dumps({"error": prompt_error})
-        img_model = params.get("model", model)
-        if img_model not in SUPPORTED_MODELS:
+        img_model = params.get("model", default_model)
+        if img_model not in available_models:
             return None, None, json.dumps({
-                "error": f"Unsupported model: {img_model}",
-                "supported": list(SUPPORTED_MODELS),
+                "error": f"Unsupported or unavailable model: {img_model}",
+                "available": sorted(available_models),
+                "hint": "The provider key for this model is not configured.",
             })
         return prompt, img_model, None
 
-    def _build_success(response, prompt, img_model, prefix, fail_msg):
-        """Process Gemini response: extract image, save, queue, return JSON result."""
-        image_data_bytes, response_text = _extract_image_from_response(response)
-        if not image_data_bytes:
+    def _finalize(image_bytes: bytes | None, response_text: str, prompt: str,
+                  img_model: str, prefix: str, fail_msg: str) -> str:
+        """Save raw image bytes, queue them, and return the JSON result."""
+        if not image_bytes:
             return json.dumps({
                 "error": fail_msg,
                 "model_response": response_text or "(no text response)",
             })
         image_path, size_bytes = _save_and_queue(
-            image_data_bytes, images_dir, get_user_id, prefix=prefix,
+            image_bytes, images_dir, get_user_id, prefix=prefix,
         )
         return json.dumps({
             "status": "ok",
@@ -200,24 +260,60 @@ def register_image_tools(
             "size_bytes": size_bytes,
         })
 
+    # ── OpenAI backend ──────────────────────────────────────
+    def _openai_opts(params: dict) -> tuple[str, str]:
+        size = params.get("size", DEFAULT_OPENAI_SIZE)
+        if size not in OPENAI_SIZES:
+            size = DEFAULT_OPENAI_SIZE
+        quality = params.get("quality", DEFAULT_OPENAI_QUALITY)
+        if quality not in OPENAI_QUALITIES:
+            quality = DEFAULT_OPENAI_QUALITY
+        return size, quality
+
+    async def _openai_generate(prompt: str, img_model: str, params: dict) -> bytes:
+        size, quality = _openai_opts(params)
+        client = _get_openai_client()
+        resp = await client.images.generate(
+            model=img_model, prompt=prompt, size=size, quality=quality, n=1,
+        )
+        return base64.b64decode(resp.data[0].b64_json)
+
+    async def _openai_edit(prompt: str, img_model: str, source_bytes: bytes, params: dict) -> bytes:
+        size, _quality = _openai_opts(params)
+        client = _get_openai_client()
+        buf = BytesIO(source_bytes)
+        buf.name = "source.png"
+        # gpt-image edits don't take a quality arg the same way; pass size only.
+        resp = await client.images.edit(
+            model=img_model, image=buf, prompt=prompt, size=size, n=1,
+        )
+        return base64.b64decode(resp.data[0].b64_json)
+
     # ── generate_image ──────────────────────────────────────
 
     async def generate_image(params: dict) -> str:
-        """Generate an image from a text prompt using Nano Banana."""
+        """Generate an image from a text prompt (Gemini Nano Banana or OpenAI gpt-image)."""
         prompt, img_model, err = _validate_params(params, "prompt is required")
         if err:
             return err
 
-        # Per-user hourly cap (bill-leak protection). Run before any
-        # network call — Nano Banana Pro is ~$0.04/image and the agent
-        # loop runs up to 25 iterations per turn.
+        # Per-user hourly cap (bill-leak protection). Run before any network
+        # call — image gen is ~$0.02-0.17/image and the loop runs up to 25
+        # iterations per turn.
         if (rl_err := _check_image_rate_limit()) is not None:
             return rl_err
 
         try:
-            from google.genai import types
+            if _provider_for(img_model) == "openai":
+                image_bytes = await _openai_generate(prompt, img_model, params)
+                return _finalize(
+                    image_bytes, "", prompt, img_model, "gen",
+                    "No image generated. The model may have refused the prompt.",
+                )
 
-            client = _get_client()
+            # Gemini
+            from google.genai import types
+            client = _get_gemini_client()
             response = await client.aio.models.generate_content(
                 model=img_model,
                 contents=prompt,
@@ -225,18 +321,17 @@ def register_image_tools(
                     response_modalities=["TEXT", "IMAGE"],
                 ),
             )
-
-            return _build_success(
-                response, prompt, img_model, "gen",
+            image_bytes, response_text = _extract_image_from_response(response)
+            return _finalize(
+                image_bytes, response_text, prompt, img_model, "gen",
                 "No image generated. The model may have refused the prompt.",
             )
 
-        except ImportError:
-            return json.dumps({
-                "error": "google-genai package not installed. Run: pip install google-genai",
-            })
+        except ImportError as e:
+            pkg = "openai" if _provider_for(img_model) == "openai" else "google-genai"
+            return json.dumps({"error": f"{pkg} package not installed ({e}). Run: pip install {pkg}"})
         except Exception as e:
-            logger.error("Image generation failed: %s", e)
+            logger.error("Image generation failed (%s): %s", img_model, e)
             return json.dumps({"error": f"Image generation failed: {e}"})
 
     # ── edit_image ──────────────────────────────────────────
@@ -249,7 +344,6 @@ def register_image_tools(
         if err:
             return err
 
-        # Find the source image
         source_bytes = _find_last_image_in_conversation(get_user_id)
         if not source_bytes:
             return json.dumps({
@@ -257,14 +351,18 @@ def register_image_tools(
             })
 
         try:
+            if _provider_for(img_model) == "openai":
+                image_bytes = await _openai_edit(prompt, img_model, source_bytes, params)
+                return _finalize(
+                    image_bytes, "", prompt, img_model, "edit",
+                    "Image editing failed. The model may have refused the request.",
+                )
+
+            # Gemini
             from google.genai import types
             from PIL import Image
-
-            client = _get_client()
-
-            # Convert bytes → PIL Image (Gemini SDK accepts PIL images)
+            client = _get_gemini_client()
             pil_image = Image.open(BytesIO(source_bytes))
-
             response = await client.aio.models.generate_content(
                 model=img_model,
                 contents=[prompt, pil_image],
@@ -272,62 +370,104 @@ def register_image_tools(
                     response_modalities=["TEXT", "IMAGE"],
                 ),
             )
-
-            return _build_success(
-                response, prompt, img_model, "edit",
+            image_bytes, response_text = _extract_image_from_response(response)
+            return _finalize(
+                image_bytes, response_text, prompt, img_model, "edit",
                 "Image editing failed. The model may have refused the request.",
             )
 
-        except ImportError:
-            return json.dumps({
-                "error": "google-genai or Pillow not installed. Run: pip install google-genai Pillow",
-            })
+        except ImportError as e:
+            pkg = "openai" if _provider_for(img_model) == "openai" else "google-genai or Pillow"
+            return json.dumps({"error": f"{pkg} not installed ({e})."})
         except Exception as e:
-            logger.error("Image editing failed: %s", e)
+            logger.error("Image editing failed (%s): %s", img_model, e)
             return json.dumps({"error": f"Image editing failed: {e}"})
 
     # ── Register tools ──────────────────────────────────────
 
+    # Build provider-aware parameter schema. Only expose models we can serve;
+    # surface size/quality only when OpenAI is available (Gemini ignores them).
+    _gen_props: dict = {
+        "prompt": {
+            "type": "string",
+            "description": "Detailed text description of the image to generate.",
+        },
+        "model": {
+            "type": "string",
+            "description": f"Image model. Default: {default_model}.",
+            "enum": sorted(available_models),
+        },
+    }
+    if openai_api_key:
+        _gen_props["size"] = {
+            "type": "string",
+            "description": "OpenAI gpt-image only. Default 1024x1024.",
+            "enum": sorted(OPENAI_SIZES),
+        }
+        _gen_props["quality"] = {
+            "type": "string",
+            "description": "OpenAI gpt-image only. Default high.",
+            "enum": sorted(OPENAI_QUALITIES),
+        }
+
+    _provider_note = []
+    if openai_api_key:
+        _provider_note.append("OpenAI gpt-image-2")
+    if gemini_api_key:
+        _provider_note.append("Gemini Nano Banana")
+    _providers = " / ".join(_provider_note)
+
     registry.register(
         name="generate_image",
-        description="Generate a NEW image from a text description using AI (Nano Banana / Gemini). Use this when the user wants to CREATE an image from scratch.",
+        description=(
+            f"Generate a NEW image from a text description using AI ({_providers}). "
+            "Use this when the user wants to CREATE an image from scratch "
+            "(illustrations, mascots, posters, carousel slides, logos, etc)."
+        ),
         parameters={
             "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Detailed text description of the image to generate.",
-                },
-                "model": {
-                    "type": "string",
-                    "description": f"Image model to use. Default: {model}",
-                    "enum": list(SUPPORTED_MODELS),
-                },
-            },
+            "properties": _gen_props,
             "required": ["prompt"],
         },
         handler=generate_image,
         category="image",
     )
 
+    _edit_props: dict = {
+        "prompt": {
+            "type": "string",
+            "description": "Text instruction describing how to edit the image (e.g. 'change background to mountains', 'make it black and white', 'add sunglasses').",
+        },
+        "model": {
+            "type": "string",
+            "description": f"Image model. Default: {default_model}.",
+            "enum": sorted(available_models),
+        },
+    }
+    if openai_api_key:
+        _edit_props["size"] = {
+            "type": "string",
+            "description": "OpenAI gpt-image only. Output size. Default 1024x1024.",
+            "enum": sorted(OPENAI_SIZES),
+        }
+
     registry.register(
         name="edit_image",
-        description="Edit the user's LAST SENT photo based on a text instruction using AI (Nano Banana / Gemini). Use this when the user sends a photo and asks to modify/change/edit it (e.g. 'make it sunset', 'remove the background', 'add a hat').",
+        description=(
+            f"Edit the user's LAST SENT photo based on a text instruction using AI ({_providers}). "
+            "Use this when the user sends a photo and asks to modify/change/edit it "
+            "(e.g. 'make it sunset', 'remove the background', 'add a hat')."
+        ),
         parameters={
             "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Text instruction describing how to edit the image (e.g. 'change background to mountains', 'make it black and white', 'add sunglasses').",
-                },
-                "model": {
-                    "type": "string",
-                    "description": f"Image model to use. Default: {model}",
-                    "enum": list(SUPPORTED_MODELS),
-                },
-            },
+            "properties": _edit_props,
             "required": ["prompt"],
         },
         handler=edit_image,
         category="image",
+    )
+
+    logger.info(
+        "Image tools registered (providers: %s, default: %s)",
+        _providers or "none", default_model,
     )
