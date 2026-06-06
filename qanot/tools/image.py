@@ -44,6 +44,10 @@ OPENAI_QUALITIES = {"low", "medium", "high", "auto"}
 DEFAULT_OPENAI_SIZE = "1024x1024"
 DEFAULT_OPENAI_QUALITY = "high"
 
+# Image generation is slow (gpt-image-2 high quality can take 60-120s); the
+# global 30s tool timeout would kill it. Give these tools generous headroom.
+IMAGE_TOOL_TIMEOUT = 180.0
+
 
 def _provider_for(model: str) -> str:
     """Return the backend provider for a model name."""
@@ -431,6 +435,7 @@ def register_image_tools(
         },
         handler=generate_image,
         category="image",
+        timeout=IMAGE_TOOL_TIMEOUT,
     )
 
     _edit_props: dict = {
@@ -465,6 +470,7 @@ def register_image_tools(
         },
         handler=edit_image,
         category="image",
+        timeout=IMAGE_TOOL_TIMEOUT,
     )
 
     logger.info(
