@@ -11,6 +11,7 @@ from __future__ import annotations
 from qanot.bootstrap.provider_factory import (
     build_provider,
     find_gemini_key,
+    find_openai_image_key,
 )
 from qanot.bootstrap.plugin_loader import setup_plugins, teardown_plugins
 from qanot.bootstrap.tool_registry import (
@@ -21,6 +22,7 @@ from qanot.bootstrap.tool_registry import (
 __all__ = [
     "build_provider",
     "find_gemini_key",
+    "find_openai_image_key",
     "register_pre_agent_tools",
     "register_post_agent_tools",
     "setup_plugins",

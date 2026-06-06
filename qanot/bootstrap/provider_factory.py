@@ -22,6 +22,23 @@ def find_gemini_key(config: Config) -> str | None:
     return None
 
 
+def find_openai_image_key(config: Config) -> str | None:
+    """Find an OpenAI key for gpt-image-* models.
+
+    Priority: dedicated ``image_openai_api_key`` → an ``openai`` provider in
+    multi-provider configs → the main ``api_key`` when the bot's provider is
+    openai. Returns None if no OpenAI credential is available.
+    """
+    if config.image_openai_api_key:
+        return config.image_openai_api_key
+    for pc in config.providers:
+        if pc.provider == "openai" and pc.api_key:
+            return pc.api_key
+    if config.provider == "openai" and config.api_key:
+        return config.api_key
+    return None
+
+
 def _anthropic_thinking_kwargs(provider_type: str, config: Config) -> dict:
     """Return thinking keyword arguments for Anthropic providers; empty dict otherwise."""
     if provider_type == "anthropic":

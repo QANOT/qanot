@@ -18,7 +18,7 @@ class TestImageToolRegistration:
     def test_register_both_tools(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         assert "generate_image" in registry.tool_names
         assert "edit_image" in registry.tool_names
@@ -26,7 +26,7 @@ class TestImageToolRegistration:
     def test_tool_schema_has_prompt(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         tool_defs = registry.get_definitions()
         gen_tool = next(t for t in tool_defs if t["name"] == "generate_image")
@@ -36,7 +36,7 @@ class TestImageToolRegistration:
     def test_edit_tool_schema_has_prompt(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         tool_defs = registry.get_definitions()
         edit_tool = next(t for t in tool_defs if t["name"] == "edit_image")
@@ -50,7 +50,7 @@ class TestGenerateImageHandler:
     async def test_empty_prompt_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("generate_image", {"prompt": ""})
         data = json.loads(result)
@@ -61,7 +61,7 @@ class TestGenerateImageHandler:
     async def test_missing_prompt_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("generate_image", {})
         data = json.loads(result)
@@ -71,7 +71,7 @@ class TestGenerateImageHandler:
     async def test_unsupported_model_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("generate_image", {
             "prompt": "a cat",
@@ -85,7 +85,7 @@ class TestGenerateImageHandler:
     async def test_missing_google_genai_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         import builtins
         real_import = builtins.__import__
@@ -107,7 +107,7 @@ class TestGenerateImageHandler:
         """Without google-genai installed locally, should return clean error."""
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("generate_image", {"prompt": "a sunset"})
         data = json.loads(result)
@@ -122,7 +122,7 @@ class TestEditImageHandler:
     async def test_empty_prompt_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("edit_image", {"prompt": ""})
         data = json.loads(result)
@@ -133,7 +133,7 @@ class TestEditImageHandler:
     async def test_unsupported_model_returns_error(self):
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("edit_image", {
             "prompt": "make it sunset",
@@ -148,7 +148,7 @@ class TestEditImageHandler:
         """When no image was sent by user, edit_image should return helpful error."""
         registry = ToolRegistry()
         from qanot.tools.image import register_image_tools
-        register_image_tools(registry, "fake-api-key", "/tmp/workspace")
+        register_image_tools(registry, "/tmp/workspace", gemini_api_key="fake-api-key")
 
         result = await registry.execute("edit_image", {"prompt": "make it sunset"})
         data = json.loads(result)
@@ -260,10 +260,17 @@ class TestSupportedModels:
         from qanot.tools.image import DEFAULT_IMAGE_MODEL, SUPPORTED_MODELS
         assert DEFAULT_IMAGE_MODEL in SUPPORTED_MODELS
 
-    def test_all_models_are_gemini(self):
-        from qanot.tools.image import SUPPORTED_MODELS
-        for m in SUPPORTED_MODELS:
-            assert "gemini" in m
+    def test_models_split_by_provider(self):
+        from qanot.tools.image import (
+            GEMINI_MODELS, OPENAI_MODELS, SUPPORTED_MODELS, _provider_for,
+        )
+        assert SUPPORTED_MODELS == GEMINI_MODELS | OPENAI_MODELS
+        assert GEMINI_MODELS and OPENAI_MODELS
+        assert not (GEMINI_MODELS & OPENAI_MODELS)  # disjoint
+        for m in GEMINI_MODELS:
+            assert "gemini" in m and _provider_for(m) == "gemini"
+        for m in OPENAI_MODELS:
+            assert m.startswith("gpt-image") and _provider_for(m) == "openai"
 
 
 class TestAgentPendingImages:
@@ -305,3 +312,69 @@ class TestAgentPendingImages:
         config = Config(bot_token="test", sessions_dir=str(tmp_path / "sessions"), workspace_dir=str(tmp_path))
         agent = Agent(config=config, provider=FakeProvider(), tool_registry=ToolRegistry())
         assert agent.pop_pending_images("nobody") == []
+
+
+# --- OpenAI gpt-image backend ----------------------------------------------
+
+class TestOpenAIBackend:
+
+    def _registry_with_openai(self, tmp_path):
+        from qanot.tools.image import register_image_tools
+        registry = ToolRegistry()
+        register_image_tools(registry, str(tmp_path), openai_api_key="sk-test")
+        return registry
+
+    def test_openai_only_default_and_models(self, tmp_path):
+        from qanot.tools.image import OPENAI_MODELS
+        registry = self._registry_with_openai(tmp_path)
+        schema = registry.get_definitions()
+        gen = next(t for t in schema if t["name"] == "generate_image")
+        enum = set(gen["input_schema"]["properties"]["model"]["enum"])
+        assert enum == OPENAI_MODELS  # gemini models NOT offered without a gemini key
+        assert "size" in gen["input_schema"]["properties"]
+        assert "quality" in gen["input_schema"]["properties"]
+
+    def test_register_requires_a_key(self, tmp_path):
+        from qanot.tools.image import register_image_tools
+        registry = ToolRegistry()
+        register_image_tools(registry, str(tmp_path))  # no keys
+        assert "generate_image" not in registry.tool_names
+
+    @pytest.mark.asyncio
+    async def test_generate_calls_openai_and_saves(self, tmp_path):
+        from qanot.tools.image import register_image_tools
+
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\nFAKEDATA").decode()
+
+        captured = {}
+
+        class _Images:
+            async def generate(self, **kw):
+                captured.update(kw)
+                return MagicMock(data=[MagicMock(b64_json=png)])
+
+        fake_client = MagicMock(images=_Images())
+
+        registry = ToolRegistry()
+        register_image_tools(registry, str(tmp_path), openai_api_key="sk-test")
+        handler = registry.get_handler("generate_image")
+
+        with patch("openai.AsyncOpenAI", return_value=fake_client):
+            out = json.loads(await handler({"prompt": "a robot mascot", "quality": "low"}))
+
+        assert out["status"] == "ok"
+        assert out["model"] == "gpt-image-2"          # default OpenAI model
+        assert Path(out["image_path"]).exists()
+        assert captured["model"] == "gpt-image-2"
+        assert captured["quality"] == "low"
+        assert captured["size"] == "1024x1024"        # default size
+
+    @pytest.mark.asyncio
+    async def test_unavailable_model_rejected(self, tmp_path):
+        # gemini model requested but only an OpenAI key is configured
+        from qanot.tools.image import register_image_tools
+        registry = ToolRegistry()
+        register_image_tools(registry, str(tmp_path), openai_api_key="sk-test")
+        handler = registry.get_handler("generate_image")
+        out = json.loads(await handler({"prompt": "x", "model": "gemini-3-pro-image-preview"}))
+        assert "error" in out and "available" in out
