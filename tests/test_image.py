@@ -400,3 +400,57 @@ class TestEditUploadsFallback:
         (tmp_path / "uploads").mkdir()
         assert _latest_upload_bytes(tmp_path / "uploads") is None
         assert _latest_upload_bytes(tmp_path / "nope") is None
+
+
+# --- set_avatar + edit_image source=avatar (no API) ------------------------
+
+class TestAvatarFreeze:
+
+    def _reg(self, tmp_path):
+        from qanot.tools.image import register_image_tools
+        r = ToolRegistry()
+        register_image_tools(r, str(tmp_path), openai_api_key="sk-test")
+        return r
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_from_image_path(self, tmp_path):
+        # a generated file the agent would pass back
+        gen = tmp_path / "generated"; gen.mkdir()
+        (gen / "edit_1.png").write_bytes(b"CHARACTER")
+        r = self._reg(tmp_path)
+        out = json.loads(await r.get_handler("set_avatar")({"image_path": "generated/edit_1.png"}))
+        assert out["status"] == "ok"
+        assert (tmp_path / "avatar.jpg").read_bytes() == b"CHARACTER"
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_falls_back_to_last_upload(self, tmp_path):
+        up = tmp_path / "uploads"; up.mkdir()
+        (up / "selfie.jpg").write_bytes(b"SELFIE")
+        r = self._reg(tmp_path)
+        out = json.loads(await r.get_handler("set_avatar")({}))
+        assert out["status"] == "ok"
+        assert (tmp_path / "avatar.jpg").read_bytes() == b"SELFIE"
+
+    @pytest.mark.asyncio
+    async def test_edit_source_avatar_missing_errors(self, tmp_path):
+        r = self._reg(tmp_path)
+        out = json.loads(await r.get_handler("edit_image")({"prompt": "x", "source": "avatar"}))
+        assert "error" in out and "set_avatar" in out["error"]
+
+    @pytest.mark.asyncio
+    async def test_edit_source_avatar_uses_frozen(self, tmp_path):
+        (tmp_path / "avatar.jpg").write_bytes(b"\x89PNG\r\n\x1a\nAVATAR")
+        captured = {}
+
+        class _Images:
+            async def edit(self, **kw):
+                captured["called"] = True
+                # image arg is a BytesIO of the avatar bytes
+                captured["src"] = kw["image"].getvalue()
+                return MagicMock(data=[MagicMock(b64_json=base64.b64encode(b"OUT").decode())])
+
+        r = self._reg(tmp_path)
+        with patch("openai.AsyncOpenAI", return_value=MagicMock(images=_Images())):
+            out = json.loads(await r.get_handler("edit_image")({"prompt": "make a CTA slide", "source": "avatar"}))
+        assert out["status"] == "ok"
+        assert captured["called"] and captured["src"] == b"\x89PNG\r\n\x1a\nAVATAR"

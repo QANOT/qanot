@@ -374,16 +374,31 @@ def register_image_tools(
         if err:
             return err
 
-        # Prefer the in-context base64 block (freshest), then fall back to the
-        # last photo saved on disk — the base64 copy is stripped from context
-        # after a couple of turns, but the uploads/ file survives.
-        source_bytes = _find_last_image_in_conversation(get_user_id)
-        if not source_bytes:
-            source_bytes = _latest_upload_bytes(images_dir.parent / "uploads")
-        if not source_bytes:
-            return json.dumps({
-                "error": "No image found. Ask the user to send the photo again.",
-            })
+        # Resolve the source image.
+        #   source="avatar" → the FROZEN character (set once via set_avatar).
+        #     Every slide reuses the SAME high-quality reference, so there's no
+        #     generation-loss from re-transforming and the character stays
+        #     consistent. This is the right way to make a multi-slide carousel.
+        #   source="last" (default) → the user's most recent photo (in-context
+        #     base64 block, else the last file in uploads/).
+        avatar_path = images_dir.parent / "avatar.jpg"
+        src = (params.get("source") or "last").lower()
+        if src == "avatar":
+            if not avatar_path.exists():
+                return json.dumps({
+                    "error": "No saved avatar yet. Generate the character once, then call "
+                             "set_avatar (with its image_path) to freeze it — after that, "
+                             "source='avatar' reuses it on every slide.",
+                })
+            source_bytes = avatar_path.read_bytes()
+        else:
+            source_bytes = _find_last_image_in_conversation(get_user_id)
+            if not source_bytes:
+                source_bytes = _latest_upload_bytes(images_dir.parent / "uploads")
+            if not source_bytes:
+                return json.dumps({
+                    "error": "No image found. Ask the user to send the photo again.",
+                })
 
         try:
             if _provider_for(img_model) == "openai":
@@ -417,6 +432,48 @@ def register_image_tools(
         except Exception as e:
             logger.error("Image editing failed (%s): %s", img_model, e)
             return json.dumps({"error": f"Image editing failed: {e}"})
+
+    # ── set_avatar (freeze a reusable character) ────────────
+
+    async def set_avatar(params: dict) -> str:
+        """Freeze an image as the persistent character avatar for reuse.
+
+        The whole point of a fixed avatar: create the character ONCE, then
+        transform that single high-quality reference for each slide. Reusing
+        one frozen source avoids both (a) re-cartoonifying the raw selfie every
+        time (slight drift) and (b) chaining output→output (real quality loss).
+        """
+        avatar_path = images_dir.parent / "avatar.jpg"
+        data: bytes | None = None
+        path = params.get("image_path")
+        if path:
+            p = Path(path)
+            if not p.is_absolute():
+                p = images_dir.parent / path
+            if p.exists() and p.is_file():
+                data = p.read_bytes()
+        if data is None:
+            # No explicit path → freeze the user's most recent photo.
+            data = (_find_last_image_in_conversation(get_user_id)
+                    or _latest_upload_bytes(images_dir.parent / "uploads"))
+        if not data:
+            return json.dumps({
+                "error": "No image to save. Pass image_path of the generated character, "
+                         "or have the user send a photo first.",
+            })
+        try:
+            avatar_path.parent.mkdir(parents=True, exist_ok=True)
+            avatar_path.write_bytes(data)
+            logger.info("Avatar frozen: %s (%d bytes)", avatar_path, len(data))
+            return json.dumps({
+                "status": "ok",
+                "avatar_path": str(avatar_path),
+                "size_bytes": len(data),
+                "note": "Saved. Use edit_image with source='avatar' to reuse this character "
+                        "on every slide — consistent and no quality loss.",
+            })
+        except Exception as e:  # noqa: BLE001
+            return json.dumps({"error": f"Failed to save avatar: {e}"})
 
     # ── Register tools ──────────────────────────────────────
 
@@ -479,6 +536,16 @@ def register_image_tools(
             "description": f"Image model. Default: {default_model}.",
             "enum": sorted(available_models),
         },
+        "source": {
+            "type": "string",
+            "description": (
+                "Which image to transform. 'last' (default) = the user's most "
+                "recent photo. 'avatar' = the frozen character saved via "
+                "set_avatar — use this for every carousel slide so the same "
+                "character is reused (consistent, no quality loss)."
+            ),
+            "enum": ["last", "avatar"],
+        },
     }
     if openai_api_key:
         _edit_props["size"] = {
@@ -502,6 +569,31 @@ def register_image_tools(
         handler=edit_image,
         category="image",
         timeout=IMAGE_TOOL_TIMEOUT,
+    )
+
+    registry.register(
+        name="set_avatar",
+        description=(
+            "Freeze a reference character/avatar to reuse across many images. "
+            "Workflow: generate the user's character ONCE (e.g. edit_image on their "
+            "selfie → a cartoon avatar), then call set_avatar with that result's "
+            "image_path. After that, use edit_image with source='avatar' for every "
+            "carousel slide — the SAME character is reused with no quality loss. "
+            "Without image_path it freezes the user's most recent photo."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "image_path": {
+                    "type": "string",
+                    "description": "Path of the character image to freeze (from a prior "
+                                   "generate_image/edit_image result). Omit to use the "
+                                   "user's last sent photo.",
+                },
+            },
+        },
+        handler=set_avatar,
+        category="image",
     )
 
     logger.info(
