@@ -1,0 +1,17 @@
+{
+  "name": "linkedin",
+  "version": "0.1.0",
+  "description": "LinkedIn company-page posting (text + image) via the Community Management API. Posts as an organization to a page where the authorizing user is an admin.",
+  "author": "Qanot AI",
+  "dependencies": ["aiohttp"],
+  "plugin_deps": [],
+  "required_config": ["org_id"],
+  "min_qanot_version": "2.0.0",
+  "cloud": {
+    "display_name": "LinkedIn (Company Page)",
+    "icon": "in",
+    "category": "social",
+    "connect_type": "oauth",
+    "visible": true
+  }
+}
