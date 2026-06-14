@@ -7,8 +7,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from aiogram.enums import ChatAction, ParseMode
-from aiogram.methods import SendMessageDraft, SetMessageReaction
-from aiogram.types import BotCommand, ReactionTypeEmoji
+from aiogram.methods import SendMessageDraft, SendRichMessageDraft, SetMessageReaction
+from aiogram.types import (
+    BotCommand,
+    InputRichMessage,
+    ReactionTypeEmoji,
+    ReplyParameters,
+)
 
 from qanot.telegram.formatting import MAX_MSG_LEN, _md_to_html, _sanitize_response, _split_text
 
@@ -265,21 +270,37 @@ class StreamingMixin:
         self, chat_id: int, draft_id: int, text: str,
         *, thread_id: int | None = None,
     ) -> None:
-        """Send a streaming draft via sendMessageDraft.
+        """Send a streaming draft — Rich Message draft first, HTML fallback.
 
-        Each flush carries the FULL accumulated text (not a delta), so
-        running it through ``_md_to_html`` produces valid HTML on every
-        tick: only markdown spans that have reached their closing marker
-        are converted, unclosed spans stay literal. ``sendMessageDraft``
-        supports ``parse_mode`` since Bot API 9.5 — without it the user
-        sees raw ``**``/``##``/``<b>`` in the draft and the message only
-        becomes pretty once ``_send_final`` fires at end-of-stream.
+        Each flush carries the FULL accumulated text (not a delta). The
+        primary path is Bot API 10.1 ``sendRichMessageDraft``: the raw
+        markdown is passed through and Telegram parses it server-side, so
+        headings/tables/lists stream natively without a client-side
+        converter. If the rich parser rejects a partial (e.g. a half-open
+        table mid-stream) the flush degrades to the legacy
+        ``sendMessageDraft`` path below, which runs the text through
+        ``_md_to_html`` (only closed markdown spans convert; unclosed
+        ones stay literal) and finally to plain text. The next flush
+        re-attempts rich, and ``_send_final`` renders the complete reply.
 
         When ``thread_id`` is set, the draft is delivered into that
         thread (Bot API 10.0 Threaded Mode). Without it, drafts go to
         the base view — which would land the streaming output in the
         wrong place when the user is reading inside a thread.
         """
+        rich_kwargs: dict = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "rich_message": InputRichMessage(markdown=text[:4096]),
+        }
+        if thread_id:
+            rich_kwargs["message_thread_id"] = thread_id
+        try:
+            await self.bot(SendRichMessageDraft(**rich_kwargs))
+            return
+        except Exception as e:
+            logger.debug("sendRichMessageDraft failed (%s) — HTML draft fallback", e)
+
         html = _md_to_html(text)[:4096]
         kwargs: dict = {
             "chat_id": chat_id,
@@ -319,6 +340,69 @@ class StreamingMixin:
             text, thread_id=thread_id,
         )
         text = _sanitize_response(text)
+
+        # Primary path: Bot API 10.1 Rich Message — the raw markdown is passed
+        # through and Telegram renders tables/headings/LaTeX/long docs natively
+        # (no 4096 split, no "(i/n)" footers). Returns None to signal that the
+        # rich send failed and the legacy HTML path should take over.
+        last_message_id = await self._send_rich_final(
+            chat_id, text, reply_to=reply_to, thread_id=thread_id,
+        )
+        if last_message_id is None:
+            last_message_id = await self._send_html_final(
+                chat_id, text, reply_to=reply_to, thread_id=thread_id,
+            )
+
+        # Track bot replies in group chats for zen-mode signal scoring.
+        # No-op when the adapter doesn't have group state wired (e.g.
+        # in older callers, tests, or sub-agent bots).
+        state = getattr(self, "_group_state", None)
+        if state is not None and chat_id < 0 and last_message_id:
+            # chat_id<0 distinguishes Telegram groups/supergroups from
+            # private chats without an extra API call. Bots always have
+            # positive ids; users always positive; groups always negative.
+            state.record_bot_reply(
+                chat_id, text=text, message_id=last_message_id,
+            )
+
+    async def _send_rich_final(
+        self, chat_id: int, text: str,
+        *, reply_to: int | None = None, thread_id: int | None = None,
+    ) -> int | None:
+        """Send the reply as a Bot API 10.1 Rich Message.
+
+        The agent's markdown is passed through verbatim
+        (``InputRichMessage(markdown=...)``) — Telegram parses it server-side,
+        so tables, headings, task lists, nested quotes, LaTeX and long
+        documents render natively without client-side conversion or 4096
+        splitting. Returns the sent ``message_id`` on success, or ``None`` to
+        signal the caller to fall back to the legacy HTML path.
+        """
+        kwargs: dict = {
+            "chat_id": chat_id,
+            "rich_message": InputRichMessage(markdown=text),
+        }
+        if thread_id:
+            kwargs["message_thread_id"] = thread_id
+        if reply_to:
+            kwargs["reply_parameters"] = ReplyParameters(message_id=reply_to)
+        try:
+            msg = await self.bot.send_rich_message(**kwargs)
+            return int(getattr(msg, "message_id", 0) or 0)
+        except Exception as e:
+            logger.debug("send_rich_message failed (%s) — HTML fallback", e)
+            return None
+
+    async def _send_html_final(
+        self, chat_id: int, text: str,
+        *, reply_to: int | None = None, thread_id: int | None = None,
+    ) -> int:
+        """Legacy HTML send path — fallback when the rich send fails.
+
+        Converts markdown to HTML, splits at 4096 with "(i/n)" footers, and
+        sends each chunk with HTML→plain degradation. Returns the last sent
+        ``message_id`` (0 on total failure).
+        """
         html = _md_to_html(text)
         chunks = _split_text(html)
         total = len(chunks)
@@ -337,18 +421,7 @@ class StreamingMixin:
             if sent_id:
                 last_message_id = sent_id
             await asyncio.sleep(0.1)
-
-        # Track bot replies in group chats for zen-mode signal scoring.
-        # No-op when the adapter doesn't have group state wired (e.g.
-        # in older callers, tests, or sub-agent bots).
-        state = getattr(self, "_group_state", None)
-        if state is not None and chat_id < 0 and last_message_id:
-            # chat_id<0 distinguishes Telegram groups/supergroups from
-            # private chats without an extra API call. Bots always have
-            # positive ids; users always positive; groups always negative.
-            state.record_bot_reply(
-                chat_id, text=text, message_id=last_message_id,
-            )
+        return last_message_id
 
     async def _send_final_chunk(
         self, chat_id: int, html_chunk: str,
