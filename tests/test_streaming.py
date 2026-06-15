@@ -447,6 +447,120 @@ class TestChunkIndicators:
             assert f"({i}/{n})" in body
 
 
+class TestRichMessages:
+    """Bot API 10.1 Rich Messages — rich is primary, HTML is exception fallback.
+
+    Spec: docs/superpowers/specs/2026-06-15-telegram-rich-messages-design.md
+    """
+
+    class _RichRecBot:
+        """Mock Bot recording rich vs HTML sends and draft method types."""
+
+        def __init__(self, rich_fails: bool = False):
+            self.rich_markdown: list[str] = []   # InputRichMessage.markdown sent
+            self.html_sent: list[str] = []       # send_message text (fallback)
+            self.draft_methods: list[str] = []   # draft method class names
+            self.rich_fails = rich_fails
+            self._mid = 0
+
+        async def send_rich_message(self, **kw):
+            if self.rich_fails:
+                raise RuntimeError("rich boom")
+            self.rich_markdown.append(kw["rich_message"].markdown)
+            self._mid += 1
+            return type("M", (), {"message_id": self._mid})()
+
+        async def send_message(self, **kw):
+            self.html_sent.append(kw.get("text", ""))
+            self._mid += 1
+            return type("M", (), {"message_id": self._mid})()
+
+        async def __call__(self, method):
+            name = type(method).__name__
+            self.draft_methods.append(name)
+            if self.rich_fails and name == "SendRichMessageDraft":
+                raise RuntimeError("rich draft boom")
+            return None
+
+    def _mixin(self, bot, *, agent=None, group_state=None):
+        from qanot.telegram.streaming import StreamingMixin
+
+        class _Fake(StreamingMixin):
+            pass
+
+        m = _Fake()
+        m.bot = bot
+        m.agent = agent
+        m.config = type("C", (), {"workspace_dir": "/tmp"})()
+        if group_state is not None:
+            m._group_state = group_state
+        return m
+
+    @pytest.mark.asyncio
+    async def test_final_send_uses_rich_message_with_raw_markdown(self):
+        bot = self._RichRecBot()
+        mixin = self._mixin(bot)
+        await mixin._send_final(1, "# Title\n\n| a | b |\n| - | - |")
+        # rich path took the message verbatim, HTML path untouched
+        assert bot.rich_markdown == ["# Title\n\n| a | b |\n| - | - |"]
+        assert bot.html_sent == []
+
+    @pytest.mark.asyncio
+    async def test_final_send_falls_back_to_html_when_rich_raises(self):
+        bot = self._RichRecBot(rich_fails=True)
+        mixin = self._mixin(bot)
+        await mixin._send_final(1, "**bold** reply")
+        # rich attempt failed → HTML fallback fired
+        assert bot.rich_markdown == []
+        assert len(bot.html_sent) == 1
+        assert "<b>bold</b>" in bot.html_sent[0]
+
+    @pytest.mark.asyncio
+    async def test_rich_long_reply_is_one_message_no_footer(self):
+        from qanot.telegram.formatting import MAX_MSG_LEN
+        bot = self._RichRecBot()
+        mixin = self._mixin(bot)
+        long_text = "lorem ipsum dolor sit amet\n" * ((MAX_MSG_LEN // 26) + 50)
+        await mixin._send_final(1, long_text)
+        # rich carries long content natively: single send, no (i/n) footer
+        assert len(bot.rich_markdown) == 1
+        assert "(1/" not in bot.rich_markdown[0]
+        assert bot.html_sent == []
+
+    @pytest.mark.asyncio
+    async def test_rich_send_records_group_reply(self):
+        recorded = {}
+
+        class _GS:
+            def record_bot_reply(self, chat_id, *, text, message_id):
+                recorded["chat_id"] = chat_id
+                recorded["message_id"] = message_id
+
+        bot = self._RichRecBot()
+        mixin = self._mixin(bot, group_state=_GS())
+        await mixin._send_final(-100, "hello group")  # chat_id < 0 → group
+        assert recorded["chat_id"] == -100
+        assert recorded["message_id"] == 1  # id from send_rich_message
+
+    @pytest.mark.asyncio
+    async def test_draft_uses_rich_draft_method(self):
+        bot = self._RichRecBot()
+        mixin = self._mixin(bot)
+        mixin._draft_counter = 0
+        await mixin._send_draft(1, mixin._next_draft_id(), "## heading streaming")
+        assert bot.draft_methods == ["SendRichMessageDraft"]
+
+    @pytest.mark.asyncio
+    async def test_draft_falls_back_to_plain_draft_when_rich_raises(self):
+        bot = self._RichRecBot(rich_fails=True)
+        mixin = self._mixin(bot)
+        mixin._draft_counter = 0
+        await mixin._send_draft(1, mixin._next_draft_id(), "**partial** table")
+        # first the rich draft is attempted, then the HTML SendMessageDraft fallback
+        assert bot.draft_methods[0] == "SendRichMessageDraft"
+        assert "SendMessageDraft" in bot.draft_methods[1:]
+
+
 class TestMidTurnSteer:
     """A4: /steer injects a note into the running turn without killing it."""
 
